@@ -479,12 +479,17 @@ input[type='range'] {
 }
 
 .section-pills {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
-  overflow-x: auto;
+  width: 100%;
   max-width: 100%;
-  padding-bottom: 4px;
-  scrollbar-width: thin;
+}
+
+@media (max-width: 359px) {
+  .section-pills {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .arrange-top-bar {
@@ -542,11 +547,22 @@ input[type='range'] {
 }
 
 .pill {
-  flex-shrink: 0;
-  border-radius: 999px;
-  padding: 8px 14px;
-  font-size: 0.84rem;
-  white-space: nowrap;
+  min-width: 0;
+  width: 100%;
+  min-height: 44px;
+  border-radius: 12px;
+  padding: 8px 10px;
+  font-size: 0.82rem;
+  white-space: normal;
+  word-break: keep-all;
+  overflow-wrap: break-word;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  text-align: center;
+  line-height: 1.25;
 }
 
 .pill.active {
@@ -556,8 +572,12 @@ input[type='range'] {
 }
 
 .pill-sub {
+  flex-shrink: 0;
   font-size: 0.72rem;
-  opacity: 0.85;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  opacity: 0.92;
 }
 
 .section-meta-bar {
