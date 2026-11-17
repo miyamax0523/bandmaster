@@ -18,7 +18,7 @@ import type {
   SectionBandCells,
   SectionInstrumentCell,
 } from '../types/track';
-import { getDefaultProgression } from './chordUtils';
+import { getDefaultProgression, getDiatonicChords } from './chordUtils';
 import { resolveInstrumentParams } from './keywordParser';
 import { createSeededRng } from './random';
 
@@ -690,4 +690,161 @@ export function createDefaultSongConfig(
   }
 
   return base;
+}
+
+export type ArrangementPresetId = 'twoPart' | 'fourPart' | 'full';
+
+export function getSongDurationSummary(song: SongConfig): {
+  totalBars: number;
+  totalSeconds: number;
+  formattedDuration: string;
+} {
+  const totalBars = song.sections.reduce((sum, s) => sum + s.bars, 0);
+  const safeBpm = Math.max(1, song.bpm);
+  const totalSeconds = Math.round((totalBars * 4 * 60) / safeBpm);
+  const mins = Math.floor(totalSeconds / 60);
+  const secs = String(totalSeconds % 60).padStart(2, '0');
+  return {
+    totalBars,
+    totalSeconds,
+    formattedDuration: `${mins}:${secs}`,
+  };
+}
+
+export function applyArrangementPresetToSong(
+  song: SongConfig,
+  presetId: ArrangementPresetId,
+  baseSeed = 4242
+): { song: SongConfig; bandState: BandState } {
+  const nextSong = cloneSongConfig(song);
+  const prog = getDefaultProgression(nextSong.key, nextSong.scale);
+  const dia = getDiatonicChords(nextSong.key, nextSong.scale);
+  const preChords = [dia[3], dia[2], dia[5], dia[6]];
+  const chorusChords = [dia[5], dia[6], dia[0], dia[2]];
+  const bridgeChords = [dia[3], dia[4], dia[5], dia[6]];
+
+  const mkId = (slug: string) =>
+    `sec-${slug}-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+
+  if (presetId === 'twoPart') {
+    nextSong.sections = [
+      {
+        id: mkId('verse'),
+        type: 'Verse',
+        name: 'Verse',
+        bars: 8,
+        energy: 'Mid',
+        kickMode: 'acoustic',
+        chords: [...prog],
+      },
+      {
+        id: mkId('chorus'),
+        type: 'Chorus',
+        name: 'Chorus',
+        bars: 8,
+        energy: 'High',
+        kickMode: 'acoustic',
+        chords: [...chorusChords],
+      },
+    ];
+  } else if (presetId === 'fourPart') {
+    nextSong.sections = [
+      {
+        id: mkId('intro'),
+        type: 'Intro',
+        name: 'Intro',
+        bars: 4,
+        energy: 'Mid',
+        kickMode: 'acoustic',
+        chords: [...prog],
+      },
+      {
+        id: mkId('verse'),
+        type: 'Verse',
+        name: 'Aメロ',
+        bars: 8,
+        energy: 'Mid',
+        kickMode: 'acoustic',
+        chords: [...prog],
+      },
+      {
+        id: mkId('pre'),
+        type: 'Pre-Chorus',
+        name: 'Bメロ',
+        bars: 4,
+        energy: 'Mid',
+        kickMode: 'acoustic',
+        chords: [...preChords],
+      },
+      {
+        id: mkId('chorus'),
+        type: 'Chorus',
+        name: 'サビ',
+        bars: 8,
+        energy: 'High',
+        kickMode: 'acoustic',
+        chords: [...chorusChords],
+      },
+    ];
+  } else {
+    nextSong.sections = [
+      {
+        id: mkId('intro'),
+        type: 'Intro',
+        name: 'Intro',
+        bars: 4,
+        energy: 'Mid',
+        kickMode: 'acoustic',
+        chords: [...prog],
+      },
+      {
+        id: mkId('verse'),
+        type: 'Verse',
+        name: 'Aメロ',
+        bars: 8,
+        energy: 'Mid',
+        kickMode: 'acoustic',
+        chords: [...prog],
+      },
+      {
+        id: mkId('pre'),
+        type: 'Pre-Chorus',
+        name: 'Bメロ',
+        bars: 4,
+        energy: 'Mid',
+        kickMode: 'acoustic',
+        chords: [...preChords],
+      },
+      {
+        id: mkId('chorus'),
+        type: 'Chorus',
+        name: 'サビ',
+        bars: 8,
+        energy: 'High',
+        kickMode: 'acoustic',
+        chords: [...chorusChords],
+      },
+      {
+        id: mkId('bridge'),
+        type: 'Bridge',
+        name: 'Cメロ',
+        bars: 4,
+        energy: 'Mid',
+        kickMode: 'acoustic',
+        chords: [...bridgeChords],
+      },
+      {
+        id: mkId('outro'),
+        type: 'Outro',
+        name: 'Outro',
+        bars: 4,
+        energy: 'Low',
+        kickMode: 'acoustic',
+        chords: [...prog],
+      },
+    ];
+  }
+
+  const nextState = generateAllSections(nextSong, undefined, baseSeed, true);
+  return { song: nextSong, bandState: nextState };
 }

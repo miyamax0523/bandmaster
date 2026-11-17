@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  applyArrangementPresetToSong,
   createDefaultSongConfig,
   duplicateSectionInSong,
   generateAllSections,
+  getSongDurationSummary,
   isDrumLockedUnsynced,
   pushUndoSnapshot,
   selectInstrumentTake,
@@ -154,5 +156,30 @@ describe('bandState', () => {
       history = pushUndoSnapshot(history, { song, bandState: state });
     }
     expect(history.length).toBe(10);
+  });
+
+  it('computes total bars and formatted duration (MM:SS) and applies arrangement presets', () => {
+    const song = createDefaultSongConfig('rockBand');
+    // Default rockBand: 4 + 8 + 4 + 8 = 24 bars at 135 BPM -> round((24 * 4 * 60) / 135) = 43s -> 0:43
+    expect(getSongDurationSummary(song)).toEqual({
+      totalBars: 24,
+      totalSeconds: 43,
+      formattedDuration: '0:43',
+    });
+
+    // At 120 BPM with 14 bars -> 28s -> 0:28
+    song.bpm = 120;
+    const twoPart = applyArrangementPresetToSong(song, 'twoPart');
+    expect(twoPart.song.sections.length).toBe(2);
+    expect(getSongDurationSummary(twoPart.song).totalBars).toBe(16);
+
+    const fourPart = applyArrangementPresetToSong(song, 'fourPart');
+    expect(fourPart.song.sections.length).toBe(4);
+    expect(getSongDurationSummary(fourPart.song).totalBars).toBe(24);
+
+    const full = applyArrangementPresetToSong(song, 'full');
+    expect(full.song.sections.length).toBe(6);
+    expect(getSongDurationSummary(full.song).totalBars).toBe(32);
+    expect(full.bandState.cellsBySection[full.song.sections[0].id]).toBeDefined();
   });
 });

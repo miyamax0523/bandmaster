@@ -8,6 +8,7 @@ import { SongSettings } from './components/SongSettings';
 import { TrackControls } from './components/TrackControls';
 import { useAudioPreview } from './hooks/useAudioPreview';
 import { useBandGenerator } from './hooks/useBandGenerator';
+import { getSongDurationSummary } from './lib/bandState';
 import { CURRENT_ENGINE_VERSION } from './types/song';
 
 type ActiveTab = 'song' | 'arrangement' | 'members' | 'console';
@@ -22,6 +23,7 @@ export function App() {
     undo,
     updateSongField,
     applyTemplate,
+    applyArrangementPreset,
     updateMember,
     regenerateAll,
     regenerateCell,
@@ -62,6 +64,8 @@ export function App() {
     ? song.sections.find((s) => s.id === riffModalSectionId) ?? null
     : null;
 
+  const durationSummary = getSongDurationSummary(song);
+
   return (
     <div className="app-shell">
       <header className="app-header">
@@ -71,7 +75,8 @@ export function App() {
         </div>
         <div className="song-summary">
           {song.title} · {song.bpm} BPM · {song.key} {song.scale} ·{' '}
-          {song.beatFeel}
+          {song.beatFeel} · {durationSummary.totalBars}小節 (
+          {durationSummary.formattedDuration})
         </div>
       </header>
 
@@ -137,6 +142,10 @@ export function App() {
               canUndo={canUndo}
               onSelectSection={setSelectedSectionId}
               onUndo={undo}
+              onApplyArrangementPreset={(presetId) => {
+                const firstId = applyArrangementPreset(presetId);
+                if (firstId) setSelectedSectionId(firstId);
+              }}
               onAddSection={addSection}
               onRemoveSection={removeSection}
               onDuplicateSection={duplicateSection}

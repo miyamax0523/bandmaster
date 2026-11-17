@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  applyArrangementPresetToSong,
   cloneBandState,
   cloneSongConfig,
   createDefaultSongConfig,
@@ -15,6 +16,7 @@ import {
   updateSectionBars,
   updateSectionDrumLoop,
   updateSectionKickMode,
+  type ArrangementPresetId,
   type BandSnapshot,
   type QuickTemplateId,
 } from '../lib/bandState';
@@ -347,6 +349,19 @@ export function useBandGenerator() {
     [song, updateSectionProps]
   );
 
+  const applyArrangementPreset = useCallback(
+    (presetId: ArrangementPresetId) => {
+      const res = applyArrangementPresetToSong(
+        song,
+        presetId,
+        (Date.now() & 0x7fffff) + 11
+      );
+      commitChange(res.song, res.bandState, true);
+      return res.song.sections[0]?.id ?? '';
+    },
+    [song, commitChange]
+  );
+
   return {
     song,
     bandState,
@@ -356,6 +371,7 @@ export function useBandGenerator() {
     undo,
     updateSongField,
     applyTemplate,
+    applyArrangementPreset,
     updateMember,
     regenerateAll,
     regenerateCell,

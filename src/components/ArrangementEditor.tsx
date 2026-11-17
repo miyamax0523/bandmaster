@@ -1,4 +1,8 @@
 import { useState, type ChangeEvent } from 'react';
+import {
+  getSongDurationSummary,
+  type ArrangementPresetId,
+} from '../lib/bandState';
 import { getDiatonicChords } from '../lib/chordUtils';
 import { extractDrumLoopFromMidi } from '../lib/midiParser';
 import type {
@@ -16,6 +20,7 @@ interface ArrangementEditorProps {
   canUndo: boolean;
   onSelectSection: (id: string) => void;
   onUndo: () => void;
+  onApplyArrangementPreset: (presetId: ArrangementPresetId) => void;
   onAddSection: () => string;
   onRemoveSection: (id: string) => void;
   onDuplicateSection: (id: string) => string;
@@ -43,12 +48,19 @@ const SECTION_TYPES: SectionType[] = [
   'Outro',
 ];
 
+const ARRANGEMENT_PRESETS: Array<{ id: ArrangementPresetId; label: string }> = [
+  { id: 'twoPart', label: '2部構成 (Verse / Chorus)' },
+  { id: 'fourPart', label: '王道4部 (Intro / A / B / サビ)' },
+  { id: 'full', label: 'フル構成 (Intro / A / B / サビ / C / Outro)' },
+];
+
 export function ArrangementEditor({
   song,
   selectedSectionId,
   canUndo,
   onSelectSection,
   onUndo,
+  onApplyArrangementPreset,
   onAddSection,
   onRemoveSection,
   onDuplicateSection,
@@ -70,6 +82,7 @@ export function ArrangementEditor({
 
   const diatonic = getDiatonicChords(song.key, song.scale);
   const currentIdx = song.sections.findIndex((s) => s.id === current.id);
+  const { totalBars, formattedDuration } = getSongDurationSummary(song);
 
   const handleSectionDrumUpload = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -87,14 +100,10 @@ export function ArrangementEditor({
 
   return (
     <div className="tab-content">
-      <div className="toolbar-row">
-        <button
-          type="button"
-          className="btn btn-primary"
-          onClick={() => onSelectSection(onAddSection())}
-        >
-          ＋ セクション追加
-        </button>
+      <div className="arrange-top-bar">
+        <span className="badge badge-info duration-badge">
+          合計: {totalBars}小節 / 約 {formattedDuration}
+        </span>
         <button
           type="button"
           className="btn btn-secondary"
@@ -104,6 +113,22 @@ export function ArrangementEditor({
           ↩ 元に戻す (Undo)
         </button>
       </div>
+
+      <section className="panel preset-panel">
+        <div className="preset-label">構成プリセット（ワンタップ切替）</div>
+        <div className="preset-btn-list">
+          {ARRANGEMENT_PRESETS.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              className="btn btn-secondary preset-btn"
+              onClick={() => onApplyArrangementPreset(p.id)}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+      </section>
 
       <div className="section-pills">
         {song.sections.map((sec, idx) => (
@@ -116,6 +141,31 @@ export function ArrangementEditor({
             {idx + 1}. {sec.name} ({sec.bars}小節)
           </button>
         ))}
+      </div>
+
+      <div className="section-action-bar">
+        <button
+          type="button"
+          className="btn btn-primary"
+          onClick={() => onSelectSection(onAddSection())}
+        >
+          ＋ 追加
+        </button>
+        <button
+          type="button"
+          className="btn btn-secondary"
+          onClick={() => onSelectSection(onDuplicateSection(current.id))}
+        >
+          ⧉ 複製
+        </button>
+        <button
+          type="button"
+          className="btn btn-danger"
+          disabled={song.sections.length <= 1}
+          onClick={() => onRemoveSection(current.id)}
+        >
+          🗑 削除
+        </button>
       </div>
 
       <section className="panel">
@@ -195,21 +245,50 @@ export function ArrangementEditor({
           </div>
 
           <div className="field-row">
-            <label className="field">
+            <div className="field">
               <span>小節数 ({current.bars})</span>
-              <input
-                type="number"
-                min={1}
-                max={32}
-                value={current.bars}
-                onChange={(e) =>
-                  onChangeSectionBars(
-                    current.id,
-                    Number(e.target.value) || 1
-                  )
-                }
-              />
-            </label>
+              <div className="bars-stepper">
+                <button
+                  type="button"
+                  className="btn btn-secondary bars-step-btn"
+                  disabled={current.bars <= 1}
+                  aria-label="小節数を1減らす"
+                  onClick={() =>
+                    onChangeSectionBars(current.id, Math.max(1, current.bars - 1))
+                  }
+                >
+                  -1
+                </button>
+                <input
+                  type="number"
+                  className="bars-step-input"
+                  min={1}
+                  max={32}
+                  value={current.bars}
+                  aria-label="小節数"
+                  onChange={(e) =>
+                    onChangeSectionBars(
+                      current.id,
+                      Number(e.target.value) || 1
+                    )
+                  }
+                />
+                <button
+                  type="button"
+                  className="btn btn-secondary bars-step-btn"
+                  disabled={current.bars >= 32}
+                  aria-label="小節数を1増やす"
+                  onClick={() =>
+                    onChangeSectionBars(
+                      current.id,
+                      Math.min(32, current.bars + 1)
+                    )
+                  }
+                >
+                  +1
+                </button>
+              </div>
+            </div>
 
             <label className="field">
               <span>Energy</span>
