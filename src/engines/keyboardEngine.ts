@@ -17,24 +17,21 @@ function buildKeyboardVoicing(
   const rootMidi = fitPitchClassToRange(rootSemitone, minP, Math.min(72, maxP));
 
   const pitchSet = new Set<number>();
-  const effectiveIntervals = [...intervals];
+  const intervalSet = new Set<number>(intervals);
 
-  if (params.sus2 && !effectiveIntervals.includes(2)) {
-    // Replace 3rd with 2nd if sus2 tension requested
-    const idx3 = effectiveIntervals.indexOf(3);
-    const idx4 = effectiveIntervals.indexOf(4);
-    if (idx3 !== -1) effectiveIntervals.splice(idx3, 1, 2);
-    else if (idx4 !== -1) effectiveIntervals.splice(idx4, 1, 2);
-    else effectiveIntervals.push(2);
+  if (params.sus2 && !intervalSet.has(2)) {
+    if (intervalSet.has(3)) intervalSet.delete(3);
+    if (intervalSet.has(4)) intervalSet.delete(4);
+    intervalSet.add(2);
   }
-  if (params.add7 && !effectiveIntervals.includes(10) && !effectiveIntervals.includes(11)) {
-    effectiveIntervals.push(10);
+  if (params.add7 && !intervalSet.has(10) && !intervalSet.has(11)) {
+    intervalSet.add(10);
   }
-  if (params.add9 && !effectiveIntervals.includes(14)) {
-    effectiveIntervals.push(14);
+  if (params.add9) {
+    intervalSet.add(14);
   }
 
-  for (const iv of effectiveIntervals) {
+  for (const iv of intervalSet) {
     let p = rootMidi + iv;
     while (p < minP) p += 12;
     while (p > maxP && p - 12 >= minP) p -= 12;

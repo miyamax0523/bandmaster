@@ -1,16 +1,18 @@
 import { TICKS_PER_BAR, TICKS_PER_BEAT } from '../types/song';
 import type { AudioPreviewState } from '../lib/audioPreview';
+import type { PlaybackMode } from '../hooks/useAudioPreview';
 import type { SectionSpan } from '../lib/noteSelector';
 
 interface PlaybackControlsProps {
   previewState: AudioPreviewState;
+  playbackMode: PlaybackMode;
   activeSectionId: string;
   sectionSpans: SectionSpan[];
   onPlay: () => void;
   onPause: () => void;
   onStop: () => void;
   onSeek: (tick: number) => void;
-  onToggleSectionLoop: (span: SectionSpan | null) => void;
+  onChangePlaybackMode: (mode: PlaybackMode) => void;
 }
 
 function formatPosition(tick: number): string {
@@ -21,23 +23,38 @@ function formatPosition(tick: number): string {
 
 export function PlaybackControls({
   previewState,
+  playbackMode,
   activeSectionId,
   sectionSpans,
   onPlay,
   onPause,
   onStop,
   onSeek,
-  onToggleSectionLoop,
+  onChangePlaybackMode,
 }: PlaybackControlsProps) {
   const activeSpan =
     sectionSpans.find((s) => s.sectionId === activeSectionId) ?? null;
-  const isLoopingActive =
-    previewState.sectionLoop !== null &&
-    activeSpan !== null &&
-    previewState.sectionLoop.sectionId === activeSpan.sectionId;
 
   return (
     <section className="transport-bar" aria-label="Playback Controls">
+      <div className="mode-toggle-row" role="group" aria-label="再生モード">
+        <button
+          type="button"
+          className={`btn mode-btn ${playbackMode === 'song' ? 'btn-primary' : 'btn-secondary'}`}
+          onClick={() => onChangePlaybackMode('song')}
+        >
+          🎵 通し再生（全曲）
+        </button>
+        <button
+          type="button"
+          className={`btn mode-btn ${playbackMode === 'section' ? 'btn-accent' : 'btn-secondary'}`}
+          disabled={!activeSpan}
+          onClick={() => onChangePlaybackMode('section')}
+        >
+          🔁 このセクションだけ再生（ループ）
+        </button>
+      </div>
+
       <div className="transport-buttons">
         {previewState.status === 'playing' ? (
           <button
@@ -59,16 +76,6 @@ export function PlaybackControls({
         )}
         <button type="button" className="btn btn-secondary" onClick={onStop}>
           ⏹ 停止
-        </button>
-        <button
-          type="button"
-          className={`btn ${isLoopingActive ? 'btn-accent' : 'btn-secondary'}`}
-          disabled={!activeSpan}
-          onClick={() =>
-            onToggleSectionLoop(isLoopingActive ? null : activeSpan)
-          }
-        >
-          🔁 セクションループ
         </button>
       </div>
 

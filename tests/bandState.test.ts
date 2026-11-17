@@ -7,6 +7,7 @@ import {
   getSongDurationSummary,
   isDrumLockedUnsynced,
   pushUndoSnapshot,
+  reorderSectionsInSong,
   selectInstrumentTake,
   setSectionUnisonRiff,
   toggleCellLock,
@@ -14,6 +15,7 @@ import {
   updateSectionBars,
   updateSectionKickMode,
 } from '../src/lib/bandState';
+import { detectHorizontalSwipe } from '../src/lib/touchSwipe';
 import type { UnisonRiffData } from '../src/types/song';
 
 describe('bandState', () => {
@@ -181,5 +183,26 @@ describe('bandState', () => {
     expect(full.song.sections.length).toBe(6);
     expect(getSongDurationSummary(full.song).totalBars).toBe(32);
     expect(full.bandState.cellsBySection[full.song.sections[0].id]).toBeDefined();
+  });
+
+  it('reorders sections cleanly and detects horizontal swipes without vertical scroll false positives', () => {
+    const song = createDefaultSongConfig('rockBand');
+    const origIds = song.sections.map((s) => s.id);
+    const reordered = reorderSectionsInSong(song, 0, 2);
+    expect(reordered.sections.map((s) => s.id)).toEqual([
+      origIds[1],
+      origIds[2],
+      origIds[0],
+      origIds[3],
+    ]);
+    // Out-of-bounds or no-op returns original reference
+    expect(reorderSectionsInSong(song, 1, 1)).toBe(song);
+    expect(reorderSectionsInSong(song, -1, 2)).toBe(song);
+
+    // Swipe detection: >= 50px and >= 1.5x vertical delta
+    expect(detectHorizontalSwipe(-60, 10)).toBe('next');
+    expect(detectHorizontalSwipe(75, -20)).toBe('prev');
+    expect(detectHorizontalSwipe(-40, 5)).toBeNull(); // too short
+    expect(detectHorizontalSwipe(-60, 50)).toBeNull(); // diagonal / vertical scroll
   });
 });

@@ -233,4 +233,52 @@ describe('audioPreview', () => {
 
     engine.dispose();
   });
+
+  it('loops a single section cleanly, wraps at endTick without double-trigger, and seeks immediately when switching sections', async () => {
+    const { mockCtx, createdOscs } = createMockAudioContext();
+    const engine = new AudioPreviewEngine(
+      () => mockCtx as unknown as AudioContext
+    );
+
+    // 2 sections: sec1 [0..1920), sec2 [1920..3840)
+    const tracks: LogicalTracks = {
+      drums: [],
+      kick808: [],
+      bass: [
+        { pitch: 40, velocity: 100, startTick: 0, durationTicks: 240, channel: 0 },
+        { pitch: 43, velocity: 100, startTick: 1920, durationTicks: 240, channel: 0 },
+      ],
+      keyboard: [],
+      pad: [],
+    };
+    engine.loadSongData(tracks, 120, 3840);
+
+    const span1 = { sectionId: 's1', sectionIndex: 0, startTick: 0, endTick: 1920 };
+    const span2 = { sectionId: 's2', sectionIndex: 1, startTick: 1920, endTick: 3840 };
+
+    // Start playing span2 -> starts from 1920
+    await engine.playSection(span2);
+    expect(engine.getState().status).toBe('playing');
+    expect(engine.getState().currentTick).toBe(1920);
+    expect(createdOscs.length).toBe(1);
+
+    // Advance near end of span2 (1.9s = 1824 ticks -> currentTick = 3744; lookahead 144 -> 3888 wraps to 1968)
+    mockCtx.currentTime = 1.9;
+    vi.advanceTimersByTime(SCHEDULER_INTERVAL_MS);
+    expect(createdOscs.length).toBe(2); // wrapped note at 1920 scheduled once
+
+    // Advance past end of span2 (2.05s = 1968 ticks -> wraps cleanly without re-triggering 1920)
+    mockCtx.currentTime = 2.05;
+    vi.advanceTimersByTime(SCHEDULER_INTERVAL_MS);
+    expect(createdOscs.length).toBe(2);
+    expect(engine.getState().currentTick).toBeLessThan(3840);
+    expect(engine.getState().currentTick).toBeGreaterThanOrEqual(1920);
+
+    // Switch section loop to span1 while playing -> immediately seeks to 0 and schedules note at 0
+    engine.setSectionLoop(span1);
+    expect(engine.getState().currentTick).toBe(0);
+    expect(createdOscs.length).toBe(3);
+
+    engine.dispose();
+  });
 });

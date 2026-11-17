@@ -33,6 +33,7 @@ export function App() {
     removeSection,
     duplicateSection,
     moveSection,
+    reorderSection,
     updateSectionProps,
     changeSectionBars,
     changeSectionKickMode,
@@ -43,8 +44,6 @@ export function App() {
     transposeSectionChords,
   } = useBandGenerator();
 
-  const audio = useAudioPreview(song, bandState);
-
   // Tab 4: BANDMASTER CONSOLE is initial default tab
   const [activeTab, setActiveTab] = useState<ActiveTab>('console');
   const [selectedSectionId, setSelectedSectionId] = useState<string>(
@@ -53,6 +52,8 @@ export function App() {
   const [riffModalSectionId, setRiffModalSectionId] = useState<string | null>(
     null
   );
+
+  const audio = useAudioPreview(song, bandState, selectedSectionId);
 
   useEffect(() => {
     if (!song.sections.some((s) => s.id === selectedSectionId)) {
@@ -141,6 +142,7 @@ export function App() {
               selectedSectionId={selectedSectionId}
               canUndo={canUndo}
               onSelectSection={setSelectedSectionId}
+              onPreviewSection={audio.previewSection}
               onUndo={undo}
               onApplyArrangementPreset={(presetId) => {
                 const firstId = applyArrangementPreset(presetId);
@@ -150,6 +152,7 @@ export function App() {
               onRemoveSection={removeSection}
               onDuplicateSection={duplicateSection}
               onMoveSection={moveSection}
+              onReorderSection={reorderSection}
               onUpdateSectionProps={updateSectionProps}
               onChangeSectionBars={changeSectionBars}
               onChangeSectionKickMode={changeSectionKickMode}
@@ -172,6 +175,7 @@ export function App() {
               selectedSectionId={selectedSectionId}
               canUndo={canUndo}
               onSelectSection={setSelectedSectionId}
+              onPreviewSection={audio.previewSection}
               onRegenerateAll={regenerateAll}
               onUndo={undo}
               onRegenerateCell={regenerateCell}
@@ -184,13 +188,14 @@ export function App() {
         <aside className="side-col">
           <PlaybackControls
             previewState={audio.previewState}
+            playbackMode={audio.playbackMode}
             activeSectionId={selectedSectionId}
             sectionSpans={audio.sectionSpans}
             onPlay={audio.play}
             onPause={audio.pause}
             onStop={audio.stop}
             onSeek={audio.seek}
-            onToggleSectionLoop={audio.setSectionLoop}
+            onChangePlaybackMode={audio.setPlaybackMode}
           />
           <TrackControls
             mixer={audio.previewState.mixer}

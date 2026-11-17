@@ -1,5 +1,6 @@
 import { isCellOutdated, isDrumLockedUnsynced } from '../lib/bandState';
 import { isAutoTacet } from '../lib/noteSelector';
+import { useHorizontalSwipe } from '../lib/touchSwipe';
 import type { InstrumentType, SongConfig, TakeStyle } from '../types/song';
 import type { BandState } from '../types/track';
 import { MidiExportButton } from './MidiExportButton';
@@ -11,6 +12,7 @@ interface BandmasterConsoleProps {
   selectedSectionId: string;
   canUndo: boolean;
   onSelectSection: (id: string) => void;
+  onPreviewSection: (sectionId: string) => void;
   onRegenerateAll: () => void;
   onUndo: () => void;
   onRegenerateCell: (sectionId: string, inst: InstrumentType) => void;
@@ -35,14 +37,32 @@ export function BandmasterConsole({
   selectedSectionId,
   canUndo,
   onSelectSection,
+  onPreviewSection,
   onRegenerateAll,
   onUndo,
   onRegenerateCell,
   onSelectTake,
   onToggleLock,
 }: BandmasterConsoleProps) {
-  const section =
-    song.sections.find((s) => s.id === selectedSectionId) ?? song.sections[0];
+  const currentIdx = Math.max(
+    0,
+    song.sections.findIndex((s) => s.id === selectedSectionId)
+  );
+  const section = song.sections[currentIdx];
+
+  const swipeHandlers = useHorizontalSwipe(
+    () => {
+      if (currentIdx < song.sections.length - 1) {
+        onSelectSection(song.sections[currentIdx + 1].id);
+      }
+    },
+    () => {
+      if (currentIdx > 0) {
+        onSelectSection(song.sections[currentIdx - 1].id);
+      }
+    }
+  );
+
   if (!section) return null;
 
   const cells = bandState.cellsBySection[section.id];
@@ -90,17 +110,29 @@ export function BandmasterConsole({
       </div>
 
       <div className="section-meta-bar">
-        <span>
-          <strong>{section.name}</strong> [{section.type}] · {section.bars}小節 ·
-          Energy: {section.energy} · Kick:{' '}
-          {section.kickMode === '808' ? '🔊 808' : '🥁 生'}
-        </span>
-        {section.unisonRiff && (
-          <span className="badge badge-accent">🎸 ユニゾンリフ適用中</span>
-        )}
+        <div className="section-meta-info">
+          <span className="badge badge-info page-indicator">
+            {currentIdx + 1} / {song.sections.length}
+          </span>
+          <span>
+            <strong>{section.name}</strong> [{section.type}] · {section.bars}小節 ·
+            Energy: {section.energy} · Kick:{' '}
+            {section.kickMode === '808' ? '🔊 808' : '🥁 生'}
+          </span>
+          {section.unisonRiff && (
+            <span className="badge badge-accent">🎸 ユニゾンリフ適用中</span>
+          )}
+        </div>
+        <button
+          type="button"
+          className="btn btn-accent section-preview-btn"
+          onClick={() => onPreviewSection(section.id)}
+        >
+          ▶ このセクション試聴
+        </button>
       </div>
 
-      <div className="console-cards">
+      <div className="console-cards" {...swipeHandlers}>
         {INSTRUMENTS.map(({ key, label, icon }) => {
           const member = song.members[key];
           const cell = cells?.[key];

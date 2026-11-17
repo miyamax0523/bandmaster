@@ -9,6 +9,7 @@ import {
   generateSectionCells,
   pushUndoSnapshot,
   regenerateInstrumentCell,
+  reorderSectionsInSong,
   selectInstrumentTake,
   setSectionUnisonRiff,
   toggleCellLock,
@@ -245,9 +246,16 @@ export function useBandGenerator() {
       if (idx === -1 || targetIdx < 0 || targetIdx >= song.sections.length) {
         return;
       }
-      const nextSong = cloneSongConfig(song);
-      const [item] = nextSong.sections.splice(idx, 1);
-      nextSong.sections.splice(targetIdx, 0, item);
+      const nextSong = reorderSectionsInSong(song, idx, targetIdx);
+      commitChange(nextSong, bandState, true);
+    },
+    [song, bandState, commitChange]
+  );
+
+  const reorderSection = useCallback(
+    (fromIndex: number, toIndex: number) => {
+      const nextSong = reorderSectionsInSong(song, fromIndex, toIndex);
+      if (nextSong === song) return;
       commitChange(nextSong, bandState, true);
     },
     [song, bandState, commitChange]
@@ -381,6 +389,7 @@ export function useBandGenerator() {
     removeSection,
     duplicateSection,
     moveSection,
+    reorderSection,
     updateSectionProps,
     changeSectionBars,
     changeSectionKickMode,

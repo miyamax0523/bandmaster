@@ -35,32 +35,63 @@ export function generatePadNotes(input: EngineInput): MidiNote[] {
     const maxP = playStyle === 'Dark Ambient' ? Math.min(67, params.voicingMax) : params.voicingMax;
     const rootMidi = fitPitchClassToRange(chord.rootSemitone, minP, Math.min(minP + 11, maxP));
 
-    const intervals: number[] = [0];
+    const intervalSet = new Set<number>();
+    const isPlainTriad =
+      chord.intervals.length === 3 &&
+      chord.intervals[0] === 0 &&
+      (chord.intervals[1] === 3 || chord.intervals[1] === 4) &&
+      chord.intervals[2] === 7;
+
     if (playStyle === 'Dark Ambient') {
-      intervals.push(7);
-      if (chord.quality === 'minor') intervals.push(3);
-      if (params.add9) intervals.push(14);
-    } else if (playStyle === 'Floating Tension' || params.add9 || params.add7 || params.sus2) {
-      intervals.push(7, 12);
-      if (params.sus2 || playStyle === 'Floating Tension') intervals.push(2);
-      if (params.add7 || playStyle === 'Floating Tension') {
-        intervals.push(chord.intervals.includes(11) ? 11 : 10);
+      for (const iv of chord.intervals) {
+        intervalSet.add(iv);
+      }
+      if (params.add9) intervalSet.add(14);
+    } else if (
+      playStyle === 'Floating Tension' ||
+      params.add9 ||
+      params.add7 ||
+      params.sus2
+    ) {
+      for (const iv of chord.intervals) {
+        intervalSet.add(iv);
+      }
+      intervalSet.add(12);
+      if (params.sus2 || playStyle === 'Floating Tension') {
+        intervalSet.add(2);
+      }
+      if (
+        (params.add7 || playStyle === 'Floating Tension') &&
+        !intervalSet.has(10) &&
+        !intervalSet.has(11)
+      ) {
+        intervalSet.add(10);
       }
       if (params.add9 || playStyle === 'Floating Tension') {
-        intervals.push(14);
+        intervalSet.add(14);
       }
-    } else {
-      // Power: Root, +7, +12
-      intervals.push(7, 12);
+    } else if (isPlainTriad) {
+      // Power voicing on plain triads: Root, +7, +12
+      intervalSet.add(0);
+      intervalSet.add(7);
+      intervalSet.add(12);
       if (style === 'C') {
         const third = chord.quality === 'minor' ? 3 : 4;
-        intervals.push(third + 12);
+        intervalSet.add(third + 12);
+      }
+    } else {
+      // Non-triad / tension / sus / power chords: honor parsed intervals directly
+      for (const iv of chord.intervals) {
+        intervalSet.add(iv);
+      }
+      if (chord.quality !== 'power') {
+        intervalSet.add(12);
       }
     }
 
     const uniquePitches = Array.from(
       new Set(
-        intervals
+        Array.from(intervalSet)
           .map((iv) => rootMidi + iv)
           .filter((p) => p >= minP && p <= maxP)
       )

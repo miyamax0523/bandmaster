@@ -539,6 +539,28 @@ export function duplicateSectionInSong(
   return { song: nextSong, bandState: nextState };
 }
 
+export function reorderSectionsInSong(
+  song: SongConfig,
+  fromIndex: number,
+  toIndex: number
+): SongConfig {
+  const len = song.sections.length;
+  if (
+    len <= 1 ||
+    fromIndex < 0 ||
+    fromIndex >= len ||
+    toIndex < 0 ||
+    toIndex >= len ||
+    fromIndex === toIndex
+  ) {
+    return song;
+  }
+  const nextSong = cloneSongConfig(song);
+  const [moved] = nextSong.sections.splice(fromIndex, 1);
+  nextSong.sections.splice(toIndex, 0, moved);
+  return nextSong;
+}
+
 export function isDrumLockedUnsynced(
   section: Section,
   cells?: SectionBandCells

@@ -90,6 +90,7 @@ export class AudioPreviewEngine {
   private nextScheduleTick = 0;
   private anchorAudioTime = 0;
   private anchorTick = 0;
+  private loopWrappedUntil: number | null = null;
   private timerId: ReturnType<typeof setInterval> | null = null;
   private activeVoices = new Set<ActiveVoice>();
   private listeners = new Set<(state: AudioPreviewState) => void>();
@@ -229,8 +230,42 @@ export class AudioPreviewEngine {
   }
 
   setSectionLoop(span: SectionSpan | null): void {
+    const prev = this.sectionLoop;
+    const changed =
+      prev?.sectionId !== span?.sectionId ||
+      prev?.startTick !== span?.startTick ||
+      prev?.endTick !== span?.endTick;
+
     this.sectionLoop = span ? { ...span } : null;
+    this.loopWrappedUntil = null;
+
+    if (span) {
+      const outOfBounds =
+        this.currentTick < span.startTick || this.currentTick >= span.endTick;
+      if (changed || outOfBounds) {
+        if (this.status === 'playing') {
+          this.seek(span.startTick);
+          return;
+        }
+        this.currentTick = span.startTick;
+        this.anchorTick = span.startTick;
+        this.nextScheduleTick = span.startTick;
+      }
+    }
     this.emit();
+  }
+
+  async playSection(span: SectionSpan): Promise<void> {
+    this.sectionLoop = { ...span };
+    this.loopWrappedUntil = null;
+    if (this.status === 'playing') {
+      this.seek(span.startTick);
+      return;
+    }
+    this.currentTick = span.startTick;
+    this.anchorTick = span.startTick;
+    this.nextScheduleTick = span.startTick;
+    await this.play();
   }
 
   async play(): Promise<void> {
@@ -276,6 +311,7 @@ export class AudioPreviewEngine {
     this.currentTick = 0;
     this.nextScheduleTick = 0;
     this.anchorTick = 0;
+    this.loopWrappedUntil = null;
     this.emit();
   }
 
@@ -284,6 +320,7 @@ export class AudioPreviewEngine {
     this.currentTick = clamped;
     this.anchorTick = clamped;
     this.nextScheduleTick = clamped;
+    this.loopWrappedUntil = null;
 
     if (this.status === 'playing' && this.ctx) {
       this.stopAllActiveVoices();
@@ -363,7 +400,11 @@ export class AudioPreviewEngine {
         this.currentTick = wrapped;
         this.anchorTick = wrapped;
         this.anchorAudioTime = this.ctx.currentTime;
-        this.nextScheduleTick = wrapped;
+        this.nextScheduleTick = Math.max(
+          wrapped,
+          this.loopWrappedUntil ?? wrapped
+        );
+        this.loopWrappedUntil = null;
       } else {
         this.stop();
         return;
@@ -374,7 +415,12 @@ export class AudioPreviewEngine {
     const windowEndTick = Math.min(loopEnd, this.currentTick + lookaheadTicks);
 
     if (this.nextScheduleTick < windowEndTick) {
-      this.scheduleRange(this.nextScheduleTick, windowEndTick);
+      this.scheduleRange(
+        this.nextScheduleTick,
+        windowEndTick,
+        this.anchorAudioTime,
+        this.anchorTick
+      );
       this.nextScheduleTick = windowEndTick;
     }
 
@@ -382,12 +428,13 @@ export class AudioPreviewEngine {
     if (this.sectionLoop && this.currentTick + lookaheadTicks > loopEnd) {
       const remainingTicks = this.currentTick + lookaheadTicks - loopEnd;
       const wrapEnd = Math.min(loopEnd, loopStart + remainingTicks);
-      if (wrapEnd > loopStart) {
-        const wrapTimeOffsetSec = ticksToSeconds(
-          loopEnd - this.currentTick,
-          this.bpm
-        );
-        this.scheduleRange(loopStart, wrapEnd, wrapTimeOffsetSec);
+      const wrapFrom = this.loopWrappedUntil ?? loopStart;
+      if (wrapEnd > wrapFrom) {
+        const wrapBaseTime =
+          this.ctx.currentTime +
+          ticksToSeconds(Math.max(0, loopEnd - this.currentTick), this.bpm);
+        this.scheduleRange(wrapFrom, wrapEnd, wrapBaseTime, loopStart);
+        this.loopWrappedUntil = wrapEnd;
       }
     }
 
@@ -397,7 +444,8 @@ export class AudioPreviewEngine {
   private scheduleRange(
     fromTick: number,
     toTick: number,
-    extraDelaySec = 0
+    baseAudioTime: number,
+    baseTick: number
   ): void {
     if (!this.ctx) return;
 
@@ -411,11 +459,10 @@ export class AudioPreviewEngine {
       const notes = this.tracks[track];
       for (const note of notes) {
         if (note.startTick >= fromTick && note.startTick < toTick) {
-          const offsetFromAnchor = note.startTick - this.anchorTick;
+          const offsetFromBase = note.startTick - baseTick;
           const noteTime =
-            this.anchorAudioTime +
-            extraDelaySec +
-            ticksToSeconds(Math.max(0, offsetFromAnchor), this.bpm);
+            baseAudioTime +
+            ticksToSeconds(Math.max(0, offsetFromBase), this.bpm);
           this.triggerNote(track, note, Math.max(this.ctx.currentTime, noteTime));
         }
       }

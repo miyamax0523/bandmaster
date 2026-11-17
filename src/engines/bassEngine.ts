@@ -185,7 +185,7 @@ export function generateBassNotes(input: EngineInput): MidiNote[] {
     );
 
     const barHeadPitch = fitPitchClassToRange(
-      chord.rootSemitone,
+      chord.bassPitchClass ?? chord.rootPitchClass,
       params.barHeadRootMin,
       params.barHeadRootMax
     );
@@ -324,7 +324,7 @@ export function generateBassNotes(input: EngineInput): MidiNote[] {
     ) {
       const passTick = barStart + 1680;
       const nextRoot = fitPitchClassToRange(
-        nextChord.rootSemitone,
+        nextChord.bassPitchClass ?? nextChord.rootPitchClass,
         params.barHeadRootMin,
         params.barHeadRootMax
       );

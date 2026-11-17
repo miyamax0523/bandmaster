@@ -34,14 +34,23 @@ export type ChordQuality =
   | 'sus4'
   | 'power';
 
+export type ChordPaletteMode =
+  | 'triad'
+  | 'seventh'
+  | 'ninth'
+  | 'add9sus'
+  | 'power';
+
 export interface ParsedChord {
   raw: string;
   root: KeyName;
   rootSemitone: number; // 0..11 (C=0)
+  rootPitchClass: number; // 0..11 alias
   quality: ChordQuality;
   tensions: string[];
   bass?: KeyName;
   bassSemitone?: number;
+  bassPitchClass?: number;
   intervals: number[]; // semitones from root
 }
 
@@ -59,13 +68,29 @@ export function semitoneToKeyName(semitone: number): KeyName {
   return KEY_NAMES[mod];
 }
 
+function splitSlashChord(trimmed: string): { mainPart: string; slashPart?: string } {
+  const slashIdx = trimmed.lastIndexOf('/');
+  if (slashIdx === -1) {
+    return { mainPart: trimmed };
+  }
+  const candidateBass = trimmed.slice(slashIdx + 1).trim();
+  // Keep 6/9 style numeric slash if right-hand side is not a note name
+  if (/^[A-G][#b]?$/.test(candidateBass)) {
+    return {
+      mainPart: trimmed.slice(0, slashIdx).trim(),
+      slashPart: candidateBass,
+    };
+  }
+  return { mainPart: trimmed };
+}
+
 export function parseChord(chordName: string): ParsedChord {
   const trimmed = chordName.trim();
   if (!trimmed) {
     throw new Error('Empty chord name');
   }
 
-  const [mainPart, slashPart] = trimmed.split('/');
+  const { mainPart, slashPart } = splitSlashChord(trimmed);
   const rootMatch = mainPart.match(/^([A-G])([#b]?)(.*)$/);
   if (!rootMatch) {
     throw new Error(`Invalid chord name: "${chordName}"`);
@@ -74,16 +99,15 @@ export function parseChord(chordName: string): ParsedChord {
   const rawRoot = rootMatch[1] + rootMatch[2];
   const rootSemitone = noteNameToSemitone(rawRoot);
   const root = semitoneToKeyName(rootSemitone);
-  const suffix = rootMatch[3];
+  const suffix = rootMatch[3].trim();
 
   let bass: KeyName | undefined;
   let bassSemitone: number | undefined;
-  if (slashPart) {
-    const bassMatch = slashPart.match(/^([A-G][#b]?)$/);
-    if (!bassMatch) {
+  if (slashPart !== undefined) {
+    if (!/^([A-G][#b]?)$/.test(slashPart)) {
       throw new Error(`Invalid slash bass in chord: "${chordName}"`);
     }
-    bassSemitone = noteNameToSemitone(bassMatch[1]);
+    bassSemitone = noteNameToSemitone(slashPart);
     bass = semitoneToKeyName(bassSemitone);
   }
 
@@ -94,67 +118,150 @@ export function parseChord(chordName: string): ParsedChord {
   if (suffix === '5') {
     quality = 'power';
     intervals = [0, 7];
-  } else if (suffix.startsWith('m7b5') || suffix.startsWith('ø')) {
+  } else if (
+    suffix === 'mM7' ||
+    suffix === 'mMaj7' ||
+    suffix === 'm(maj7)' ||
+    suffix === 'm△7'
+  ) {
+    quality = 'minor';
+    intervals = [0, 3, 7, 11];
+    tensions.push('maj7');
+  } else if (suffix === 'm7b5' || suffix === 'm7-5' || suffix === 'ø' || suffix === 'ø7') {
     quality = 'dim';
     intervals = [0, 3, 6, 10];
     tensions.push('b5', '7');
-  } else if (suffix.startsWith('dim')) {
+  } else if (suffix === 'dim7') {
+    quality = 'dim';
+    intervals = [0, 3, 6, 9];
+    tensions.push('dim7');
+  } else if (suffix === 'dim') {
     quality = 'dim';
     intervals = [0, 3, 6];
-    if (suffix.includes('7')) {
-      intervals.push(9);
-      tensions.push('dim7');
-    }
-  } else if (suffix.startsWith('aug') || suffix.startsWith('+')) {
-    quality = 'aug';
-    intervals = [0, 4, 8];
-  } else if (suffix.startsWith('sus2')) {
-    quality = 'sus2';
-    intervals = [0, 2, 7];
-  } else if (suffix.startsWith('sus4') || suffix === 'sus') {
+  } else if (suffix === '7sus4') {
+    quality = 'sus4';
+    intervals = [0, 5, 7, 10];
+    tensions.push('7');
+  } else if (suffix === 'sus4' || suffix === 'sus') {
     quality = 'sus4';
     intervals = [0, 5, 7];
-  } else if (
-    suffix.startsWith('m') &&
-    !suffix.startsWith('maj')
-  ) {
+  } else if (suffix === 'sus2') {
+    quality = 'sus2';
+    intervals = [0, 2, 7];
+  } else if (suffix === 'aug' || suffix === '+') {
+    quality = 'aug';
+    intervals = [0, 4, 8];
+  } else if (suffix === 'M9' || suffix === 'maj9' || suffix === '△9') {
+    quality = 'major';
+    intervals = [0, 4, 7, 11, 14];
+    tensions.push('maj7', '9');
+  } else if (suffix === 'M7' || suffix === 'maj7' || suffix === '△7') {
+    quality = 'major';
+    intervals = [0, 4, 7, 11];
+    tensions.push('maj7');
+  } else if (suffix === '69' || suffix === '6/9') {
+    quality = 'major';
+    intervals = [0, 4, 7, 9, 14];
+    tensions.push('6', '9');
+  } else if (suffix === 'madd9' || suffix === 'm(add9)') {
+    quality = 'minor';
+    intervals = [0, 3, 7, 14];
+    tensions.push('add9');
+  } else if (suffix === 'm9') {
+    quality = 'minor';
+    intervals = [0, 3, 7, 10, 14];
+    tensions.push('7', '9');
+  } else if (suffix === 'm7') {
+    quality = 'minor';
+    intervals = [0, 3, 7, 10];
+    tensions.push('7');
+  } else if (suffix === 'm6') {
+    quality = 'minor';
+    intervals = [0, 3, 7, 9];
+    tensions.push('6');
+  } else if (suffix === 'm') {
     quality = 'minor';
     intervals = [0, 3, 7];
-  }
-
-  // Tensions
-  if (suffix.includes('maj7') || suffix.includes('M7')) {
-    if (!intervals.includes(11)) intervals.push(11);
-    tensions.push('maj7');
-  } else if (suffix.includes('7') && quality !== 'dim') {
-    if (!intervals.includes(10)) intervals.push(10);
-    tensions.push('7');
-  }
-
-  if (suffix.includes('add9')) {
-    if (!intervals.includes(14)) intervals.push(14);
+  } else if (suffix === 'add9' || suffix === '(add9)') {
+    quality = 'major';
+    intervals = [0, 4, 7, 14];
     tensions.push('add9');
-  } else if (suffix.includes('9') && !suffix.includes('b9')) {
-    if (!intervals.includes(10) && !intervals.includes(11)) {
-      intervals.push(10);
-    }
-    if (!intervals.includes(14)) intervals.push(14);
-    tensions.push('9');
-  }
-
-  if (suffix.includes('6') && !suffix.includes('b6')) {
-    if (!intervals.includes(9)) intervals.push(9);
+  } else if (suffix === '9') {
+    quality = 'major';
+    intervals = [0, 4, 7, 10, 14];
+    tensions.push('7', '9');
+  } else if (suffix === '7') {
+    quality = 'major';
+    intervals = [0, 4, 7, 10];
+    tensions.push('7');
+  } else if (suffix === '6') {
+    quality = 'major';
+    intervals = [0, 4, 7, 9];
     tensions.push('6');
+  } else if (suffix === '') {
+    quality = 'major';
+    intervals = [0, 4, 7];
+  } else {
+    // General fallback parser for compound suffixes (e.g. aug7, M7add9)
+    if (suffix.startsWith('dim')) {
+      quality = 'dim';
+      intervals = [0, 3, 6];
+    } else if (suffix.startsWith('aug') || suffix.startsWith('+')) {
+      quality = 'aug';
+      intervals = [0, 4, 8];
+    } else if (suffix.includes('sus2')) {
+      quality = 'sus2';
+      intervals = [0, 2, 7];
+    } else if (suffix.includes('sus4')) {
+      quality = 'sus4';
+      intervals = [0, 5, 7];
+    } else if (suffix.startsWith('m') && !suffix.startsWith('maj')) {
+      quality = 'minor';
+      intervals = [0, 3, 7];
+    }
+
+    if (
+      suffix.includes('maj7') ||
+      suffix.includes('Maj7') ||
+      suffix.includes('M7') ||
+      suffix.includes('△7') ||
+      suffix.includes('maj9') ||
+      suffix.includes('M9')
+    ) {
+      if (!intervals.includes(11)) intervals.push(11);
+      tensions.push('maj7');
+    } else if (suffix.includes('7') && quality !== 'dim') {
+      if (!intervals.includes(10)) intervals.push(10);
+      tensions.push('7');
+    }
+
+    if (suffix.includes('add9')) {
+      if (!intervals.includes(14)) intervals.push(14);
+      tensions.push('add9');
+    } else if (suffix.includes('9') && !suffix.includes('b9')) {
+      if (!intervals.includes(10) && !intervals.includes(11)) {
+        intervals.push(10);
+      }
+      if (!intervals.includes(14)) intervals.push(14);
+      tensions.push('9');
+    }
+
+    if (suffix.includes('6') && !suffix.includes('b6')) {
+      if (!intervals.includes(9)) intervals.push(9);
+      tensions.push('6');
+    }
   }
 
   return {
     raw: trimmed,
     root,
     rootSemitone,
+    rootPitchClass: rootSemitone,
     quality,
     tensions,
     bass,
     bassSemitone,
+    bassPitchClass: bassSemitone,
     intervals,
   };
 }
@@ -162,25 +269,93 @@ export function parseChord(chordName: string): ParsedChord {
 export function getDiatonicChords(key: KeyName, scale: ScaleType): string[] {
   const rootIdx = noteNameToSemitone(key);
   if (scale === 'Major') {
-    // I, ii, iii, IV, V, vi, vii°
     const offsets = [0, 2, 4, 5, 7, 9, 11];
     const suffixes = ['', 'm', 'm', '', '', 'm', 'm7b5'];
-    return offsets.map((off, i) => `${semitoneToKeyName(rootIdx + off)}${suffixes[i]}`);
-  } else {
-    // Natural Minor: i, ii°, III, iv, v, VI, VII
-    const offsets = [0, 2, 3, 5, 7, 8, 10];
-    const suffixes = ['m', 'm7b5', '', 'm', 'm', '', ''];
-    return offsets.map((off, i) => `${semitoneToKeyName(rootIdx + off)}${suffixes[i]}`);
+    return offsets.map(
+      (off, i) => `${semitoneToKeyName(rootIdx + off)}${suffixes[i]}`
+    );
   }
+  const offsets = [0, 2, 3, 5, 7, 8, 10];
+  const suffixes = ['m', 'm7b5', '', 'm', 'm', '', ''];
+  return offsets.map(
+    (off, i) => `${semitoneToKeyName(rootIdx + off)}${suffixes[i]}`
+  );
+}
+
+export function getChordPalette(
+  key: KeyName,
+  scale: ScaleType,
+  mode: ChordPaletteMode
+): string[] {
+  const rootIdx = noteNameToSemitone(key);
+  const offsets =
+    scale === 'Major' ? [0, 2, 4, 5, 7, 9, 11] : [0, 2, 3, 5, 7, 8, 10];
+  const roots = offsets.map((off) => semitoneToKeyName(rootIdx + off));
+
+  if (mode === 'triad') {
+    return getDiatonicChords(key, scale);
+  }
+
+  if (mode === 'seventh') {
+    const suffixes =
+      scale === 'Major'
+        ? ['maj7', 'm7', 'm7', 'maj7', '7', 'm7', 'm7b5']
+        : ['m7', 'm7b5', 'maj7', 'm7', 'm7', 'maj7', '7'];
+    return roots.map((r, i) => `${r}${suffixes[i]}`);
+  }
+
+  if (mode === 'ninth') {
+    const suffixes =
+      scale === 'Major'
+        ? ['maj9', 'm9', 'm9', 'maj9', '9', 'm9', 'm7b5']
+        : ['m9', 'm7b5', 'maj9', 'm9', 'm9', 'maj9', '9'];
+    return roots.map((r, i) => `${r}${suffixes[i]}`);
+  }
+
+  if (mode === 'add9sus') {
+    if (scale === 'Major') {
+      return [
+        `${roots[0]}add9`,
+        `${roots[0]}sus2`,
+        `${roots[1]}m(add9)`,
+        `${roots[3]}add9`,
+        `${roots[4]}sus4`,
+        `${roots[5]}m(add9)`,
+        `${roots[5]}sus2`,
+      ];
+    }
+    return [
+      `${roots[0]}m(add9)`,
+      `${roots[0]}sus2`,
+      `${roots[2]}add9`,
+      `${roots[3]}sus2`,
+      `${roots[4]}m7`,
+      `${roots[5]}add9`,
+      `${roots[6]}sus4`,
+    ];
+  }
+
+  // 'power'
+  return roots.map((r) => `${r}5`);
+}
+
+export function applySuffixToChord(
+  chordName: string,
+  newSuffix: string
+): string {
+  const trimmed = chordName.trim();
+  const { mainPart, slashPart } = splitSlashChord(trimmed);
+  const rootMatch = mainPart.match(/^([A-G][#b]?)(.*)$/);
+  if (!rootMatch) return chordName;
+  const base = `${rootMatch[1]}${newSuffix}`;
+  return slashPart ? `${base}/${slashPart}` : base;
 }
 
 export function getDefaultProgression(key: KeyName, scale: ScaleType): string[] {
   const diatonic = getDiatonicChords(key, scale);
   if (scale === 'Minor') {
-    // i - VI - III - VII (classic rock/metal/emo minor progression)
     return [diatonic[0], diatonic[5], diatonic[2], diatonic[6]];
   }
-  // I - V - vi - IV
   return [diatonic[0], diatonic[4], diatonic[5], diatonic[3]];
 }
 
@@ -202,7 +377,7 @@ export function resolveChordForBar(
 
 export function transposeChord(chordName: string, semitones: number): string {
   const trimmed = chordName.trim();
-  const [mainPart, slashPart] = trimmed.split('/');
+  const { mainPart, slashPart } = splitSlashChord(trimmed);
   const rootMatch = mainPart.match(/^([A-G][#b]?)(.*)$/);
   if (!rootMatch) return chordName;
 
@@ -211,13 +386,10 @@ export function transposeChord(chordName: string, semitones: number): string {
   );
   let result = `${newRoot}${rootMatch[2]}`;
   if (slashPart) {
-    const bassMatch = slashPart.match(/^([A-G][#b]?)$/);
-    if (bassMatch) {
-      const newBass = semitoneToKeyName(
-        noteNameToSemitone(bassMatch[1]) + semitones
-      );
-      result += `/${newBass}`;
-    }
+    const newBass = semitoneToKeyName(
+      noteNameToSemitone(slashPart) + semitones
+    );
+    result += `/${newBass}`;
   }
   return result;
 }
@@ -229,9 +401,6 @@ export function transposeChords(
   return chords.map((c) => transposeChord(c, semitones));
 }
 
-/**
- * Finds the MIDI pitch for a pitch-class (0..11) closest to/within [minMidi, maxMidi].
- */
 export function fitPitchClassToRange(
   semitone: number,
   minMidi: number,
@@ -243,7 +412,6 @@ export function fitPitchClassToRange(
       return p;
     }
   }
-  // Fallback: nearest octave around midpoint
   const mid = Math.round((minMidi + maxMidi) / 2);
   let best = Math.floor(mid / 12) * 12 + pc;
   while (best < minMidi) best += 12;

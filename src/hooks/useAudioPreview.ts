@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { LogicalTrackType, SongConfig } from '../types/song';
 import type { BandState } from '../types/track';
 import {
@@ -12,7 +12,13 @@ import {
   type SectionSpan,
 } from '../lib/noteSelector';
 
-export function useAudioPreview(song: SongConfig, bandState: BandState) {
+export type PlaybackMode = 'song' | 'section';
+
+export function useAudioPreview(
+  song: SongConfig,
+  bandState: BandState,
+  activeSectionId: string
+) {
   const engineRef = useRef<AudioPreviewEngine | null>(null);
   if (!engineRef.current) {
     engineRef.current = new AudioPreviewEngine();
@@ -21,6 +27,7 @@ export function useAudioPreview(song: SongConfig, bandState: BandState) {
   const [previewState, setPreviewState] = useState<AudioPreviewState>(() =>
     engineRef.current!.getState()
   );
+  const [playbackMode, setPlaybackMode] = useState<PlaybackMode>('song');
 
   useEffect(() => {
     const engine = engineRef.current!;
@@ -45,11 +52,51 @@ export function useAudioPreview(song: SongConfig, bandState: BandState) {
     engine.loadSongData(tracks, song.bpm, totalTicks);
   }, [song, bandState]);
 
-  const spans = getSectionSpans(song);
+  const spans = useMemo(() => getSectionSpans(song), [song]);
+
+  useEffect(() => {
+    const engine = engineRef.current!;
+    if (playbackMode === 'section') {
+      const target =
+        spans.find((s) => s.sectionId === activeSectionId) ?? spans[0] ?? null;
+      engine.setSectionLoop(target);
+    } else {
+      engine.setSectionLoop(null);
+    }
+  }, [playbackMode, activeSectionId, spans]);
+
+  const previewSection = useCallback(
+    (sectionId: string) => {
+      const target =
+        spans.find((s) => s.sectionId === sectionId) ?? spans[0] ?? null;
+      if (!target) return;
+      setPlaybackMode('section');
+      void engineRef.current!.playSection(target);
+    },
+    [spans]
+  );
+
+  const switchPlaybackMode = useCallback(
+    (mode: PlaybackMode) => {
+      setPlaybackMode(mode);
+      const engine = engineRef.current!;
+      if (mode === 'section') {
+        const target =
+          spans.find((s) => s.sectionId === activeSectionId) ?? spans[0] ?? null;
+        engine.setSectionLoop(target);
+      } else {
+        engine.setSectionLoop(null);
+      }
+    },
+    [spans, activeSectionId]
+  );
 
   return {
     previewState,
+    playbackMode,
     sectionSpans: spans,
+    setPlaybackMode: switchPlaybackMode,
+    previewSection,
     play: () => engineRef.current!.play(),
     pause: () => engineRef.current!.pause(),
     stop: () => engineRef.current!.stop(),
