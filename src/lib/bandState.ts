@@ -4,6 +4,7 @@ import { generateKeyboardNotes } from '../engines/keyboardEngine';
 import { generatePadNotes } from '../engines/padEngine';
 import {
   CURRENT_ENGINE_VERSION,
+  type DensityLevel,
   type DrumLoopData,
   type InstrumentType,
   type KickMode,
@@ -371,6 +372,49 @@ export function updateSectionKickMode(
   return { song: nextSong, bandState: nextState };
 }
 
+export function updateSectionDrumDensity(
+  song: SongConfig,
+  bandState: BandState,
+  sectionId: string,
+  patch: { hatDensity?: DensityLevel; kickDensity?: DensityLevel }
+): { song: SongConfig; bandState: BandState } {
+  const nextSong = cloneSongConfig(song);
+  const secIdx = nextSong.sections.findIndex((s) => s.id === sectionId);
+  if (secIdx === -1) return { song, bandState };
+
+  const sec = nextSong.sections[secIdx];
+  if (patch.hatDensity !== undefined) {
+    sec.hatDensity = patch.hatDensity;
+  }
+  if (patch.kickDensity !== undefined) {
+    sec.kickDensity = patch.kickDensity;
+  }
+
+  const nextState = cloneBandState(bandState);
+  const existingSec = nextState.cellsBySection[sectionId];
+
+  const targets: InstrumentType[] = [];
+  if (!existingSec?.drums?.locked) {
+    targets.push('drums');
+  }
+  if (!sec.unisonRiff && !existingSec?.bass?.locked) {
+    targets.push('bass');
+  }
+
+  if (targets.length > 0) {
+    nextState.cellsBySection[sectionId] = generateSectionCells(
+      nextSong,
+      sec,
+      secIdx,
+      existingSec,
+      6000 + secIdx,
+      { newSeeds: false, instruments: targets }
+    );
+  }
+
+  return { song: nextSong, bandState: nextState };
+}
+
 export function updateSectionDrumLoop(
   song: SongConfig,
   bandState: BandState,
@@ -644,6 +688,8 @@ export function createDefaultSongConfig(
         bars: 4,
         energy: 'Mid',
         kickMode: 'acoustic',
+        hatDensity: 3,
+        kickDensity: 3,
         chords: [...defaultChords],
       },
       {
@@ -653,6 +699,8 @@ export function createDefaultSongConfig(
         bars: 8,
         energy: 'Mid',
         kickMode: 'acoustic',
+        hatDensity: 3,
+        kickDensity: 3,
         chords: [...defaultChords],
       },
       {
@@ -662,6 +710,8 @@ export function createDefaultSongConfig(
         bars: 4,
         energy: 'Mid',
         kickMode: 'acoustic',
+        hatDensity: 3,
+        kickDensity: 3,
         chords: ['Am', 'G', 'C', 'D'],
       },
       {
@@ -671,6 +721,8 @@ export function createDefaultSongConfig(
         bars: 8,
         energy: 'High',
         kickMode: 'acoustic',
+        hatDensity: 3,
+        kickDensity: 3,
         chords: ['C', 'D', 'Em', 'G'],
       },
     ],
@@ -866,6 +918,12 @@ export function applyArrangementPresetToSong(
       },
     ];
   }
+
+  nextSong.sections = nextSong.sections.map((s) => ({
+    ...s,
+    hatDensity: s.hatDensity ?? 3,
+    kickDensity: s.kickDensity ?? 3,
+  }));
 
   const nextState = generateAllSections(nextSong, undefined, baseSeed, true);
   return { song: nextSong, bandState: nextState };

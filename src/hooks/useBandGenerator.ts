@@ -15,6 +15,7 @@ import {
   toggleCellLock,
   toggleSectionRiffOctaveUpOn808,
   updateSectionBars,
+  updateSectionDrumDensity,
   updateSectionDrumLoop,
   updateSectionKickMode,
   type ArrangementPresetId,
@@ -27,6 +28,7 @@ import {
   loadProject,
 } from '../lib/storage';
 import type {
+  DensityLevel,
   DrumLoopData,
   InstrumentType,
   KickMode,
@@ -201,6 +203,8 @@ export function useBandGenerator() {
       bars: 4,
       energy: 'Mid',
       kickMode: 'acoustic',
+      hatDensity: 3,
+      kickDensity: 3,
       chords: ['Em', 'C', 'G', 'D'],
     };
     nextSong.sections.push(newSec);
@@ -294,6 +298,17 @@ export function useBandGenerator() {
   const changeSectionKickMode = useCallback(
     (sectionId: string, kickMode: KickMode) => {
       const res = updateSectionKickMode(song, bandState, sectionId, kickMode);
+      commitChange(res.song, res.bandState, true);
+    },
+    [song, bandState, commitChange]
+  );
+
+  const changeSectionDrumDensity = useCallback(
+    (
+      sectionId: string,
+      patch: { hatDensity?: DensityLevel; kickDensity?: DensityLevel }
+    ) => {
+      const res = updateSectionDrumDensity(song, bandState, sectionId, patch);
       commitChange(res.song, res.bandState, true);
     },
     [song, bandState, commitChange]
@@ -393,6 +408,7 @@ export function useBandGenerator() {
     updateSectionProps,
     changeSectionBars,
     changeSectionKickMode,
+    changeSectionDrumDensity,
     changeSectionDrumLoop,
     changeSongDrumLoop,
     changeSectionRiff,

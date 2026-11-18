@@ -2,6 +2,7 @@ import {
   CURRENT_ENGINE_VERSION,
   type InstrumentType,
   type MidiNote,
+  type Section,
   type SongConfig,
   type TakeStyle,
 } from '../types/song';
@@ -180,7 +181,12 @@ export function hydrateProject(stored: StoredBandProject): {
   const cellsBySection: Record<string, SectionBandCells> = {};
 
   for (let secIdx = 0; secIdx < song.sections.length; secIdx++) {
-    const section = song.sections[secIdx];
+    const section: Section = {
+      ...song.sections[secIdx],
+      hatDensity: song.sections[secIdx].hatDensity ?? 3,
+      kickDensity: song.sections[secIdx].kickDensity ?? 3,
+    };
+    song.sections[secIdx] = section;
     const storedSec = stored.cellsBySection[section.id];
     if (!storedSec) continue;
 

@@ -44,6 +44,8 @@ export function generateDrumNotes(input: EngineInput): MidiNote[] {
 
   const rng = createSeededRng(seed);
   const sectionEnd = section.bars * TICKS_PER_BAR;
+  const hatDensity = section.hatDensity ?? 3;
+  const kickDensity = section.kickDensity ?? 3;
   const notes: InternalDrumNote[] = [];
 
   // 1. Source resolution: Section Loop > Song Loop > Built-in Generator
@@ -57,6 +59,22 @@ export function generateDrumNotes(input: EngineInput): MidiNote[] {
       for (const srcNote of loopSource.notes) {
         const absTick = base + srcNote.startTick;
         if (absTick < 0 || absTick >= sectionEnd) continue;
+        // Density thinning for external loops when level 1/2 selected
+        if (
+          kickDensity === 1 &&
+          srcNote.pitch === GM_DRUM.KICK &&
+          srcNote.startTick % 960 !== 0
+        ) {
+          continue;
+        }
+        if (
+          hatDensity === 1 &&
+          (srcNote.pitch === GM_DRUM.CLOSED_HH ||
+            srcNote.pitch === GM_DRUM.OPEN_HH) &&
+          srcNote.startTick % 480 !== 0
+        ) {
+          continue;
+        }
         const velDelta = style === 'B' ? rng.nextInt(-10, 10) : 0;
         notes.push({
           pitch: srcNote.pitch,
@@ -67,6 +85,55 @@ export function generateDrumNotes(input: EngineInput): MidiNote[] {
           noTimingJitter: true,
           noVelJitter: style === 'A' || style === 'B',
         });
+      }
+    }
+
+    // External loop density boost (levels 4-5)
+    if (kickDensity >= 4) {
+      const kickExtras = kickDensity === 5 ? [360, 840, 1320, 1680] : [360, 1320];
+      for (let bar = 0; bar < section.bars; bar++) {
+        const barStart = bar * TICKS_PER_BAR;
+        for (const off of kickExtras) {
+          const t = barStart + off;
+          if (t >= sectionEnd) continue;
+          if (!notes.some((n) => n.pitch === GM_DRUM.KICK && Math.abs(n.startTick - t) < 60)) {
+            notes.push({
+              pitch: GM_DRUM.KICK,
+              velocity: rng.nextInt(88, 104),
+              startTick: t,
+              durationTicks: 120,
+              channel: 9,
+              noTimingJitter: true,
+            });
+          }
+        }
+      }
+    }
+    if (hatDensity >= 4) {
+      const hatStep = hatDensity === 5 ? 120 : 240;
+      for (let bar = 0; bar < section.bars; bar++) {
+        const barStart = bar * TICKS_PER_BAR;
+        for (let off = 0; off < TICKS_PER_BAR; off += hatStep) {
+          const t = barStart + off;
+          if (t >= sectionEnd) continue;
+          const hasHat = notes.some(
+            (n) =>
+              n.startTick === t &&
+              (n.pitch === GM_DRUM.CLOSED_HH ||
+                n.pitch === GM_DRUM.OPEN_HH ||
+                n.pitch === GM_DRUM.RIDE)
+          );
+          if (!hasHat && (hatDensity === 5 || rng.chance(0.55))) {
+            notes.push({
+              pitch: GM_DRUM.CLOSED_HH,
+              velocity: rng.nextInt(64, 84),
+              startTick: t,
+              durationTicks: 80,
+              channel: 9,
+              noTimingJitter: true,
+            });
+          }
+        }
       }
     }
 
@@ -194,31 +261,58 @@ export function generateDrumNotes(input: EngineInput): MidiNote[] {
     for (let bar = 0; bar < section.bars; bar++) {
       const barStart = bar * TICKS_PER_BAR;
 
-      // Kick pattern
+      // Kick pattern (scaled by kickDensity 1..5; 3 = genre standard)
       const kickOffsets: number[] = [];
-      if (params.kickPattern === 'fourOnFloor') {
-        kickOffsets.push(0, 480, 960, 1440);
-      } else if (params.kickPattern === 'syncopated') {
-        kickOffsets.push(0, 360, 720, 1200);
-        if (style !== 'B' && rng.chance(0.5)) {
-          kickOffsets.push(1560);
+      if (kickDensity === 1) {
+        kickOffsets.push(0, 960);
+      } else if (kickDensity === 2) {
+        if (params.kickPattern === 'fourOnFloor') {
+          kickOffsets.push(0, 480, 960, 1440);
+        } else if (params.kickPattern === 'syncopated') {
+          kickOffsets.push(0, 720, 1200);
+        } else {
+          kickOffsets.push(0, 720);
         }
       } else {
-        kickOffsets.push(0, 720);
-        if (isHighEnergy || style === 'C') {
-          kickOffsets.push(1200);
+        if (params.kickPattern === 'fourOnFloor') {
+          kickOffsets.push(0, 480, 960, 1440);
+        } else if (params.kickPattern === 'syncopated') {
+          kickOffsets.push(0, 360, 720, 1200);
+          if (style !== 'B' && rng.chance(0.5)) {
+            kickOffsets.push(1560);
+          }
+        } else {
+          kickOffsets.push(0, 720);
+          if (isHighEnergy || style === 'C') {
+            kickOffsets.push(1200);
+          }
+          if (style === 'C' && rng.chance(0.45)) {
+            kickOffsets.push(240);
+          }
         }
-        if (style === 'C' && rng.chance(0.45)) {
-          kickOffsets.push(240);
-        }
-      }
 
-      // Double Kick additions
-      if (params.doubleKickProb > 0) {
-        const doubleCandidates = [120, 600, 840, 1080, 1320, 1560];
-        for (const dc of doubleCandidates) {
-          if (rng.chance(params.doubleKickProb * 0.65)) {
-            kickOffsets.push(dc);
+        // Double Kick additions
+        if (params.doubleKickProb > 0) {
+          const doubleCandidates = [120, 600, 840, 1080, 1320, 1560];
+          const probScale = kickDensity >= 4 ? 0.85 : 0.65;
+          for (const dc of doubleCandidates) {
+            if (rng.chance(params.doubleKickProb * probScale)) {
+              kickOffsets.push(dc);
+            }
+          }
+        }
+
+        if (kickDensity === 4) {
+          for (const extra of [360, 840, 1320, 1680]) {
+            if (rng.chance(0.6)) kickOffsets.push(extra);
+          }
+        } else if (kickDensity === 5) {
+          if (params.doubleKickProb > 0) {
+            kickOffsets.push(120, 240, 360, 600, 720, 840, 1080, 1200, 1320, 1560, 1680);
+          } else if (params.hatSubdivision > 1 || section.kickMode === '808') {
+            kickOffsets.push(360, 600, 840, 1080, 1320, 1560, 1800);
+          } else {
+            kickOffsets.push(360, 600, 840, 1320, 1560, 1680, 1800);
           }
         }
       }
@@ -274,8 +368,49 @@ export function generateDrumNotes(input: EngineInput): MidiNote[] {
         }
       }
 
-      // Hi-hat / Ride pattern
-      if (params.offbeatOpenHat) {
+      // Hi-hat / Ride pattern (scaled by hatDensity 1..5; 3 = genre standard)
+      if (hatDensity === 1) {
+        for (const off of [0, 480, 960, 1440]) {
+          notes.push({
+            pitch: params.offbeatOpenHat ? GM_DRUM.CLOSED_HH : hatPitch,
+            velocity: rng.nextInt(80, 94),
+            startTick: barStart + off,
+            durationTicks: 180,
+            channel: 9,
+          });
+        }
+      } else if (hatDensity === 2) {
+        if (params.offbeatOpenHat) {
+          for (const off of [0, 480, 960, 1440]) {
+            notes.push({
+              pitch: GM_DRUM.CLOSED_HH,
+              velocity: rng.nextInt(74, 88),
+              startTick: barStart + off,
+              durationTicks: 100,
+              channel: 9,
+            });
+          }
+          for (const off of [720, 1680]) {
+            notes.push({
+              pitch: GM_DRUM.OPEN_HH,
+              velocity: rng.nextInt(84, 96),
+              startTick: barStart + off,
+              durationTicks: 160,
+              channel: 9,
+            });
+          }
+        } else {
+          for (const off of [0, 240, 480, 960, 1200, 1440]) {
+            notes.push({
+              pitch: hatPitch,
+              velocity: off % 480 === 0 ? rng.nextInt(82, 94) : rng.nextInt(64, 76),
+              startTick: barStart + off,
+              durationTicks: 100,
+              channel: 9,
+            });
+          }
+        }
+      } else if (params.offbeatOpenHat) {
         for (const off of [240, 720, 1200, 1680]) {
           notes.push({
             pitch: GM_DRUM.OPEN_HH,
@@ -292,6 +427,62 @@ export function generateDrumNotes(input: EngineInput): MidiNote[] {
             velocity: rng.nextInt(75, 88),
             startTick: barStart + off,
             durationTicks: 90,
+            channel: 9,
+          });
+        }
+        if (hatDensity >= 4) {
+          const extras =
+            hatDensity === 5
+              ? [120, 360, 600, 840, 1080, 1320, 1560, 1800]
+              : [120, 600, 1080, 1560];
+          for (const off of extras) {
+            notes.push({
+              pitch: GM_DRUM.CLOSED_HH,
+              velocity: rng.nextInt(62, 78),
+              startTick: barStart + off,
+              durationTicks: 70,
+              channel: 9,
+            });
+          }
+        }
+      } else if (hatDensity === 5 && params.hatSubdivision > 1) {
+        // Maximum Trap density: 16th base + 32nd-note rolls
+        const stepSize = 120;
+        const numSteps = TICKS_PER_BAR / stepSize;
+        for (let s = 0; s < numSteps; s++) {
+          const stepStart = barStart + s * stepSize;
+          const sub =
+            s % 4 === 3
+              ? params.hatSubdivision
+              : s % 4 === 1
+                ? 2
+                : rng.nextInt(1, Math.min(3, params.hatSubdivision));
+          const subStep = sub === 1 ? 120 : Math.floor(120 / sub);
+          for (let k = 0; k < sub; k++) {
+            notes.push({
+              pitch: GM_DRUM.CLOSED_HH,
+              velocity: clampVelocity(92 - k * 10),
+              startTick: stepStart + k * subStep,
+              durationTicks: Math.max(20, subStep - 5),
+              channel: 9,
+              noTimingJitter: sub > 1,
+            });
+          }
+        }
+      } else if (hatDensity === 5) {
+        // Maximum Rock/Metal/Pop density: full 16th grid + Open HH accents
+        for (let off = 0; off < TICKS_PER_BAR; off += 120) {
+          const isOpen = off === 720 || off === 1680;
+          notes.push({
+            pitch: isOpen ? GM_DRUM.OPEN_HH : hatPitch,
+            velocity:
+              off % 480 === 0
+                ? rng.nextInt(88, 100)
+                : off % 240 === 0
+                  ? rng.nextInt(74, 86)
+                  : rng.nextInt(58, 72),
+            startTick: barStart + off,
+            durationTicks: isOpen ? 160 : 80,
             channel: 9,
           });
         }
@@ -323,6 +514,15 @@ export function generateDrumNotes(input: EngineInput): MidiNote[] {
                 noTimingJitter: sub > 1,
               });
             }
+            if (hatDensity === 4 && sub === 1) {
+              notes.push({
+                pitch: GM_DRUM.CLOSED_HH,
+                velocity: rng.nextInt(62, 76),
+                startTick: stepStart + 120,
+                durationTicks: 80,
+                channel: 9,
+              });
+            }
           } else {
             const vel = s % 2 === 0 ? rng.nextInt(84, 96) : rng.nextInt(68, 82);
             notes.push({
@@ -332,7 +532,25 @@ export function generateDrumNotes(input: EngineInput): MidiNote[] {
               durationTicks: 100,
               channel: 9,
             });
+            if (hatDensity === 4 && rng.chance(0.55)) {
+              notes.push({
+                pitch: hatPitch,
+                velocity: rng.nextInt(58, 72),
+                startTick: stepStart + 120,
+                durationTicks: 80,
+                channel: 9,
+              });
+            }
           }
+        }
+        if (hatDensity === 4 && !params.hatSubdivision) {
+          notes.push({
+            pitch: GM_DRUM.OPEN_HH,
+            velocity: 88,
+            startTick: barStart + 1680,
+            durationTicks: 160,
+            channel: 9,
+          });
         }
       }
     }

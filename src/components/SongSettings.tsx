@@ -92,34 +92,66 @@ export function SongSettings({
             />
           </label>
 
-          <label className="field">
+          <div className="field">
             <span>BPM ({song.bpm})</span>
             <div className="inline-range">
+              <button
+                type="button"
+                className="btn btn-secondary bpm-step-btn"
+                disabled={song.bpm <= 60}
+                aria-label="BPMを1下げる"
+                onClick={() =>
+                  onUpdateSong((d) => {
+                    d.bpm = Math.max(60, d.bpm - 1);
+                  })
+                }
+              >
+                ◀
+              </button>
               <input
                 type="range"
+                className="bpm-range"
                 min={60}
                 max={200}
                 value={song.bpm}
+                aria-label="BPM スライダー"
                 onChange={(e) =>
                   onUpdateSong((d) => {
                     d.bpm = Number(e.target.value);
                   })
                 }
               />
+              <button
+                type="button"
+                className="btn btn-secondary bpm-step-btn"
+                disabled={song.bpm >= 200}
+                aria-label="BPMを1上げる"
+                onClick={() =>
+                  onUpdateSong((d) => {
+                    d.bpm = Math.min(200, d.bpm + 1);
+                  })
+                }
+              >
+                ▶
+              </button>
               <input
                 type="number"
                 className="num-input"
                 min={60}
                 max={200}
                 value={song.bpm}
+                aria-label="BPM 数値入力"
                 onChange={(e) =>
                   onUpdateSong((d) => {
-                    d.bpm = Math.min(200, Math.max(60, Number(e.target.value) || 120));
+                    d.bpm = Math.min(
+                      200,
+                      Math.max(60, Number(e.target.value) || 120)
+                    );
                   })
                 }
               />
             </div>
-          </label>
+          </div>
 
           <div className="field-row">
             <label className="field">

@@ -13,6 +13,7 @@ import {
   toggleCellLock,
   toggleSectionRiffOctaveUpOn808,
   updateSectionBars,
+  updateSectionDrumDensity,
   updateSectionKickMode,
 } from '../src/lib/bandState';
 import { detectHorizontalSwipe } from '../src/lib/touchSwipe';
@@ -204,5 +205,31 @@ describe('bandState', () => {
     expect(detectHorizontalSwipe(75, -20)).toBe('prev');
     expect(detectHorizontalSwipe(-40, 5)).toBeNull(); // too short
     expect(detectHorizontalSwipe(-60, 50)).toBeNull(); // diagonal / vertical scroll
+  });
+
+  it('updates hatDensity/kickDensity, regenerates unlocked drums & bass, and respects locks', () => {
+    const song = createDefaultSongConfig('rockBand');
+    const state = generateAllSections(song);
+    const secId = song.sections[1].id;
+
+    const dense = updateSectionDrumDensity(song, state, secId, {
+      hatDensity: 5,
+      kickDensity: 5,
+    });
+    expect(dense.song.sections[1].hatDensity).toBe(5);
+    expect(dense.song.sections[1].kickDensity).toBe(5);
+    expect(dense.bandState.cellsBySection[secId].drums.takes.A.length).toBeGreaterThan(
+      state.cellsBySection[secId].drums.takes.A.length
+    );
+
+    // Locked drums stays untouched when density changes
+    const lockedState = toggleCellLock(dense.bandState, secId, 'drums');
+    const lockedDrumsBefore = JSON.stringify(lockedState.cellsBySection[secId].drums.takes.A);
+    const afterLocked = updateSectionDrumDensity(dense.song, lockedState, secId, {
+      hatDensity: 1,
+    });
+    expect(JSON.stringify(afterLocked.bandState.cellsBySection[secId].drums.takes.A)).toBe(
+      lockedDrumsBefore
+    );
   });
 });

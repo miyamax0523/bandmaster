@@ -295,15 +295,31 @@ input[type='range'] {
 .inline-range {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
   max-width: 100%;
 }
 
+.bpm-step-btn {
+  min-width: 40px;
+  min-height: 40px;
+  padding: 6px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.bpm-range {
+  flex: 1;
+  min-width: 0;
+}
+
 .num-input {
-  width: 68px !important;
+  width: 64px !important;
   min-width: 0;
   flex-shrink: 0;
+  text-align: center;
+  padding: 8px 4px !important;
 }
 
 .segmented {
@@ -832,6 +848,56 @@ input[type='range'] {
 .take-btn.off-btn.active {
   background: var(--danger);
   border-color: var(--danger);
+}
+
+.density-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  max-width: 100%;
+}
+
+.density-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.density-label {
+  width: 66px;
+  flex-shrink: 0;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.density-segments {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.density-btn {
+  min-width: 0;
+  width: 100%;
+  min-height: 40px;
+  padding: 4px 0;
+  font-size: 0.82rem;
+  font-weight: 700;
+  border-radius: 8px;
+}
+
+.density-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
 }
 
 .chip-btn {

@@ -319,4 +319,55 @@ describe('drumEngine', () => {
     expect(c1Fill.length).toBeGreaterThanOrEqual(6);
     expect(JSON.stringify(c1Fill)).not.toBe(JSON.stringify(c2Fill));
   });
+
+  it('scales hatDensity (1 vs 3 vs 5) and kickDensity (1 vs 3 vs 5) while respecting genre style', () => {
+    const song = createSong();
+    const run = (hatDensity: 1 | 3 | 5, kickDensity: 1 | 3 | 5, drumText = '') => {
+      song.members.drums.instructionText = drumText;
+      const section = createSection({
+        type: 'Outro',
+        bars: 2,
+        energy: 'Mid',
+        hatDensity,
+        kickDensity,
+      });
+      return generateDrumNotes({
+        song,
+        section,
+        sectionIndex: 0,
+        style: 'A',
+        seed: 55,
+        params: resolveInstrumentParams(song, section, 'drums', 'A'),
+      });
+    };
+
+    const rockMin = run(1, 1);
+    const rockStd = run(3, 3);
+    const rockMax = run(5, 5);
+
+    const hatsMin = rockMin.filter((n) => n.pitch === GM_DRUM.CLOSED_HH || n.pitch === GM_DRUM.OPEN_HH);
+    const hatsStd = rockStd.filter((n) => n.pitch === GM_DRUM.CLOSED_HH || n.pitch === GM_DRUM.OPEN_HH);
+    const hatsMax = rockMax.filter((n) => n.pitch === GM_DRUM.CLOSED_HH || n.pitch === GM_DRUM.OPEN_HH);
+    // 2 bars: level 1 = 8 quarter notes, level 3 = 16 eighth notes, level 5 = 32 sixteenth notes
+    expect(hatsMin.length).toBe(8);
+    expect(hatsStd.length).toBe(16);
+    expect(hatsMax.length).toBe(32);
+
+    const kicksMin = rockMin.filter((n) => n.pitch === GM_DRUM.KICK);
+    const kicksStd = rockStd.filter((n) => n.pitch === GM_DRUM.KICK);
+    const kicksMax = rockMax.filter((n) => n.pitch === GM_DRUM.KICK);
+    expect(kicksMin.length).toBe(4); // 2 bars * [0, 960]
+    expect(kicksStd.length).toBeGreaterThanOrEqual(4);
+    expect(kicksMax.length).toBeGreaterThan(kicksStd.length);
+
+    // Trap style with hatDensity 1 vs 5
+    const trapMin = run(1, 3, 'トラップ');
+    const trapMax = run(5, 3, 'トラップ');
+    expect(
+      trapMin.filter((n) => n.pitch === GM_DRUM.CLOSED_HH).length
+    ).toBe(8);
+    expect(
+      trapMax.filter((n) => n.pitch === GM_DRUM.CLOSED_HH).length
+    ).toBeGreaterThan(32);
+  });
 });

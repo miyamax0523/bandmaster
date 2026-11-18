@@ -74,6 +74,8 @@ describe('storage', () => {
       state.cellsBySection.s1.bass.takes
     );
     expect(loaded!.song.sections[0].unisonRiff?.cleanedBassNotes.length).toBe(1);
+    expect(loaded!.song.sections[0].hatDensity).toBe(3);
+    expect(loaded!.song.sections[0].kickDensity).toBe(3);
   });
 
   it('protects existing data on QuotaExceededError and resets safely on schemaVersion mismatch', async () => {

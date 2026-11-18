@@ -4,6 +4,7 @@ import { extractDrumLoopFromMidi } from '../lib/midiParser';
 import { isAutoTacet } from '../lib/noteSelector';
 import { useHorizontalSwipe } from '../lib/touchSwipe';
 import type {
+  DensityLevel,
   DrumLoopData,
   InstrumentType,
   SongConfig,
@@ -23,6 +24,10 @@ interface BandmasterConsoleProps {
   onPreviewSection: (sectionId: string) => void;
   onChangeSectionDrumLoop: (sectionId: string, loop?: DrumLoopData) => void;
   onClearSectionDrumLoop: (sectionId: string) => void;
+  onChangeSectionDrumDensity: (
+    sectionId: string,
+    patch: { hatDensity?: DensityLevel; kickDensity?: DensityLevel }
+  ) => void;
   onRegenerateAll: () => void;
   onUndo: () => void;
   onRegenerateCell: (sectionId: string, inst: InstrumentType) => void;
@@ -41,6 +46,8 @@ const INSTRUMENTS: Array<{ key: InstrumentType; label: string; icon: string }> =
   { key: 'pad', label: 'PAD', icon: '🌊' },
 ];
 
+const DENSITY_LEVELS: readonly DensityLevel[] = [1, 2, 3, 4, 5];
+
 export function BandmasterConsole({
   song,
   bandState,
@@ -51,6 +58,7 @@ export function BandmasterConsole({
   onPreviewSection,
   onChangeSectionDrumLoop,
   onClearSectionDrumLoop,
+  onChangeSectionDrumDensity,
   onRegenerateAll,
   onUndo,
   onRegenerateCell,
@@ -264,6 +272,58 @@ export function BandmasterConsole({
                 disabled={!member.enabled}
                 onSelect={(take) => onSelectTake(section.id, key, take)}
               />
+
+              {key === 'drums' && (
+                <div className="density-controls">
+                  <div className="density-row">
+                    <span className="density-label">Hat 手数</span>
+                    <div className="density-segments" role="group" aria-label="Hat 手数">
+                      {DENSITY_LEVELS.map((lvl) => {
+                        const active = (section.hatDensity ?? 3) === lvl;
+                        return (
+                          <button
+                            key={lvl}
+                            type="button"
+                            className={`density-btn ${active ? 'active' : ''}`}
+                            disabled={cell.locked || !member.enabled}
+                            onClick={() =>
+                              onChangeSectionDrumDensity(section.id, {
+                                hatDensity: lvl,
+                              })
+                            }
+                          >
+                            {lvl}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="density-row">
+                    <span className="density-label">Kick 手数</span>
+                    <div className="density-segments" role="group" aria-label="Kick 手数">
+                      {DENSITY_LEVELS.map((lvl) => {
+                        const active = (section.kickDensity ?? 3) === lvl;
+                        return (
+                          <button
+                            key={lvl}
+                            type="button"
+                            className={`density-btn ${active ? 'active' : ''}`}
+                            disabled={cell.locked || !member.enabled}
+                            onClick={() =>
+                              onChangeSectionDrumDensity(section.id, {
+                                kickDensity: lvl,
+                              })
+                            }
+                          >
+                            {lvl}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              )}
             </article>
           );
         })}

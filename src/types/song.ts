@@ -20,6 +20,7 @@ export type KeyName =
 export type ScaleType = 'Minor' | 'Major';
 export type BeatFeel = 'Straight' | 'Half-Time' | 'Bounce' | 'Driving';
 export type EnergyLevel = 'Low' | 'Mid' | 'High';
+export type DensityLevel = 1 | 2 | 3 | 4 | 5;
 export type KickMode = 'acoustic' | '808';
 export type Bass808Behavior = 'octaveUp' | 'tacet' | 'normal';
 export type TakeStyle = 'A' | 'B' | 'C';
@@ -110,6 +111,8 @@ export interface Section {
   bars: number; // 1..32
   energy: EnergyLevel;
   kickMode: KickMode;
+  hatDensity?: DensityLevel; // 1..5 (default 3)
+  kickDensity?: DensityLevel; // 1..5 (default 3)
   chords: string[];
   uploadedDrumLoop?: DrumLoopData;
   unisonRiff?: UnisonRiffData;

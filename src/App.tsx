@@ -37,6 +37,7 @@ export function App() {
     updateSectionProps,
     changeSectionBars,
     changeSectionKickMode,
+    changeSectionDrumDensity,
     changeSectionDrumLoop,
     changeSongDrumLoop,
     changeSectionRiff,
@@ -184,6 +185,7 @@ export function App() {
               onPreviewSection={audio.previewSection}
               onChangeSectionDrumLoop={changeSectionDrumLoop}
               onClearSectionDrumLoop={(id) => changeSectionDrumLoop(id, undefined)}
+              onChangeSectionDrumDensity={changeSectionDrumDensity}
               onRegenerateAll={regenerateAll}
               onUndo={undo}
               onRegenerateCell={regenerateCell}
