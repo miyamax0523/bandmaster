@@ -86,6 +86,20 @@ export function RiffRecorderModal({
 
   const abortRef = useRef<AbortController | null>(null);
   const micHandleRef = useRef<MicRecordingHandle | null>(null);
+  const pianoRollScrollRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const el = pianoRollScrollRef.current;
+    if (!el) return;
+    // Center the initial scroll viewport around the active notes (or E1/G1 bass range)
+    const targetPitch =
+      activeNotes.length > 0
+        ? activeNotes.reduce((sum, n) => sum + n.pitch, 0) / activeNotes.length
+        : 31;
+    const rowIdx = Math.max(0, 55 - Math.round(targetPitch));
+    el.scrollTop = Math.max(0, rowIdx * 28 - 90);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -473,7 +487,7 @@ export function RiffRecorderModal({
         <div className="piano-roll-caption">
           ソース: {sourceName} · タップで入力/削除（ベース音域 MIDI 24 [C1] 〜 55 [G3] / 単音保証 · 現在 {activeNotes.length}音）
         </div>
-        <div className="piano-roll-scroll">
+        <div className="piano-roll-scroll" ref={pianoRollScrollRef}>
           <table className="piano-roll-grid">
             <thead>
               <tr>
