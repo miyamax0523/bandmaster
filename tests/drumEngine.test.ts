@@ -370,4 +370,57 @@ describe('drumEngine', () => {
       trapMax.filter((n) => n.pitch === GM_DRUM.CLOSED_HH).length
     ).toBeGreaterThan(32);
   });
+
+  it('applies patternPreset deterministically across drum presets', () => {
+    const runPreset = (preset: string, bars = 2) => {
+      const song = createSong('');
+      song.members.drums.patternPreset = preset;
+      const section = createSection({ bars, chords: ['Em', 'C'], energy: 'Mid' });
+      return generateDrumNotes({
+        song,
+        section,
+        sectionIndex: 0,
+        style: 'A',
+        seed: 1,
+        params: resolveInstrumentParams(song, section, 'drums', 'A'),
+      });
+    };
+
+    const minimal = runPreset('simple_minimal');
+    const metal = runPreset('metal_double');
+    expect(metal.filter((n) => n.pitch === GM_DRUM.KICK).length).toBeGreaterThan(
+      minimal.filter((n) => n.pitch === GM_DRUM.KICK).length
+    );
+
+    const fourOnFloor = runPreset('four_on_floor', 1);
+    const kickTicks = fourOnFloor
+      .filter((n) => n.pitch === GM_DRUM.KICK)
+      .map((n) => n.startTick);
+    expect(kickTicks.length).toBe(4);
+    [0, 480, 960, 1440].forEach((beatTick, idx) => {
+      expect(Math.abs(kickTicks[idx] - beatTick)).toBeLessThanOrEqual(15);
+    });
+    expect(fourOnFloor.some((n) => n.pitch === GM_DRUM.OPEN_HH)).toBe(true);
+
+    const rimChill = runPreset('rim_chill');
+    expect(rimChill.some((n) => n.pitch === GM_DRUM.RIMSHOT)).toBe(true);
+    expect(
+      rimChill.filter((n) => n.startTick < TICKS_PER_BAR && n.pitch === GM_DRUM.SNARE).length
+    ).toBe(0);
+
+    const trapSparse = runPreset('trap_sparse');
+    const trapActive = runPreset('trap_active');
+    expect(trapActive.filter((n) => n.pitch === GM_DRUM.CLOSED_HH).length).toBeGreaterThan(
+      trapSparse.filter((n) => n.pitch === GM_DRUM.CLOSED_HH).length
+    );
+
+    const buildUp = runPreset('build_up', 2);
+    const bar1Snares = buildUp.filter(
+      (n) => n.pitch === GM_DRUM.SNARE && n.startTick < TICKS_PER_BAR
+    );
+    const bar2Snares = buildUp.filter(
+      (n) => n.pitch === GM_DRUM.SNARE && n.startTick >= TICKS_PER_BAR
+    );
+    expect(bar2Snares.length).toBeGreaterThanOrEqual(bar1Snares.length);
+  });
 });

@@ -287,4 +287,63 @@ describe('audioPreview', () => {
 
     engine.dispose();
   });
+
+  it('continues playing seamlessly and plays bars 5..8 when section bars expand mid-playback', async () => {
+    const { mockCtx, createdOscs } = createMockAudioContext();
+    const engine = new AudioPreviewEngine(
+      () => mockCtx as unknown as AudioContext
+    );
+
+    const tracks4: LogicalTracks = {
+      drums: [],
+      kick808: [],
+      bass: [{ pitch: 40, velocity: 100, startTick: 0, durationTicks: 240, channel: 0 }],
+      keyboard: [],
+      pad: [],
+    };
+    engine.loadSongData(tracks4, 120, 4 * 1920);
+    await engine.playSection({
+      sectionId: 's1',
+      sectionIndex: 0,
+      startTick: 0,
+      endTick: 4 * 1920,
+    });
+
+    // Advance to bar 3 (tick 3840 -> 4.0s at 120 BPM)
+    mockCtx.currentTime = 4.0;
+    vi.advanceTimersByTime(SCHEDULER_INTERVAL_MS);
+    expect(engine.getState().currentTick).toBe(3840);
+
+    // Expand section to 8 bars while playing -> adds bass note at bar 5 (tick 7680)
+    const tracks8: LogicalTracks = {
+      drums: [],
+      kick808: [],
+      bass: [
+        { pitch: 40, velocity: 100, startTick: 0, durationTicks: 240, channel: 0 },
+        { pitch: 43, velocity: 100, startTick: 4 * 1920, durationTicks: 240, channel: 0 },
+      ],
+      keyboard: [],
+      pad: [],
+    };
+    engine.loadSongData(tracks8, 120, 8 * 1920);
+    engine.setSectionLoop({
+      sectionId: 's1',
+      sectionIndex: 0,
+      startTick: 0,
+      endTick: 8 * 1920,
+    });
+
+    // Playback position did NOT jump back to 0, and endTick updated to 8 bars
+    expect(engine.getState().status).toBe('playing');
+    expect(engine.getState().currentTick).toBe(3840);
+    expect(engine.getState().sectionLoop?.endTick).toBe(8 * 1920);
+
+    // Advance to bar 5 lookahead (7.95s -> tick 7632 + 144 = 7776 -> schedules note at 7680!)
+    const oscsBeforeBar5 = createdOscs.length;
+    mockCtx.currentTime = 7.95;
+    vi.advanceTimersByTime(SCHEDULER_INTERVAL_MS);
+    expect(createdOscs.length).toBeGreaterThan(oscsBeforeBar5);
+
+    engine.dispose();
+  });
 });

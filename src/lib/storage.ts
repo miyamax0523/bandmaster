@@ -178,6 +178,14 @@ export function hydrateProject(stored: StoredBandProject): {
   bandState: BandState;
 } {
   const { song } = stored;
+  for (const inst of GENERATION_ORDER) {
+    if (song.members[inst]) {
+      song.members[inst] = {
+        ...song.members[inst],
+        patternPreset: song.members[inst].patternPreset ?? 'auto',
+      };
+    }
+  }
   const cellsBySection: Record<string, SectionBandCells> = {};
 
   for (let secIdx = 0; secIdx < song.sections.length; secIdx++) {

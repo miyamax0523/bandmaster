@@ -2,6 +2,7 @@ import { useState, type ChangeEvent } from 'react';
 import { isCellOutdated, isDrumLockedUnsynced } from '../lib/bandState';
 import { extractDrumLoopFromMidi } from '../lib/midiParser';
 import { isAutoTacet } from '../lib/noteSelector';
+import { PATTERN_PRESET_GROUPS } from '../lib/patternPresets';
 import { useHorizontalSwipe } from '../lib/touchSwipe';
 import type {
   DensityLevel,
@@ -28,6 +29,7 @@ interface BandmasterConsoleProps {
     sectionId: string,
     patch: { hatDensity?: DensityLevel; kickDensity?: DensityLevel }
   ) => void;
+  onChangePatternPreset: (inst: InstrumentType, preset: string) => void;
   onRegenerateAll: () => void;
   onUndo: () => void;
   onRegenerateCell: (sectionId: string, inst: InstrumentType) => void;
@@ -59,6 +61,7 @@ export function BandmasterConsole({
   onChangeSectionDrumLoop,
   onClearSectionDrumLoop,
   onChangeSectionDrumDensity,
+  onChangePatternPreset,
   onRegenerateAll,
   onUndo,
   onRegenerateCell,
@@ -263,6 +266,28 @@ export function BandmasterConsole({
                     ドラムロック中：キメ未同期
                   </span>
                 )}
+              </div>
+
+              <div className="console-preset-row">
+                <label className="console-preset-label">
+                  <span>パターン</span>
+                  <select
+                    className="console-preset-select"
+                    value={member.patternPreset ?? 'auto'}
+                    disabled={!member.enabled || cell.locked}
+                    onChange={(e) => onChangePatternPreset(key, e.target.value)}
+                  >
+                    {PATTERN_PRESET_GROUPS[key].map((grp) => (
+                      <optgroup key={grp.category} label={grp.category}>
+                        {grp.options.map((opt) => (
+                          <option key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
+                </label>
               </div>
 
               <TakeSelector

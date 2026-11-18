@@ -221,4 +221,37 @@ describe('bassEngine', () => {
       takeCHigh.every((n) => n.startTick < TICKS_PER_BAR)
     ).toBe(true);
   });
+
+  it('applies patternPreset deterministically across bass presets', () => {
+    const runPreset = (preset: string) => {
+      const song = createSong({ patternPreset: preset });
+      const section = createSection({ bars: 2, chords: ['Em', 'C'], energy: 'Mid' });
+      return generateBassNotes({
+        song,
+        section,
+        sectionIndex: 0,
+        style: 'A',
+        seed: 1,
+        params: resolveInstrumentParams(song, section, 'bass', 'A'),
+      });
+    };
+
+    const whole = runPreset('root_whole');
+    expect(whole.length).toBe(2);
+    expect(whole.map((n) => n.startTick)).toEqual([0, TICKS_PER_BAR]);
+
+    const gallop = runPreset('metal_gallop');
+    expect(gallop.length).toBeGreaterThanOrEqual(20);
+
+    const disco = runPreset('octave_disco');
+    const discoPitches = new Set(disco.filter((n) => n.startTick < TICKS_PER_BAR).map((n) => n.pitch));
+    expect(discoPitches.size).toBe(2);
+    const sorted = [...discoPitches].sort((a, b) => a - b);
+    expect(sorted[1] - sorted[0]).toBe(12);
+
+    const pedal = runPreset('pedal_point');
+    // song.key is 'E' (pitch class 4) across Em and C chords
+    expect(pedal.length).toBeGreaterThan(0);
+    expect(pedal.every((n) => n.pitch % 12 === 4)).toBe(true);
+  });
 });

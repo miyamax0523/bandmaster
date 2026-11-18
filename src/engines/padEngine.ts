@@ -16,6 +16,7 @@ export function generatePadNotes(input: EngineInput): MidiNote[] {
   const rng = createSeededRng(seed);
   const sectionEnd = section.bars * TICKS_PER_BAR;
   const playStyle = song.members.pad.padStyle ?? 'Power';
+  const padPreset = song.members.pad.patternPreset ?? 'auto';
   const baseVel = section.energy === 'High' ? 84 : section.energy === 'Low' ? 58 : 72;
 
   const notes: MidiNote[] = [];
@@ -31,9 +32,27 @@ export function generatePadNotes(input: EngineInput): MidiNote[] {
       song.scale
     );
 
-    const minP = params.voicingMin;
-    const maxP = playStyle === 'Dark Ambient' ? Math.min(67, params.voicingMax) : params.voicingMax;
-    const rootMidi = fitPitchClassToRange(chord.rootSemitone, minP, Math.min(minP + 11, maxP));
+    const minP =
+      padPreset === 'high_shimmer'
+        ? 64
+        : padPreset === 'dark_cinematic'
+          ? 43
+          : params.voicingMin;
+    const maxP =
+      padPreset === 'high_shimmer'
+        ? 88
+        : padPreset === 'dark_cinematic'
+          ? 64
+          : padPreset === 'octave_layer'
+            ? 84
+            : playStyle === 'Dark Ambient' && padPreset === 'auto'
+              ? Math.min(67, params.voicingMax)
+              : params.voicingMax;
+    const rootMidi = fitPitchClassToRange(
+      chord.rootSemitone,
+      minP,
+      Math.min(minP + 11, maxP)
+    );
 
     const intervalSet = new Set<number>();
     const isPlainTriad =
@@ -42,7 +61,37 @@ export function generatePadNotes(input: EngineInput): MidiNote[] {
       (chord.intervals[1] === 3 || chord.intervals[1] === 4) &&
       chord.intervals[2] === 7;
 
-    if (playStyle === 'Dark Ambient') {
+    if (padPreset !== 'auto') {
+      if (padPreset === 'warm_whole' || padPreset === 'swell_half') {
+        for (const iv of chord.intervals) intervalSet.add(iv);
+        if (chord.quality !== 'power') intervalSet.add(12);
+      } else if (padPreset === 'high_shimmer') {
+        for (const iv of chord.intervals) intervalSet.add(iv);
+        intervalSet.add(12);
+        intervalSet.add(14);
+      } else if (padPreset === 'dark_cinematic') {
+        intervalSet.add(0);
+        intervalSet.add(7);
+        if (chord.intervals.includes(3)) intervalSet.add(3);
+        intervalSet.add(12);
+      } else if (padPreset === 'floating_9th') {
+        for (const iv of chord.intervals) intervalSet.add(iv);
+        intervalSet.add(2);
+        if (!intervalSet.has(10) && !intervalSet.has(11)) intervalSet.add(11);
+        intervalSet.add(14);
+        intervalSet.add(12);
+      } else if (padPreset === 'fifth_drone') {
+        intervalSet.add(0);
+        intervalSet.add(7);
+        intervalSet.add(12);
+      } else if (padPreset === 'octave_layer') {
+        for (const iv of chord.intervals) {
+          intervalSet.add(iv);
+          intervalSet.add(iv + 12);
+        }
+        intervalSet.add(19);
+      }
+    } else if (playStyle === 'Dark Ambient') {
       for (const iv of chord.intervals) {
         intervalSet.add(iv);
       }
@@ -97,23 +146,30 @@ export function generatePadNotes(input: EngineInput): MidiNote[] {
       )
     ).sort((a, b) => a - b);
 
-    const dur = Math.max(1, Math.min(TICKS_PER_BAR - 20, sectionEnd - barStart));
-    for (const p of uniquePitches) {
-      const vel = clampVelocity(
-        Math.min(
-          params.velocityCap,
-          baseVel +
-            params.velocityBoost +
-            rng.nextInt(-Math.min(6, params.velocityJitter), Math.min(6, params.velocityJitter))
-        )
-      );
-      notes.push({
-        pitch: p,
-        velocity: vel,
-        startTick: barStart,
-        durationTicks: dur,
-        channel: 2,
-      });
+    const hitOffsets = padPreset === 'swell_half' ? [0, 960] : [0];
+    const hitSpan = padPreset === 'swell_half' ? 940 : TICKS_PER_BAR - 20;
+
+    for (const off of hitOffsets) {
+      const startTick = barStart + off;
+      if (startTick >= sectionEnd) continue;
+      const dur = Math.max(1, Math.min(hitSpan, sectionEnd - startTick));
+      for (const p of uniquePitches) {
+        const vel = clampVelocity(
+          Math.min(
+            params.velocityCap,
+            baseVel +
+              params.velocityBoost +
+              rng.nextInt(-Math.min(6, params.velocityJitter), Math.min(6, params.velocityJitter))
+          )
+        );
+        notes.push({
+          pitch: p,
+          velocity: vel,
+          startTick,
+          durationTicks: dur,
+          channel: 2,
+        });
+      }
     }
   }
 

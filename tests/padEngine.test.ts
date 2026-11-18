@@ -94,4 +94,34 @@ describe('padEngine', () => {
       })
     ).toEqual([]);
   });
+
+  it('applies patternPreset deterministically across pad presets', () => {
+    const runPreset = (preset: string) => {
+      const song = createSong('Power');
+      song.members.pad.patternPreset = preset;
+      return generatePadNotes({
+        song,
+        section,
+        sectionIndex: 0,
+        style: 'A',
+        seed: 1,
+        params: resolveInstrumentParams(song, section, 'pad', 'A'),
+      });
+    };
+
+    const swell = runPreset('swell_half');
+    const swellStarts = new Set(swell.map((n) => n.startTick));
+    expect([...swellStarts].sort((a, b) => a - b)).toEqual([0, 960, 1920, 2880]);
+
+    const shimmer = runPreset('high_shimmer');
+    expect(shimmer.length).toBeGreaterThan(0);
+    expect(shimmer.every((n) => n.pitch >= 64 && n.pitch <= 88)).toBe(true);
+
+    const fifth = runPreset('fifth_drone');
+    // Bar 0 is Em (E=4, B=11) -> pitch classes should only be 4 and 11 (no 3rd G=7)
+    const bar0PitchClasses = new Set(
+      fifth.filter((n) => n.startTick === 0).map((n) => n.pitch % 12)
+    );
+    expect([...bar0PitchClasses].sort((a, b) => a - b)).toEqual([4, 11]);
+  });
 });

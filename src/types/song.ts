@@ -85,6 +85,7 @@ export interface DrumLoopData {
 export interface MemberConfig {
   enabled: boolean;
   activeSectionsOnly: boolean;
+  patternPreset?: string; // 'auto' | preset ID
   drumStyle?: DrumPlayStyle;
   bassStyle?: BassPlayStyle;
   bass808Behavior?: Bass808Behavior;

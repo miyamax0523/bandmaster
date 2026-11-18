@@ -4,6 +4,7 @@ import type { EngineInput } from './types';
 
 export const GM_DRUM = {
   KICK: 36,
+  RIMSHOT: 37,
   SNARE: 38,
   CLOSED_HH: 42,
   FLOOR_TOM: 43,
@@ -46,6 +47,7 @@ export function generateDrumNotes(input: EngineInput): MidiNote[] {
   const sectionEnd = section.bars * TICKS_PER_BAR;
   const hatDensity = section.hatDensity ?? 3;
   const kickDensity = section.kickDensity ?? 3;
+  const drumPreset = song.members.drums.patternPreset ?? 'auto';
   const notes: InternalDrumNote[] = [];
 
   // 1. Source resolution: Section Loop > Song Loop > Built-in Generator
@@ -251,39 +253,192 @@ export function generateDrumNotes(input: EngineInput): MidiNote[] {
       }
     }
   } else {
-    // Built-in pattern generator
+    // Built-in pattern generator (respecting patternPreset + hatDensity/kickDensity)
     const isHighEnergy = section.energy === 'High' || section.type === 'Chorus';
+
+    let effKickPattern = params.kickPattern;
+    let effDoubleKickProb = params.doubleKickProb;
+    let effSnareHalfTime = params.snareHalfTime;
+    let effHatSubdivision = params.hatSubdivision;
+    let effFlamEnabled = params.flamEnabled;
+    let effOffbeatOpenHat = params.offbeatOpenHat;
+    let snarePitch: number = GM_DRUM.SNARE;
+    let force16thHat = false;
+    let forceMinimal = false;
+    let driveOpenHat = false;
+    let breakdownChug = false;
+    let trapSparse = false;
+    let trapActive = false;
+    let bounceTriplet = false;
+    let buildUpMode = false;
+    let softChill = false;
+
+    switch (drumPreset) {
+      case 'straight_8':
+        effKickPattern = 'standard';
+        effDoubleKickProb = 0;
+        effSnareHalfTime = false;
+        effHatSubdivision = 1;
+        effOffbeatOpenHat = false;
+        break;
+      case 'straight_16':
+        effKickPattern = 'standard';
+        effDoubleKickProb = 0;
+        effSnareHalfTime = false;
+        effHatSubdivision = 1;
+        effOffbeatOpenHat = false;
+        force16thHat = true;
+        break;
+      case 'simple_minimal':
+        effKickPattern = 'standard';
+        effDoubleKickProb = 0;
+        effSnareHalfTime = false;
+        effHatSubdivision = 1;
+        effOffbeatOpenHat = false;
+        forceMinimal = true;
+        break;
+      case 'rock_drive':
+        effKickPattern = 'standard';
+        effSnareHalfTime = false;
+        driveOpenHat = true;
+        break;
+      case 'metal_double':
+        effKickPattern = 'standard';
+        effSnareHalfTime = false;
+        effDoubleKickProb = Math.max(0.85, params.doubleKickProb);
+        break;
+      case 'breakdown_heavy':
+        effKickPattern = 'syncopated';
+        effSnareHalfTime = true;
+        breakdownChug = true;
+        break;
+      case 'halftime_heavy':
+        effKickPattern = 'standard';
+        effSnareHalfTime = true;
+        break;
+      case 'trap_sparse':
+        effSnareHalfTime = true;
+        effHatSubdivision = 2;
+        trapSparse = true;
+        break;
+      case 'trap_active':
+        effSnareHalfTime = true;
+        effHatSubdivision = 4;
+        effFlamEnabled = true;
+        trapActive = true;
+        break;
+      case 'four_on_floor':
+        effKickPattern = 'fourOnFloor';
+        effSnareHalfTime = false;
+        effOffbeatOpenHat = true;
+        break;
+      case 'bounce_shuffle':
+        effKickPattern = 'syncopated';
+        effSnareHalfTime = false;
+        bounceTriplet = true;
+        break;
+      case 'build_up':
+        buildUpMode = true;
+        break;
+      case 'rim_chill':
+        effKickPattern = 'standard';
+        effSnareHalfTime = false;
+        snarePitch = GM_DRUM.RIMSHOT;
+        softChill = true;
+        break;
+      case 'auto':
+      default:
+        break;
+    }
+
     const hatPitch =
-      section.type === 'Chorus' && style !== 'B' && !params.offbeatOpenHat
-        ? GM_DRUM.RIDE
-        : GM_DRUM.CLOSED_HH;
+      driveOpenHat
+        ? GM_DRUM.OPEN_HH
+        : section.type === 'Chorus' && style !== 'B' && !effOffbeatOpenHat && !softChill
+          ? GM_DRUM.RIDE
+          : GM_DRUM.CLOSED_HH;
 
     for (let bar = 0; bar < section.bars; bar++) {
       const barStart = bar * TICKS_PER_BAR;
 
-      // Kick pattern (scaled by kickDensity 1..5; 3 = genre standard)
+      if (buildUpMode) {
+        // Progressive crescendo buildup across bars
+        const progress = (bar + 1) / Math.max(1, section.bars);
+        const snareStep =
+          kickDensity <= 2
+            ? 480
+            : progress < 0.4
+              ? 480
+              : progress < 0.75 && hatDensity < 5
+                ? 240
+                : 120;
+        for (let off = 0; off < TICKS_PER_BAR; off += snareStep) {
+          const vel = clampVelocity(52 + progress * 55 + (off / TICKS_PER_BAR) * 14);
+          notes.push({
+            pitch: GM_DRUM.SNARE,
+            velocity: vel,
+            startTick: barStart + off,
+            durationTicks: Math.max(40, snareStep - 10),
+            channel: 9,
+          });
+        }
+        const kickSteps = kickDensity <= 1 ? [0, 960] : [0, 480, 960, 1440];
+        for (const off of kickSteps) {
+          notes.push({
+            pitch: GM_DRUM.KICK,
+            velocity: clampVelocity(75 + progress * 42),
+            startTick: barStart + off,
+            durationTicks: 120,
+            channel: 9,
+            noTimingJitter: off === 0,
+          });
+        }
+        if (hatDensity >= 2) {
+          for (const off of [0, 960]) {
+            notes.push({
+              pitch: GM_DRUM.CRASH,
+              velocity: clampVelocity(68 + progress * 40),
+              startTick: barStart + off,
+              durationTicks: 240,
+              channel: 9,
+            });
+          }
+        }
+        continue;
+      }
+
+      // Kick pattern (scaled by kickDensity 1..5; 3 = preset/genre standard)
       const kickOffsets: number[] = [];
-      if (kickDensity === 1) {
+      if (kickDensity === 1 || forceMinimal) {
         kickOffsets.push(0, 960);
       } else if (kickDensity === 2) {
-        if (params.kickPattern === 'fourOnFloor') {
+        if (effKickPattern === 'fourOnFloor') {
           kickOffsets.push(0, 480, 960, 1440);
-        } else if (params.kickPattern === 'syncopated') {
+        } else if (effKickPattern === 'syncopated') {
           kickOffsets.push(0, 720, 1200);
         } else {
           kickOffsets.push(0, 720);
         }
       } else {
-        if (params.kickPattern === 'fourOnFloor') {
+        if (breakdownChug) {
+          kickOffsets.push(0, 120, 720, 840, 1440);
+        } else if (bounceTriplet) {
+          kickOffsets.push(0, 320, 640, 960, 1280);
+        } else if (softChill) {
+          kickOffsets.push(0, 960);
+          if (rng.chance(0.45)) kickOffsets.push(720);
+        } else if (driveOpenHat) {
+          kickOffsets.push(0, 240, 720, 1200);
+        } else if (effKickPattern === 'fourOnFloor') {
           kickOffsets.push(0, 480, 960, 1440);
-        } else if (params.kickPattern === 'syncopated') {
+        } else if (effKickPattern === 'syncopated') {
           kickOffsets.push(0, 360, 720, 1200);
           if (style !== 'B' && rng.chance(0.5)) {
             kickOffsets.push(1560);
           }
         } else {
           kickOffsets.push(0, 720);
-          if (isHighEnergy || style === 'C') {
+          if (isHighEnergy || style === 'C' || force16thHat) {
             kickOffsets.push(1200);
           }
           if (style === 'C' && rng.chance(0.45)) {
@@ -292,11 +447,11 @@ export function generateDrumNotes(input: EngineInput): MidiNote[] {
         }
 
         // Double Kick additions
-        if (params.doubleKickProb > 0) {
-          const doubleCandidates = [120, 600, 840, 1080, 1320, 1560];
+        if (effDoubleKickProb > 0) {
+          const doubleCandidates = [120, 240, 600, 840, 1080, 1320, 1560];
           const probScale = kickDensity >= 4 ? 0.85 : 0.65;
           for (const dc of doubleCandidates) {
-            if (rng.chance(params.doubleKickProb * probScale)) {
+            if (rng.chance(effDoubleKickProb * probScale)) {
               kickOffsets.push(dc);
             }
           }
@@ -307,10 +462,8 @@ export function generateDrumNotes(input: EngineInput): MidiNote[] {
             if (rng.chance(0.6)) kickOffsets.push(extra);
           }
         } else if (kickDensity === 5) {
-          if (params.doubleKickProb > 0) {
+          if (effDoubleKickProb > 0) {
             kickOffsets.push(120, 240, 360, 600, 720, 840, 1080, 1200, 1320, 1560, 1680);
-          } else if (params.hatSubdivision > 1 || section.kickMode === '808') {
-            kickOffsets.push(360, 600, 840, 1080, 1320, 1560, 1800);
           } else {
             kickOffsets.push(360, 600, 840, 1320, 1560, 1680, 1800);
           }
@@ -321,7 +474,11 @@ export function generateDrumNotes(input: EngineInput): MidiNote[] {
         (a, b) => a - b
       );
       for (const off of uniqueKickOffsets) {
-        const vel = off === 0 ? 112 : rng.nextInt(96, 110);
+        const vel = softChill
+          ? rng.nextInt(80, 94)
+          : off === 0
+            ? 112
+            : rng.nextInt(96, 110);
         notes.push({
           pitch: GM_DRUM.KICK,
           velocity: vel,
@@ -332,12 +489,12 @@ export function generateDrumNotes(input: EngineInput): MidiNote[] {
         });
       }
 
-      // Snare pattern
-      const snareOffsets = params.snareHalfTime ? [960] : [480, 1440];
+      // Snare / Rimshot pattern
+      const snareOffsets = effSnareHalfTime ? [960] : [480, 1440];
       for (const off of snareOffsets) {
-        if (params.flamEnabled && off > 30) {
+        if (effFlamEnabled && off > 30) {
           notes.push({
-            pitch: GM_DRUM.SNARE,
+            pitch: snarePitch,
             velocity: rng.nextInt(55, 65),
             startTick: barStart + off - 30,
             durationTicks: 30,
@@ -346,8 +503,8 @@ export function generateDrumNotes(input: EngineInput): MidiNote[] {
           });
         }
         notes.push({
-          pitch: GM_DRUM.SNARE,
-          velocity: rng.nextInt(100, 115),
+          pitch: snarePitch,
+          velocity: softChill ? rng.nextInt(72, 84) : rng.nextInt(100, 115),
           startTick: barStart + off,
           durationTicks: 120,
           channel: 9,
@@ -356,10 +513,10 @@ export function generateDrumNotes(input: EngineInput): MidiNote[] {
       }
 
       // Ghost snare for Take A / C
-      if (style !== 'B' && !params.snareHalfTime) {
+      if (style !== 'B' && !effSnareHalfTime && !forceMinimal && !softChill) {
         if (rng.chance(style === 'C' ? 0.6 : 0.3)) {
           notes.push({
-            pitch: GM_DRUM.SNARE,
+            pitch: snarePitch,
             velocity: rng.nextInt(42, 60),
             startTick: barStart + 840,
             durationTicks: 60,
@@ -368,19 +525,47 @@ export function generateDrumNotes(input: EngineInput): MidiNote[] {
         }
       }
 
-      // Hi-hat / Ride pattern (scaled by hatDensity 1..5; 3 = genre standard)
-      if (hatDensity === 1) {
+      // Hi-hat / Ride pattern (scaled by hatDensity 1..5; 3 = preset/genre standard)
+      if (hatDensity === 1 || forceMinimal) {
         for (const off of [0, 480, 960, 1440]) {
           notes.push({
-            pitch: params.offbeatOpenHat ? GM_DRUM.CLOSED_HH : hatPitch,
-            velocity: rng.nextInt(80, 94),
+            pitch: effOffbeatOpenHat ? GM_DRUM.CLOSED_HH : hatPitch,
+            velocity: softChill ? rng.nextInt(52, 66) : rng.nextInt(80, 94),
             startTick: barStart + off,
             durationTicks: 180,
             channel: 9,
           });
         }
+      } else if (breakdownChug) {
+        const chugTicks =
+          hatDensity >= 4
+            ? [0, 240, 480, 720, 960, 1200, 1440, 1680]
+            : [0, 480, 960, 1440];
+        for (const off of chugTicks) {
+          notes.push({
+            pitch: off % 960 === 0 ? GM_DRUM.CRASH : GM_DRUM.OPEN_HH,
+            velocity: rng.nextInt(96, 112),
+            startTick: barStart + off,
+            durationTicks: 240,
+            channel: 9,
+          });
+        }
+      } else if (bounceTriplet) {
+        const tripTicks =
+          hatDensity >= 4
+            ? [0, 160, 320, 480, 640, 800, 960, 1120, 1280, 1440, 1600, 1760]
+            : [0, 320, 480, 800, 960, 1280, 1440, 1760];
+        for (const off of tripTicks) {
+          notes.push({
+            pitch: GM_DRUM.CLOSED_HH,
+            velocity: off % 480 === 0 ? rng.nextInt(84, 96) : rng.nextInt(66, 78),
+            startTick: barStart + off,
+            durationTicks: 100,
+            channel: 9,
+          });
+        }
       } else if (hatDensity === 2) {
-        if (params.offbeatOpenHat) {
+        if (effOffbeatOpenHat) {
           for (const off of [0, 480, 960, 1440]) {
             notes.push({
               pitch: GM_DRUM.CLOSED_HH,
@@ -410,7 +595,7 @@ export function generateDrumNotes(input: EngineInput): MidiNote[] {
             });
           }
         }
-      } else if (params.offbeatOpenHat) {
+      } else if (effOffbeatOpenHat) {
         for (const off of [240, 720, 1200, 1680]) {
           notes.push({
             pitch: GM_DRUM.OPEN_HH,
@@ -420,7 +605,6 @@ export function generateDrumNotes(input: EngineInput): MidiNote[] {
             channel: 9,
           });
         }
-        // Subtle closed HH on downbeats
         for (const off of [0, 480, 960, 1440]) {
           notes.push({
             pitch: GM_DRUM.CLOSED_HH,
@@ -445,7 +629,10 @@ export function generateDrumNotes(input: EngineInput): MidiNote[] {
             });
           }
         }
-      } else if (hatDensity === 5 && params.hatSubdivision > 1) {
+      } else if (
+        (hatDensity === 5 || trapActive) &&
+        effHatSubdivision > 1
+      ) {
         // Maximum Trap density: 16th base + 32nd-note rolls
         const stepSize = 120;
         const numSteps = TICKS_PER_BAR / stepSize;
@@ -453,10 +640,10 @@ export function generateDrumNotes(input: EngineInput): MidiNote[] {
           const stepStart = barStart + s * stepSize;
           const sub =
             s % 4 === 3
-              ? params.hatSubdivision
+              ? effHatSubdivision
               : s % 4 === 1
                 ? 2
-                : rng.nextInt(1, Math.min(3, params.hatSubdivision));
+                : rng.nextInt(1, Math.min(3, effHatSubdivision));
           const subStep = sub === 1 ? 120 : Math.floor(120 / sub);
           for (let k = 0; k < sub; k++) {
             notes.push({
@@ -469,10 +656,10 @@ export function generateDrumNotes(input: EngineInput): MidiNote[] {
             });
           }
         }
-      } else if (hatDensity === 5) {
-        // Maximum Rock/Metal/Pop density: full 16th grid + Open HH accents
+      } else if (hatDensity === 5 || force16thHat) {
+        // Tight / Maximum Rock/Metal/Pop 16th grid
         for (let off = 0; off < TICKS_PER_BAR; off += 120) {
-          const isOpen = off === 720 || off === 1680;
+          const isOpen = hatDensity === 5 && (off === 720 || off === 1680);
           notes.push({
             pitch: isOpen ? GM_DRUM.OPEN_HH : hatPitch,
             velocity:
@@ -491,17 +678,18 @@ export function generateDrumNotes(input: EngineInput): MidiNote[] {
         const numSteps = TICKS_PER_BAR / stepSize;
         for (let s = 0; s < numSteps; s++) {
           const stepStart = barStart + s * stepSize;
-          if (params.hatSubdivision > 1) {
-            // Mix 1..hatSubdivision across steps so 2, 3, and 4 rolls appear
+          if (effHatSubdivision > 1) {
             let sub: number;
-            if (s % 4 === 1) {
-              sub = Math.min(params.hatSubdivision, 2);
+            if (trapSparse) {
+              sub = s === numSteps - 1 ? 2 : 1;
+            } else if (s % 4 === 1) {
+              sub = Math.min(effHatSubdivision, 2);
             } else if (s % 4 === 2) {
-              sub = Math.min(params.hatSubdivision, 3);
+              sub = Math.min(effHatSubdivision, 3);
             } else if (s % 4 === 3) {
-              sub = params.hatSubdivision;
+              sub = effHatSubdivision;
             } else {
-              sub = rng.nextInt(1, params.hatSubdivision);
+              sub = rng.nextInt(1, effHatSubdivision);
             }
             const subStep = sub === 1 ? 120 : Math.floor(120 / sub);
             for (let k = 0; k < sub; k++) {
@@ -524,7 +712,11 @@ export function generateDrumNotes(input: EngineInput): MidiNote[] {
               });
             }
           } else {
-            const vel = s % 2 === 0 ? rng.nextInt(84, 96) : rng.nextInt(68, 82);
+            const vel = softChill
+              ? rng.nextInt(54, 68)
+              : s % 2 === 0
+                ? rng.nextInt(84, 96)
+                : rng.nextInt(68, 82);
             notes.push({
               pitch: hatPitch,
               velocity: vel,
@@ -543,7 +735,7 @@ export function generateDrumNotes(input: EngineInput): MidiNote[] {
             }
           }
         }
-        if (hatDensity === 4 && !params.hatSubdivision) {
+        if (hatDensity === 4 && effHatSubdivision <= 1) {
           notes.push({
             pitch: GM_DRUM.OPEN_HH,
             velocity: 88,

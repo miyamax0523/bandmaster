@@ -93,4 +93,43 @@ describe('keyboardEngine', () => {
       })
     ).toEqual([]);
   });
+
+  it('applies patternPreset deterministically across keyboard presets', () => {
+    const runPreset = (preset: string) => {
+      const song = createSong();
+      song.members.keyboard.patternPreset = preset;
+      return generateKeyboardNotes({
+        song,
+        section,
+        sectionIndex: 0,
+        style: 'A',
+        seed: 1,
+        params: resolveInstrumentParams(song, section, 'keyboard', 'A'),
+      });
+    };
+
+    const sustain = runPreset('whole_sustain');
+    const sustainStarts = new Set(sustain.map((n) => n.startTick));
+    expect([...sustainStarts].sort((a, b) => a - b)).toEqual([0, 1920]);
+
+    const arp16 = runPreset('arp_16th');
+    expect(arp16.length).toBe(32);
+
+    const ska = runPreset('offbeat_ska');
+    const skaOffbeats = [240, 720, 1200, 1680];
+    expect(ska.length).toBeGreaterThan(0);
+    expect(
+      ska.every((n) => {
+        const local = n.startTick % 1920;
+        return skaOffbeats.some((off) => Math.abs(local - off) <= 15);
+      })
+    ).toBe(true);
+    skaOffbeats.forEach((off) => {
+      expect(ska.some((n) => Math.abs((n.startTick % 1920) - off) <= 15)).toBe(true);
+    });
+
+    const darkLow = runPreset('dark_low_riff');
+    expect(darkLow.length).toBeGreaterThan(0);
+    expect(darkLow.every((n) => n.pitch >= 48 && n.pitch <= 67)).toBe(true);
+  });
 });

@@ -10,11 +10,12 @@ function clampVelocity(v: number): number {
 function buildKeyboardVoicing(
   rootSemitone: number,
   intervals: readonly number[],
-  params: ResolvedInstrumentParams
+  params: ResolvedInstrumentParams,
+  options?: { minPitch?: number; maxPitch?: number; forceFloating?: boolean }
 ): number[] {
-  const minP = Math.max(60, params.voicingMin);
-  const maxP = Math.min(84, params.voicingMax);
-  const rootMidi = fitPitchClassToRange(rootSemitone, minP, Math.min(72, maxP));
+  const minP = options?.minPitch ?? Math.max(60, params.voicingMin);
+  const maxP = options?.maxPitch ?? Math.min(84, params.voicingMax);
+  const rootMidi = fitPitchClassToRange(rootSemitone, minP, Math.min(minP + 12, maxP));
 
   const pitchSet = new Set<number>();
   const intervalSet = new Set<number>(intervals);
@@ -24,11 +25,14 @@ function buildKeyboardVoicing(
     if (intervalSet.has(4)) intervalSet.delete(4);
     intervalSet.add(2);
   }
-  if (params.add7 && !intervalSet.has(10) && !intervalSet.has(11)) {
-    intervalSet.add(10);
+  if ((params.add7 || options?.forceFloating) && !intervalSet.has(10) && !intervalSet.has(11)) {
+    intervalSet.add(11);
   }
-  if (params.add9) {
+  if (params.add9 || options?.forceFloating) {
     intervalSet.add(14);
+  }
+  if (options?.forceFloating && !intervalSet.has(2)) {
+    intervalSet.add(2);
   }
 
   for (const iv of intervalSet) {
@@ -52,6 +56,7 @@ export function generateKeyboardNotes(input: EngineInput): MidiNote[] {
   const rng = createSeededRng(seed);
   const sectionEnd = section.bars * TICKS_PER_BAR;
   const playStyle = song.members.keyboard.keyboardStyle ?? 'Rhythm Backing';
+  const kbPreset = song.members.keyboard.patternPreset ?? 'auto';
   const baseVel = section.energy === 'High' ? 92 : section.energy === 'Low' ? 68 : 82;
 
   const notes: MidiNote[] = [];
@@ -67,7 +72,12 @@ export function generateKeyboardNotes(input: EngineInput): MidiNote[] {
     const voicing = buildKeyboardVoicing(
       chord.rootSemitone,
       chord.intervals,
-      params
+      params,
+      kbPreset === 'dark_low_riff'
+        ? { minPitch: 48, maxPitch: 67 }
+        : kbPreset === 'floating_tension'
+          ? { forceFloating: true }
+          : undefined
     );
 
     const pushChordHit = (
@@ -100,6 +110,91 @@ export function generateKeyboardNotes(input: EngineInput): MidiNote[] {
         });
       }
     };
+
+    const pushSingleNote = (
+      startTick: number,
+      pitch: number,
+      durationTicks: number,
+      velOffset = 0
+    ) => {
+      if (startTick >= sectionEnd) return;
+      notes.push({
+        pitch,
+        velocity: clampVelocity(
+          Math.min(
+            params.velocityCap,
+            baseVel +
+              velOffset +
+              params.velocityBoost +
+              rng.nextInt(-params.velocityJitter, params.velocityJitter)
+          )
+        ),
+        startTick,
+        durationTicks: Math.max(1, Math.min(durationTicks, sectionEnd - startTick)),
+        channel: 1,
+      });
+    };
+
+    if (kbPreset !== 'auto' && voicing.length > 0) {
+      if (kbPreset === 'chord_quarter') {
+        for (const h of [0, 480, 960, 1440]) {
+          pushChordHit(barStart + h, 220, h === 0 ? 4 : -4);
+        }
+      } else if (kbPreset === 'chord_eighth') {
+        for (let h = 0; h < TICKS_PER_BAR; h += 240) {
+          pushChordHit(barStart + h, 140, h % 480 === 0 ? 2 : -6);
+        }
+      } else if (kbPreset === 'syncopated_comp') {
+        for (const h of [0, 360, 720, 1200, 1560]) {
+          pushChordHit(barStart + h, 200, h === 0 ? 4 : -2);
+        }
+      } else if (kbPreset === 'offbeat_ska') {
+        for (const h of [240, 720, 1200, 1680]) {
+          pushChordHit(barStart + h, 110, 4);
+        }
+      } else if (kbPreset === 'arp_up') {
+        for (let s = 0; s < 8; s++) {
+          pushSingleNote(barStart + s * 240, voicing[s % voicing.length], 220, s % 2 === 0 ? 0 : -6);
+        }
+      } else if (kbPreset === 'arp_down_up') {
+        const pingPong =
+          voicing.length > 1
+            ? [...voicing, ...voicing.slice(1, -1).reverse()]
+            : voicing;
+        for (let s = 0; s < 8; s++) {
+          pushSingleNote(barStart + s * 240, pingPong[s % pingPong.length], 220, s % 2 === 0 ? 0 : -6);
+        }
+      } else if (kbPreset === 'arp_16th') {
+        for (let s = 0; s < 16; s++) {
+          pushSingleNote(barStart + s * 120, voicing[s % voicing.length], 100, s % 4 === 0 ? 4 : -6);
+        }
+      } else if (kbPreset === 'broken_chord') {
+        const seq = [
+          0,
+          Math.min(voicing.length - 1, 2),
+          Math.min(voicing.length - 1, 1),
+          voicing.length - 1,
+          Math.min(voicing.length - 1, 1),
+          Math.min(voicing.length - 1, 2),
+          0,
+          Math.min(voicing.length - 1, 1),
+        ];
+        for (let s = 0; s < 8; s++) {
+          pushSingleNote(barStart + s * 240, voicing[seq[s]], 220, -4);
+        }
+      } else if (kbPreset === 'whole_sustain') {
+        pushChordHit(barStart, TICKS_PER_BAR - 20, -4);
+      } else if (kbPreset === 'floating_tension') {
+        pushChordHit(barStart, 940, -6);
+        pushChordHit(barStart + 960, 940, -10);
+      } else if (kbPreset === 'dark_low_riff') {
+        const riffSteps = [0, 360, 720, 1200, 1440];
+        for (let i = 0; i < riffSteps.length; i++) {
+          pushSingleNote(barStart + riffSteps[i], voicing[i % voicing.length], 240, 2);
+        }
+      }
+      continue;
+    }
 
     if (playStyle === 'Long Sustain') {
       pushChordHit(barStart, TICKS_PER_BAR - 20, -4);

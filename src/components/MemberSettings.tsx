@@ -1,4 +1,5 @@
 import { extractMatchedKeywords } from '../lib/keywordParser';
+import { PATTERN_PRESET_GROUPS } from '../lib/patternPresets';
 import type {
   Bass808Behavior,
   BassPlayStyle,
@@ -60,6 +61,7 @@ export function MemberSettings({ song, onUpdateMember }: MemberSettingsProps) {
       {INST_META.map(({ key, label, icon, tags }) => {
         const m = song.members[key];
         const matched = extractMatchedKeywords(m.instructionText);
+        const groups = PATTERN_PRESET_GROUPS[key];
 
         return (
           <section key={key} className="panel">
@@ -81,6 +83,26 @@ export function MemberSettings({ song, onUpdateMember }: MemberSettingsProps) {
 
             {m.enabled && (
               <div className="form-grid">
+                <label className="field">
+                  <span>演奏パターン（プリセット）</span>
+                  <select
+                    value={m.patternPreset ?? 'auto'}
+                    onChange={(e) =>
+                      onUpdateMember(key, { patternPreset: e.target.value })
+                    }
+                  >
+                    {groups.map((grp) => (
+                      <optgroup key={grp.category} label={grp.category}>
+                        {grp.options.map((opt) => (
+                          <option key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
+                </label>
+
                 <label className="switch-row compact">
                   <span>Auto Tacet（Chorus / Bridge / High 以外休符）</span>
                   <input
@@ -96,7 +118,7 @@ export function MemberSettings({ song, onUpdateMember }: MemberSettingsProps) {
 
                 {key === 'drums' && (
                   <label className="field">
-                    <span>奏法 (PlayStyle)</span>
+                    <span>基本スタイル（おまかせ時基準）</span>
                     <select
                       value={m.drumStyle ?? 'Standard'}
                       onChange={(e) =>
@@ -117,7 +139,7 @@ export function MemberSettings({ song, onUpdateMember }: MemberSettingsProps) {
                 {key === 'bass' && (
                   <>
                     <label className="field">
-                      <span>奏法 (PlayStyle)</span>
+                      <span>基本スタイル（おまかせ時基準）</span>
                       <select
                         value={m.bassStyle ?? 'Root Sync'}
                         onChange={(e) =>
@@ -154,7 +176,7 @@ export function MemberSettings({ song, onUpdateMember }: MemberSettingsProps) {
 
                 {key === 'keyboard' && (
                   <label className="field">
-                    <span>奏法 (PlayStyle)</span>
+                    <span>基本スタイル（おまかせ時基準）</span>
                     <select
                       value={m.keyboardStyle ?? 'Rhythm Backing'}
                       onChange={(e) =>
@@ -173,7 +195,7 @@ export function MemberSettings({ song, onUpdateMember }: MemberSettingsProps) {
 
                 {key === 'pad' && (
                   <label className="field">
-                    <span>奏法 (PlayStyle)</span>
+                    <span>基本スタイル（おまかせ時基準）</span>
                     <select
                       value={m.padStyle ?? 'Power'}
                       onChange={(e) =>
@@ -193,41 +215,34 @@ export function MemberSettings({ song, onUpdateMember }: MemberSettingsProps) {
                   </label>
                 )}
 
-                <label className="field">
-                  <span>自然言語指示</span>
-                  <input
-                    type="text"
-                    placeholder="例: ツーバスで激しく、タイトに..."
-                    value={m.instructionText}
-                    onChange={(e) =>
-                      onUpdateMember(key, { instructionText: e.target.value })
-                    }
-                  />
-                </label>
-
-                <div className="chip-list">
-                  {tags.map((t) => (
-                    <button
-                      key={t}
-                      type="button"
-                      className="chip-btn"
-                      onClick={() => appendTag(key, t)}
-                    >
-                      +{t}
-                    </button>
-                  ))}
-                </div>
-
-                {matched.length > 0 && (
-                  <div className="chip-list">
-                    <span className="hint-text">認識済み:</span>
-                    {matched.map((kw) => (
-                      <span key={kw} className="badge badge-accent">
-                        {kw}
-                      </span>
-                    ))}
+                <details className="memo-details">
+                  <summary>
+                    メモ（任意）
+                    {matched.length > 0 ? ` · ${matched.length}件適用` : ''}
+                  </summary>
+                  <div className="memo-body">
+                    <input
+                      type="text"
+                      placeholder="メモ / 追加ニュアンス（任意）"
+                      value={m.instructionText}
+                      onChange={(e) =>
+                        onUpdateMember(key, { instructionText: e.target.value })
+                      }
+                    />
+                    <div className="chip-list">
+                      {tags.map((t) => (
+                        <button
+                          key={t}
+                          type="button"
+                          className="chip-btn"
+                          onClick={() => appendTag(key, t)}
+                        >
+                          +{t}
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                )}
+                </details>
               </div>
             )}
           </section>

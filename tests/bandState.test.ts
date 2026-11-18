@@ -17,7 +17,8 @@ import {
   updateSectionKickMode,
 } from '../src/lib/bandState';
 import { detectHorizontalSwipe } from '../src/lib/touchSwipe';
-import type { UnisonRiffData } from '../src/types/song';
+import { selectSongTracks } from '../src/lib/noteSelector';
+import { TICKS_PER_BAR, type UnisonRiffData } from '../src/types/song';
 
 describe('bandState', () => {
   it('generates drums -> bass -> keyboard -> pad in order so bass follows drum kicks', () => {
@@ -231,5 +232,54 @@ describe('bandState', () => {
     expect(JSON.stringify(afterLocked.bandState.cellsBySection[secId].drums.takes.A)).toBe(
       lockedDrumsBefore
     );
+  });
+
+  it('fills bars 5..8 for all parts (including locked parts via periodic loop) when expanding a 4-bar section to 8 bars', () => {
+    const song = createDefaultSongConfig('rockBand');
+    song.members.keyboard.activeSectionsOnly = false;
+    song.members.pad.activeSectionsOnly = false;
+    song.sections = [
+      {
+        id: 's1',
+        type: 'Verse',
+        name: 'Aメロ',
+        bars: 4,
+        energy: 'Mid',
+        kickMode: 'acoustic',
+        hatDensity: 3,
+        kickDensity: 3,
+        chords: ['Em', 'C', 'G', 'D'],
+      },
+    ];
+    let state = generateAllSections(song);
+    // Lock drums and bass before expanding 4 -> 8 bars
+    state = toggleCellLock(state, 's1', 'drums');
+    state = toggleCellLock(state, 's1', 'bass');
+
+    const expanded = updateSectionBars(song, state, 's1', 8);
+    expect(expanded.song.sections[0].bars).toBe(8);
+
+    const fourBarEnd = 4 * TICKS_PER_BAR;
+    const eightBarEnd = 8 * TICKS_PER_BAR;
+
+    for (const inst of ['drums', 'bass', 'keyboard', 'pad'] as const) {
+      const notes = expanded.bandState.cellsBySection.s1[inst].takes.A;
+      const extendedNotes = notes.filter(
+        (n) => n.startTick >= fourBarEnd && n.startTick < eightBarEnd
+      );
+      expect(extendedNotes.length).toBeGreaterThan(0);
+    }
+
+    // Verify noteSelector outputs bars 5..8 and clips cleanly if shrunk back 8 -> 4
+    const tracks8 = selectSongTracks(expanded.song, expanded.bandState);
+    expect(tracks8.drums.some((n) => n.startTick >= fourBarEnd)).toBe(true);
+    expect(tracks8.bass.some((n) => n.startTick >= fourBarEnd)).toBe(true);
+    expect(tracks8.keyboard.some((n) => n.startTick >= fourBarEnd)).toBe(true);
+    expect(tracks8.pad.some((n) => n.startTick >= fourBarEnd)).toBe(true);
+
+    const shrunkBack = updateSectionBars(expanded.song, expanded.bandState, 's1', 4);
+    const tracks4 = selectSongTracks(shrunkBack.song, shrunkBack.bandState);
+    expect(tracks4.drums.every((n) => n.startTick < fourBarEnd)).toBe(true);
+    expect(tracks4.bass.every((n) => n.startTick < fourBarEnd)).toBe(true);
   });
 });

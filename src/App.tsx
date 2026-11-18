@@ -186,6 +186,9 @@ export function App() {
               onChangeSectionDrumLoop={changeSectionDrumLoop}
               onClearSectionDrumLoop={(id) => changeSectionDrumLoop(id, undefined)}
               onChangeSectionDrumDensity={changeSectionDrumDensity}
+              onChangePatternPreset={(inst, preset) =>
+                updateMember(inst, { patternPreset: preset })
+              }
               onRegenerateAll={regenerateAll}
               onUndo={undo}
               onRegenerateCell={regenerateCell}

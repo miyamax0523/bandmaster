@@ -205,8 +205,17 @@ export class AudioPreviewEngine {
     this.tracks = tracks;
     this.bpm = Math.max(1, bpm);
     this.totalTicks = Math.max(0, totalTicks);
+    this.loopWrappedUntil = null;
     if (this.currentTick > this.totalTicks) {
       this.currentTick = 0;
+    }
+    if (this.status === 'playing' && this.ctx) {
+      this.stopAllActiveVoices();
+      const resumeTick = Math.max(0, Math.round(this.currentTick));
+      this.anchorTick = resumeTick;
+      this.nextScheduleTick = resumeTick;
+      this.anchorAudioTime = this.ctx.currentTime;
+      this.scheduleAhead();
     }
     this.emit();
   }
@@ -231,6 +240,11 @@ export class AudioPreviewEngine {
 
   setSectionLoop(span: SectionSpan | null): void {
     const prev = this.sectionLoop;
+    const sameSection =
+      prev !== null &&
+      span !== null &&
+      prev.sectionId === span.sectionId &&
+      prev.startTick === span.startTick;
     const changed =
       prev?.sectionId !== span?.sectionId ||
       prev?.startTick !== span?.startTick ||
@@ -242,11 +256,15 @@ export class AudioPreviewEngine {
     if (span) {
       const outOfBounds =
         this.currentTick < span.startTick || this.currentTick >= span.endTick;
-      if (changed || outOfBounds) {
-        if (this.status === 'playing') {
+      if (this.status === 'playing') {
+        if (!sameSection || outOfBounds) {
           this.seek(span.startTick);
           return;
         }
+        if (changed) {
+          this.scheduleAhead();
+        }
+      } else if (changed && (!sameSection || outOfBounds)) {
         this.currentTick = span.startTick;
         this.anchorTick = span.startTick;
         this.nextScheduleTick = span.startTick;

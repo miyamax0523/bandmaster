@@ -1,6 +1,7 @@
 import { TICKS_PER_BAR, type MidiNote } from '../types/song';
 import {
   fitPitchClassToRange,
+  noteNameToSemitone,
   resolveChordForBar,
 } from '../lib/chordUtils';
 import { createSeededRng } from '../lib/random';
@@ -166,6 +167,7 @@ export function generateBassNotes(input: EngineInput): MidiNote[] {
     .filter((n) => n.pitch === 36)
     .map((n) => n.startTick);
 
+  const bassPreset = song.members.bass.patternPreset ?? 'auto';
   const notes: MidiNote[] = [];
 
   for (let bar = 0; bar < section.bars; bar++) {
@@ -185,12 +187,137 @@ export function generateBassNotes(input: EngineInput): MidiNote[] {
     );
 
     const barHeadPitch = fitPitchClassToRange(
-      chord.bassPitchClass ?? chord.rootPitchClass,
+      bassPreset === 'pedal_point'
+        ? noteNameToSemitone(song.key)
+        : (chord.bassPitchClass ?? chord.rootPitchClass),
       params.barHeadRootMin,
       params.barHeadRootMax
     );
 
     const baseVel = section.energy === 'High' ? 105 : section.energy === 'Low' ? 84 : 96;
+    const barKicks = kickTicks.filter((t) => t > barStart && t < barEnd);
+
+    if (bassPreset !== 'auto') {
+      const octPitch =
+        barHeadPitch + 12 <= params.rangeMax
+          ? barHeadPitch + 12
+          : barHeadPitch;
+      const fifthPitch = fitPitchClassToRange(
+        (chord.rootSemitone + 7) % 12,
+        params.rangeMin,
+        params.rangeMax
+      );
+      const thirdInterval = chord.intervals.includes(3)
+        ? 3
+        : chord.intervals.includes(4)
+          ? 4
+          : 7;
+      const thirdPitch = fitPitchClassToRange(
+        (chord.rootSemitone + thirdInterval) % 12,
+        params.rangeMin,
+        params.rangeMax
+      );
+      const nextRoot = fitPitchClassToRange(
+        nextChord.bassPitchClass ?? nextChord.rootPitchClass,
+        params.barHeadRootMin,
+        params.barHeadRootMax
+      );
+      const approachPitch =
+        nextRoot - 1 >= params.rangeMin
+          ? nextRoot - 1
+          : Math.min(params.rangeMax, nextRoot + 2);
+
+      const pushBassNote = (
+        offset: number,
+        pitch: number,
+        dur: number,
+        velOffset = 0
+      ) => {
+        notes.push({
+          pitch: Math.min(params.rangeMax, Math.max(params.rangeMin, pitch)),
+          velocity: clampVelocity(
+            Math.min(
+              params.velocityCap,
+              baseVel +
+                velOffset +
+                params.velocityBoost +
+                rng.nextInt(-Math.min(6, params.velocityJitter), Math.min(6, params.velocityJitter))
+            )
+          ),
+          startTick: barStart + offset,
+          durationTicks: dur,
+          channel: 0,
+        });
+      };
+
+      if (bassPreset === 'root_whole') {
+        pushBassNote(0, barHeadPitch, TICKS_PER_BAR - 40, 8);
+      } else if (bassPreset === 'root_steady' || bassPreset === 'pedal_point') {
+        for (let off = 0; off < TICKS_PER_BAR; off += 240) {
+          pushBassNote(off, barHeadPitch, 210, off === 0 ? 8 : -2);
+        }
+      } else if (bassPreset === 'kick_lock') {
+        pushBassNote(0, barHeadPitch, 220, 8);
+        for (const kt of barKicks) {
+          pushBassNote(kt - barStart, barHeadPitch, 200, 0);
+        }
+      } else if (bassPreset === 'octave_disco') {
+        for (let s = 0; s < 8; s++) {
+          const off = s * 240;
+          const p = s % 2 === 0 ? barHeadPitch : octPitch;
+          pushBassNote(off, p, 200, s % 2 === 0 ? 6 : 0);
+        }
+      } else if (bassPreset === 'melodic_walk') {
+        pushBassNote(0, barHeadPitch, 440, 8);
+        pushBassNote(480, thirdPitch, 440, 0);
+        pushBassNote(960, fifthPitch, 440, 2);
+        pushBassNote(1440, approachPitch, 440, -2);
+      } else if (bassPreset === 'syncopated_groove') {
+        const steps: Array<[number, number, number]> = [
+          [0, barHeadPitch, 320],
+          [360, barHeadPitch, 280],
+          [720, fifthPitch, 110],
+          [840, octPitch, 300],
+          [1200, barHeadPitch, 300],
+          [1560, approachPitch, 280],
+        ];
+        for (const [off, p, dur] of steps) {
+          pushBassNote(off, p, dur, off === 0 ? 8 : 0);
+        }
+      } else if (bassPreset === 'slap_funk') {
+        const slaps: Array<[number, number, number]> = [
+          [0, barHeadPitch, 110],
+          [120, barHeadPitch, 180],
+          [360, octPitch, 110],
+          [480, barHeadPitch, 200],
+          [720, octPitch, 110],
+          [840, barHeadPitch, 200],
+          [1080, octPitch, 110],
+          [1440, fifthPitch, 200],
+          [1680, octPitch, 180],
+        ];
+        for (const [off, p, dur] of slaps) {
+          pushBassNote(off, p, dur, p === octPitch ? 6 : 2);
+        }
+      } else if (bassPreset === 'metal_gallop') {
+        const gallops = [0, 240, 360, 480, 720, 840, 960, 1200, 1320, 1440, 1680, 1800];
+        for (const off of gallops) {
+          pushBassNote(off, barHeadPitch, 105, off % 480 === 0 ? 8 : -2);
+        }
+      } else if (bassPreset === 'sub_808_glide') {
+        const subHits =
+          barKicks.length > 0
+            ? [0, ...barKicks.slice(0, 2).map((kt) => kt - barStart)]
+            : [0, 960];
+        const uniqueSubs = Array.from(new Set(subHits)).sort((a, b) => a - b);
+        for (let i = 0; i < uniqueSubs.length; i++) {
+          const off = uniqueSubs[i];
+          const nextOff = i + 1 < uniqueSubs.length ? uniqueSubs[i + 1] : TICKS_PER_BAR;
+          pushBassNote(off, barHeadPitch, Math.max(240, nextOff - off - 20), 10);
+        }
+      }
+      continue;
+    }
 
     // Mandatory bar-head root at tick = barStart (exact 0 jitter)
     notes.push({
@@ -206,7 +333,6 @@ export function generateBassNotes(input: EngineInput): MidiNote[] {
       channel: 0,
     });
 
-    const barKicks = kickTicks.filter((t) => t > barStart && t < barEnd);
     const usedTicks = new Set<number>([barStart]);
 
     const pickBassPitch = (allowOctave: boolean): number => {

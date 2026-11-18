@@ -4,6 +4,7 @@ import { generateKeyboardNotes } from '../engines/keyboardEngine';
 import { generatePadNotes } from '../engines/padEngine';
 import {
   CURRENT_ENGINE_VERSION,
+  TICKS_PER_BAR,
   type DensityLevel,
   type DrumLoopData,
   type InstrumentType,
@@ -510,6 +511,44 @@ export function toggleSectionRiffOctaveUpOn808(
   return { song: nextSong, bandState: nextState };
 }
 
+export function expandLockedNotesToBars(
+  notes: readonly MidiNote[],
+  oldBars: number,
+  newBars: number
+): MidiNote[] {
+  if (newBars <= oldBars || notes.length === 0) {
+    return notes.map((n) => ({ ...n }));
+  }
+  const periodTicks = Math.max(1, oldBars) * TICKS_PER_BAR;
+  const newEnd = newBars * TICKS_PER_BAR;
+  const cycleNotes = notes.filter(
+    (n) => n.startTick >= 0 && n.startTick < periodTicks
+  );
+  if (cycleNotes.length === 0) {
+    return notes.map((n) => ({ ...n }));
+  }
+
+  const expanded: MidiNote[] = [];
+  for (let base = 0; base < newEnd; base += periodTicks) {
+    for (const n of cycleNotes) {
+      const absTick = base + n.startTick;
+      if (absTick >= newEnd) continue;
+      const maxDurInCycle = periodTicks - n.startTick;
+      const maxDurInSection = newEnd - absTick;
+      expanded.push({
+        ...n,
+        startTick: absTick,
+        durationTicks: Math.max(
+          1,
+          Math.min(n.durationTicks, maxDurInCycle, maxDurInSection)
+        ),
+      });
+    }
+  }
+  expanded.sort((a, b) => a.startTick - b.startTick || a.pitch - b.pitch);
+  return expanded;
+}
+
 export function updateSectionBars(
   song: SongConfig,
   bandState: BandState,
@@ -521,11 +560,26 @@ export function updateSectionBars(
   const secIdx = nextSong.sections.findIndex((s) => s.id === sectionId);
   if (secIdx === -1) return { song, bandState };
 
+  const oldBars = nextSong.sections[secIdx].bars;
   nextSong.sections[secIdx].bars = clampedBars;
   const nextState = cloneBandState(bandState);
   const existingSec = nextState.cellsBySection[sectionId];
 
-  // Unlocked cells regenerate in drums -> bass -> keyboard -> pad order; locked cells untouched
+  // If bars increased, periodically loop-fill locked cells so extended bars are never silent
+  if (existingSec && clampedBars > oldBars) {
+    for (const inst of GENERATION_ORDER) {
+      const cell = existingSec[inst];
+      if (cell?.locked) {
+        cell.takes = {
+          A: expandLockedNotesToBars(cell.takes.A, oldBars, clampedBars),
+          B: expandLockedNotesToBars(cell.takes.B, oldBars, clampedBars),
+          C: expandLockedNotesToBars(cell.takes.C, oldBars, clampedBars),
+        };
+      }
+    }
+  }
+
+  // Unlocked cells regenerate in drums -> bass -> keyboard -> pad order; locked cells remain protected
   nextState.cellsBySection[sectionId] = generateSectionCells(
     nextSong,
     nextSong.sections[secIdx],
@@ -657,12 +711,14 @@ export function createDefaultSongConfig(
       drums: {
         enabled: true,
         activeSectionsOnly: false,
+        patternPreset: 'auto',
         drumStyle: 'Standard',
         instructionText: '',
       },
       bass: {
         enabled: true,
         activeSectionsOnly: false,
+        patternPreset: 'auto',
         bassStyle: 'Root Sync',
         bass808Behavior: 'octaveUp',
         instructionText: '',
@@ -670,12 +726,14 @@ export function createDefaultSongConfig(
       keyboard: {
         enabled: true,
         activeSectionsOnly: true,
+        patternPreset: 'auto',
         keyboardStyle: 'Rhythm Backing',
         instructionText: '',
       },
       pad: {
         enabled: true,
         activeSectionsOnly: true,
+        patternPreset: 'auto',
         padStyle: 'Power',
         instructionText: '',
       },
