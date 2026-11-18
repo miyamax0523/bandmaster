@@ -22,6 +22,7 @@ import type {
 interface ArrangementEditorProps {
   song: SongConfig;
   selectedSectionId: string;
+  isPreviewingSection: boolean;
   canUndo: boolean;
   onSelectSection: (id: string) => void;
   onPreviewSection: (sectionId: string) => void;
@@ -74,6 +75,7 @@ const SUFFIX_CONVERTERS = ['M7', 'M9', 'add9', 'm7', 'm9', 'sus2', 'sus4', '5'] 
 export function ArrangementEditor({
   song,
   selectedSectionId,
+  isPreviewingSection,
   canUndo,
   onSelectSection,
   onPreviewSection,
@@ -285,10 +287,12 @@ export function ArrangementEditor({
         </div>
         <button
           type="button"
-          className="btn btn-accent section-preview-btn"
+          className={`btn section-preview-btn ${
+            isPreviewingSection ? 'btn-danger is-playing' : 'btn-accent'
+          }`}
           onClick={() => onPreviewSection(current.id)}
         >
-          ▶ このセクション試聴
+          {isPreviewingSection ? '⏹ 試聴停止' : '▶ このセクション試聴'}
         </button>
       </div>
 

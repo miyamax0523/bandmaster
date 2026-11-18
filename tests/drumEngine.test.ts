@@ -251,4 +251,72 @@ describe('drumEngine', () => {
       })
     ).toEqual([]);
   });
+
+  it('produces distinct seed-dependent Take A/B/C variations on uploaded drum MIDI while preserving Kick skeleton', () => {
+    const loop: DrumLoopData = {
+      fileName: 'custom.mid',
+      bars: 1,
+      sourceTrackIndex: 0,
+      notes: [
+        { pitch: 36, velocity: 110, startTick: 0, durationTicks: 120 },
+        { pitch: 42, velocity: 90, startTick: 0, durationTicks: 120 },
+        { pitch: 38, velocity: 105, startTick: 480, durationTicks: 120 },
+        { pitch: 36, velocity: 105, startTick: 960, durationTicks: 120 },
+        { pitch: 38, velocity: 105, startTick: 1440, durationTicks: 120 },
+      ],
+    };
+
+    const song = createSong();
+    const section = createSection({
+      type: 'Verse',
+      bars: 2,
+      energy: 'High',
+      uploadedDrumLoop: loop,
+    });
+
+    const gen = (style: 'A' | 'B' | 'C', seed: number) =>
+      generateDrumNotes({
+        song,
+        section,
+        sectionIndex: 0,
+        style,
+        seed,
+        params: resolveInstrumentParams(song, section, 'drums', style),
+      });
+
+    // Take A keeps base pattern + light beat-4 nuance only
+    const takeA = gen('A', 100);
+    expect(takeA.filter((n) => n.pitch === 36).map((n) => n.startTick)).toEqual([
+      0, 960, 1920, 2880,
+    ]);
+
+    // Take B keeps Kick/Snare skeleton and adds low-velocity ghost notes on 16th offbeats
+    const takeB1 = gen('B', 111);
+    const takeB2 = gen('B', 999);
+    expect(takeB1.filter((n) => n.pitch === 36).map((n) => n.startTick)).toEqual([
+      0, 960, 1920, 2880,
+    ]);
+    const bGhostNotes = takeB1.filter(
+      (n) => n.startTick % 240 === 120 && n.velocity <= 60
+    );
+    expect(bGhostNotes.length).toBeGreaterThan(0);
+    expect(JSON.stringify(takeB1)).not.toBe(JSON.stringify(takeB2));
+
+    // Take C adds Open HH (46) / Crash (49) and seed-dependent final-bar fill (beats 3-4) keeping Kick at 2880
+    const takeC1 = gen('C', 222);
+    const takeC2 = gen('C', 8888);
+    expect(takeC1.some((n) => n.pitch === GM_DRUM.OPEN_HH)).toBe(true);
+    expect(takeC1.some((n) => n.pitch === GM_DRUM.CRASH)).toBe(true);
+    expect(
+      takeC1.some((n) => n.pitch === GM_DRUM.KICK && n.startTick === 2880)
+    ).toBe(true);
+    const c1Fill = takeC1.filter(
+      (n) => n.startTick >= 1920 + 960 && n.pitch !== GM_DRUM.KICK
+    );
+    const c2Fill = takeC2.filter(
+      (n) => n.startTick >= 1920 + 960 && n.pitch !== GM_DRUM.KICK
+    );
+    expect(c1Fill.length).toBeGreaterThanOrEqual(6);
+    expect(JSON.stringify(c1Fill)).not.toBe(JSON.stringify(c2Fill));
+  });
 });

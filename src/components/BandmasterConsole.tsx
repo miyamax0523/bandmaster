@@ -10,6 +10,7 @@ interface BandmasterConsoleProps {
   song: SongConfig;
   bandState: BandState;
   selectedSectionId: string;
+  isPreviewingSection: boolean;
   canUndo: boolean;
   onSelectSection: (id: string) => void;
   onPreviewSection: (sectionId: string) => void;
@@ -35,6 +36,7 @@ export function BandmasterConsole({
   song,
   bandState,
   selectedSectionId,
+  isPreviewingSection,
   canUndo,
   onSelectSection,
   onPreviewSection,
@@ -125,10 +127,12 @@ export function BandmasterConsole({
         </div>
         <button
           type="button"
-          className="btn btn-accent section-preview-btn"
+          className={`btn section-preview-btn ${
+            isPreviewingSection ? 'btn-danger is-playing' : 'btn-accent'
+          }`}
           onClick={() => onPreviewSection(section.id)}
         >
-          ▶ このセクション試聴
+          {isPreviewingSection ? '⏹ 試聴停止' : '▶ このセクション試聴'}
         </button>
       </div>
 

@@ -279,6 +279,12 @@ describe('audioPreview', () => {
     expect(engine.getState().currentTick).toBe(0);
     expect(createdOscs.length).toBe(3);
 
+    // StopAt resets currentTick to section start tick (toggle-stop support)
+    engine.setSectionLoop(span2);
+    engine.stopAt(span2.startTick);
+    expect(engine.getState().status).toBe('stopped');
+    expect(engine.getState().currentTick).toBe(1920);
+
     engine.dispose();
   });
 });

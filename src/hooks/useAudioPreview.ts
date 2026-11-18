@@ -70,10 +70,21 @@ export function useAudioPreview(
       const target =
         spans.find((s) => s.sectionId === sectionId) ?? spans[0] ?? null;
       if (!target) return;
-      setPlaybackMode('section');
-      void engineRef.current!.playSection(target);
+      const engine = engineRef.current!;
+      const st = engine.getState();
+      const isAlreadyPreviewingThis =
+        st.status === 'playing' &&
+        playbackMode === 'section' &&
+        st.sectionLoop?.sectionId === target.sectionId;
+
+      if (isAlreadyPreviewingThis) {
+        engine.stopAt(target.startTick);
+      } else {
+        setPlaybackMode('section');
+        void engine.playSection(target);
+      }
     },
-    [spans]
+    [spans, playbackMode]
   );
 
   const switchPlaybackMode = useCallback(

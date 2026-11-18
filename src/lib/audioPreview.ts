@@ -305,12 +305,17 @@ export class AudioPreviewEngine {
   }
 
   stop(): void {
+    this.stopAt(0);
+  }
+
+  stopAt(tick: number): void {
+    const target = Math.min(this.totalTicks, Math.max(0, Math.round(tick)));
     this.stopSchedulerLoop();
     this.stopAllActiveVoices();
     this.status = 'stopped';
-    this.currentTick = 0;
-    this.nextScheduleTick = 0;
-    this.anchorTick = 0;
+    this.currentTick = target;
+    this.nextScheduleTick = target;
+    this.anchorTick = target;
     this.loopWrappedUntil = null;
     this.emit();
   }

@@ -27,6 +27,7 @@ const FILL_REPLACEABLE_PITCHES = new Set<number>([
 interface InternalDrumNote extends MidiNote {
   isAnchor?: boolean;
   noTimingJitter?: boolean;
+  noVelJitter?: boolean;
   noVelCapOrBoost?: boolean;
   minTickBound?: number;
 }
@@ -56,14 +57,130 @@ export function generateDrumNotes(input: EngineInput): MidiNote[] {
       for (const srcNote of loopSource.notes) {
         const absTick = base + srcNote.startTick;
         if (absTick < 0 || absTick >= sectionEnd) continue;
+        const velDelta = style === 'B' ? rng.nextInt(-10, 10) : 0;
         notes.push({
           pitch: srcNote.pitch,
-          velocity: clampVelocity(srcNote.velocity),
+          velocity: clampVelocity(srcNote.velocity + velDelta),
           startTick: absTick,
           durationTicks: Math.max(1, srcNote.durationTicks),
           channel: 9,
           noTimingJitter: true,
+          noVelJitter: style === 'A' || style === 'B',
         });
+      }
+    }
+
+    // Take B: add seed-dependent low-velocity ghost notes on empty 16th-note offbeats
+    if (style === 'B') {
+      const sixteenthOffbeats = [120, 360, 600, 840, 1080, 1320, 1560, 1800];
+      for (let bar = 0; bar < section.bars; bar++) {
+        const barStart = bar * TICKS_PER_BAR;
+        const occupied = new Set<number>(
+          notes
+            .filter(
+              (n) => n.startTick >= barStart && n.startTick < barStart + TICKS_PER_BAR
+            )
+            .map((n) => n.startTick)
+        );
+        const emptyTicks = sixteenthOffbeats
+          .map((off) => barStart + off)
+          .filter((t) => t < sectionEnd && !occupied.has(t));
+
+        let addedInBar = 0;
+        for (const t of emptyTicks) {
+          if (rng.chance(0.42)) {
+            const isSnareGhost = rng.chance(0.55);
+            notes.push({
+              pitch: isSnareGhost ? GM_DRUM.SNARE : GM_DRUM.CLOSED_HH,
+              velocity: isSnareGhost ? rng.nextInt(34, 52) : rng.nextInt(40, 58),
+              startTick: t,
+              durationTicks: 60,
+              channel: 9,
+              noTimingJitter: true,
+              noVelJitter: true,
+            });
+            addedInBar++;
+          }
+        }
+        if (addedInBar === 0 && emptyTicks.length > 0) {
+          const fallbackTick = rng.pick(emptyTicks);
+          notes.push({
+            pitch: GM_DRUM.SNARE,
+            velocity: rng.nextInt(36, 50),
+            startTick: fallbackTick,
+            durationTicks: 60,
+            channel: 9,
+            noTimingJitter: true,
+            noVelJitter: true,
+          });
+        }
+      }
+    }
+
+    // Take C: add Open HH (46) & Crash (49) accents when Energy is Mid/High
+    if (
+      style === 'C' &&
+      (section.energy === 'Mid' || section.energy === 'High')
+    ) {
+      const openHatOffbeats = [240, 720, 1200, 1680];
+      const openProb = section.energy === 'High' ? 0.5 : 0.32;
+      for (let bar = 0; bar < section.bars; bar++) {
+        const barStart = bar * TICKS_PER_BAR;
+        if (
+          bar < section.bars - 1 &&
+          bar % 4 === 0 &&
+          (bar === 0 || rng.chance(0.75))
+        ) {
+          const hasCrash = notes.some(
+            (n) => n.pitch === GM_DRUM.CRASH && n.startTick === barStart
+          );
+          if (!hasCrash && barStart < sectionEnd) {
+            notes.push({
+              pitch: GM_DRUM.CRASH,
+              velocity: rng.nextInt(102, 114),
+              startTick: barStart,
+              durationTicks: 480,
+              channel: 9,
+              noTimingJitter: true,
+            });
+          }
+        }
+
+        let barOpenCount = 0;
+        for (const off of openHatOffbeats) {
+          const t = barStart + off;
+          if (t >= sectionEnd) continue;
+          if (rng.chance(openProb)) {
+            for (let i = notes.length - 1; i >= 0; i--) {
+              if (
+                notes[i].pitch === GM_DRUM.CLOSED_HH &&
+                notes[i].startTick === t
+              ) {
+                notes.splice(i, 1);
+              }
+            }
+            notes.push({
+              pitch: GM_DRUM.OPEN_HH,
+              velocity: rng.nextInt(86, 104),
+              startTick: t,
+              durationTicks: 180,
+              channel: 9,
+              noTimingJitter: true,
+            });
+            barOpenCount++;
+          }
+        }
+        if (barOpenCount === 0 && barStart + 1680 < sectionEnd) {
+          const fallbackOpen = barStart + rng.pick(openHatOffbeats);
+          notes.push({
+            pitch: GM_DRUM.OPEN_HH,
+            velocity: rng.nextInt(84, 98),
+            startTick: fallbackOpen,
+            durationTicks: 180,
+            channel: 9,
+            noTimingJitter: true,
+          });
+        }
       }
     }
   } else {
@@ -249,7 +366,8 @@ export function generateDrumNotes(input: EngineInput): MidiNote[] {
   const applyFillInRange = (
     rangeStart: number,
     rangeEnd: number,
-    fillCount: number
+    fillCount: number,
+    seedVaried = false
   ) => {
     for (let i = notes.length - 1; i >= 0; i--) {
       const n = notes[i];
@@ -270,14 +388,33 @@ export function generateDrumNotes(input: EngineInput): MidiNote[] {
       GM_DRUM.MID_TOM,
       GM_DRUM.FLOOR_TOM,
     ];
+    const mode = seedVaried ? rng.nextInt(0, 2) : 0;
     for (let i = 0; i < fillCount; i++) {
       const tickOffset = Math.floor((i * span) / fillCount);
-      const pitch =
-        fillPitches[Math.min(fillPitches.length - 1, Math.floor((i * fillPitches.length) / fillCount))];
+      let pitch: number;
+      if (mode === 1) {
+        // Snare + tom alternating pattern
+        pitch = i % 2 === 0 ? GM_DRUM.SNARE : fillPitches[(i % 3) + 1];
+      } else if (mode === 2) {
+        // Ascending/descending syncopated tom burst
+        pitch = fillPitches[rng.nextInt(0, fillPitches.length - 1)];
+      } else {
+        pitch =
+          fillPitches[
+            Math.min(
+              fillPitches.length - 1,
+              Math.floor((i * fillPitches.length) / fillCount)
+            )
+          ];
+      }
       const dur = Math.max(30, Math.floor(span / fillCount) - 5);
       notes.push({
         pitch,
-        velocity: clampVelocity(96 + Math.round((i / Math.max(1, fillCount - 1)) * 18)),
+        velocity: clampVelocity(
+          94 +
+            Math.round((i / Math.max(1, fillCount - 1)) * 20) +
+            (seedVaried ? rng.nextInt(-6, 6) : 0)
+        ),
         startTick: rangeStart + tickOffset,
         durationTicks: dur,
         channel: 9,
@@ -286,25 +423,62 @@ export function generateDrumNotes(input: EngineInput): MidiNote[] {
     }
   };
 
-  // Take C intermediate 4-note fill at barIndex = 3, tick 1440..1920 when bars >= 8
-  if (style === 'C' && section.bars >= 8) {
-    const bar3Start = 3 * TICKS_PER_BAR;
-    applyFillInRange(bar3Start + 1440, bar3Start + 1920, 4);
-  }
-
-  // Final bar fill when section.type !== 'Outro' && section.bars >= 2
-  if (section.type !== 'Outro' && section.bars >= 2) {
+  if (usingExternalLoop) {
     const finalBarStart = (section.bars - 1) * TICKS_PER_BAR;
-    const fillOffset = style === 'A' ? 960 : style === 'B' ? 1440 : 480;
-    const fillCount = rng.nextInt(
-      params.fillNoteRange.min,
-      params.fillNoteRange.max
-    );
-    applyFillInRange(
-      finalBarStart + fillOffset,
-      finalBarStart + TICKS_PER_BAR,
-      fillCount
-    );
+    if (style === 'A' && section.type !== 'Outro') {
+      // Take A: faithful loop + light beat-4 nuance
+      const nuances = [
+        { pitch: GM_DRUM.OPEN_HH, offset: 1680, vel: 78 },
+        { pitch: GM_DRUM.RIDE, offset: 1440, vel: 82 },
+        { pitch: GM_DRUM.SNARE, offset: 1680, vel: 64 },
+      ];
+      const chosen = rng.pick(nuances);
+      const t = finalBarStart + chosen.offset;
+      if (
+        t < sectionEnd &&
+        !notes.some((n) => n.startTick === t && n.pitch === chosen.pitch)
+      ) {
+        notes.push({
+          pitch: chosen.pitch,
+          velocity: chosen.vel,
+          startTick: t,
+          durationTicks: 180,
+          channel: 9,
+          noTimingJitter: true,
+          noVelJitter: true,
+        });
+      }
+    } else if (style === 'C') {
+      // Take C: replace final bar beats 3-4 (960..1920) with seed-dependent fill preserving Kick
+      const fillCount = rng.nextInt(6, 12);
+      applyFillInRange(
+        finalBarStart + 960,
+        finalBarStart + TICKS_PER_BAR,
+        fillCount,
+        true
+      );
+    }
+  } else {
+    // Take C intermediate 4-note fill at barIndex = 3, tick 1440..1920 when bars >= 8
+    if (style === 'C' && section.bars >= 8) {
+      const bar3Start = 3 * TICKS_PER_BAR;
+      applyFillInRange(bar3Start + 1440, bar3Start + 1920, 4);
+    }
+
+    // Final bar fill when section.type !== 'Outro' && section.bars >= 2
+    if (section.type !== 'Outro' && section.bars >= 2) {
+      const finalBarStart = (section.bars - 1) * TICKS_PER_BAR;
+      const fillOffset = style === 'A' ? 960 : style === 'B' ? 1440 : 480;
+      const fillCount = rng.nextInt(
+        params.fillNoteRange.min,
+        params.fillNoteRange.max
+      );
+      applyFillInRange(
+        finalBarStart + fillOffset,
+        finalBarStart + TICKS_PER_BAR,
+        fillCount
+      );
+    }
   }
 
   // 4. Unison Riff Accent Sync (Anchor Kick: pitch 36, velocity = 110, jitter 0)
@@ -361,7 +535,7 @@ export function generateDrumNotes(input: EngineInput): MidiNote[] {
         }
       }
 
-      if (params.velocityJitter > 0) {
+      if (!n.noVelJitter && params.velocityJitter > 0) {
         velocity += rng.nextInt(-params.velocityJitter, params.velocityJitter);
       }
 

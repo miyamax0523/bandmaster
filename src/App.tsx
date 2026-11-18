@@ -66,6 +66,10 @@ export function App() {
     : null;
 
   const durationSummary = getSongDurationSummary(song);
+  const isPreviewingSection =
+    audio.previewState.status === 'playing' &&
+    audio.playbackMode === 'section' &&
+    audio.previewState.sectionLoop?.sectionId === selectedSectionId;
 
   return (
     <div className="app-shell">
@@ -140,6 +144,7 @@ export function App() {
             <ArrangementEditor
               song={song}
               selectedSectionId={selectedSectionId}
+              isPreviewingSection={isPreviewingSection}
               canUndo={canUndo}
               onSelectSection={setSelectedSectionId}
               onPreviewSection={audio.previewSection}
@@ -173,6 +178,7 @@ export function App() {
               song={song}
               bandState={bandState}
               selectedSectionId={selectedSectionId}
+              isPreviewingSection={isPreviewingSection}
               canUndo={canUndo}
               onSelectSection={setSelectedSectionId}
               onPreviewSection={audio.previewSection}
