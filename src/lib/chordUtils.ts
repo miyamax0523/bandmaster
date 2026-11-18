@@ -418,3 +418,43 @@ export function fitPitchClassToRange(
   while (best > maxMidi && best - 12 >= 0) best -= 12;
   return Math.min(127, Math.max(0, best));
 }
+
+export function getScaleIntervals(scale: ScaleType): readonly number[] {
+  return scale === 'Major' ? [0, 2, 4, 5, 7, 9, 11] : [0, 2, 3, 5, 7, 8, 10];
+}
+
+export function getScalePitchClasses(key: KeyName, scale: ScaleType): number[] {
+  const root = noteNameToSemitone(key);
+  return getScaleIntervals(scale).map((iv) => (root + iv) % 12);
+}
+
+export function snapPitchToScale(
+  pitch: number,
+  key: KeyName,
+  scale: ScaleType,
+  minMidi = 48,
+  maxMidi = 76
+): number {
+  const rounded = Math.round(pitch);
+  let clamped = rounded;
+  while (clamped < minMidi) clamped += 12;
+  while (clamped > maxMidi) clamped -= 12;
+  clamped = Math.min(maxMidi, Math.max(minMidi, clamped));
+
+  const scalePcs = new Set(getScalePitchClasses(key, scale));
+  if (scalePcs.has(((clamped % 12) + 12) % 12)) {
+    return clamped;
+  }
+
+  let bestPitch = clamped;
+  let bestDist = Infinity;
+  for (let p = minMidi; p <= maxMidi; p++) {
+    if (!scalePcs.has(p % 12)) continue;
+    const dist = Math.abs(p - clamped);
+    if (dist < bestDist) {
+      bestDist = dist;
+      bestPitch = p;
+    }
+  }
+  return bestPitch;
+}

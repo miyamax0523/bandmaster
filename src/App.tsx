@@ -42,6 +42,8 @@ export function App() {
     changeSongDrumLoop,
     changeSectionRiff,
     toggleSectionRiff808Octave,
+    toggleSectionPart,
+    changeSectionVocalMelody,
     transposeSectionChords,
   } = useBandGenerator();
 
@@ -51,6 +53,9 @@ export function App() {
     () => song.sections[0]?.id ?? ''
   );
   const [riffModalSectionId, setRiffModalSectionId] = useState<string | null>(
+    null
+  );
+  const [vocalModalSectionId, setVocalModalSectionId] = useState<string | null>(
     null
   );
 
@@ -64,6 +69,9 @@ export function App() {
 
   const riffModalSection = riffModalSectionId
     ? song.sections.find((s) => s.id === riffModalSectionId) ?? null
+    : null;
+  const vocalModalSection = vocalModalSectionId
+    ? song.sections.find((s) => s.id === vocalModalSectionId) ?? null
     : null;
 
   const durationSummary = getSongDurationSummary(song);
@@ -164,9 +172,12 @@ export function App() {
               onChangeSectionKickMode={changeSectionKickMode}
               onChangeSectionDrumLoop={changeSectionDrumLoop}
               onTransposeSectionChords={transposeSectionChords}
+              onToggleSectionPart={toggleSectionPart}
               onToggleRiff808Octave={toggleSectionRiff808Octave}
               onClearRiff={(id) => changeSectionRiff(id, undefined)}
               onOpenRiffModal={(id) => setRiffModalSectionId(id)}
+              onOpenVocalModal={(id) => setVocalModalSectionId(id)}
+              onClearVocalMelody={(id) => changeSectionVocalMelody(id, undefined)}
             />
           )}
 
@@ -188,6 +199,11 @@ export function App() {
               onChangeSectionDrumDensity={changeSectionDrumDensity}
               onChangePatternPreset={(inst, preset) =>
                 updateMember(inst, { patternPreset: preset })
+              }
+              onToggleSectionPart={toggleSectionPart}
+              onOpenVocalModal={(id) => setVocalModalSectionId(id)}
+              onClearSectionVocalMelody={(id) =>
+                changeSectionVocalMelody(id, undefined)
               }
               onRegenerateAll={regenerateAll}
               onUndo={undo}
@@ -221,14 +237,33 @@ export function App() {
 
       {riffModalSection && (
         <RiffRecorderModal
+          mode="riff"
           section={riffModalSection}
           bpm={song.bpm}
+          songKey={song.key}
+          scale={song.scale}
           onStopPreviewPlayback={audio.stop}
           onSave={(riff) => {
             changeSectionRiff(riffModalSection.id, riff);
             setRiffModalSectionId(null);
           }}
           onClose={() => setRiffModalSectionId(null)}
+        />
+      )}
+
+      {vocalModalSection && (
+        <RiffRecorderModal
+          mode="vocal"
+          section={vocalModalSection}
+          bpm={song.bpm}
+          songKey={song.key}
+          scale={song.scale}
+          onStopPreviewPlayback={audio.stop}
+          onSaveVocal={(melody) => {
+            changeSectionVocalMelody(vocalModalSection.id, melody);
+            setVocalModalSectionId(null);
+          }}
+          onClose={() => setVocalModalSectionId(null)}
         />
       )}
     </div>

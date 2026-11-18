@@ -27,6 +27,7 @@ function createSong(bassOverrides: Partial<SongConfig['members']['bass']> = {}):
       },
       keyboard: { enabled: true, activeSectionsOnly: false, instructionText: '' },
       pad: { enabled: true, activeSectionsOnly: false, instructionText: '' },
+      vocal: { enabled: true, activeSectionsOnly: false, instructionText: '' },
     },
     sections: [],
   };

@@ -111,4 +111,54 @@ describe('storage', () => {
     const loadedMismatch = await loadProject(failingBackend);
     expect(loadedMismatch).toBeNull();
   });
+
+  it('hydrates legacy 4-part saved project by backfilling vocal member/cells and enabledParts', async () => {
+    const legacySong = createDefaultSongConfig('rockBand');
+    const legacyState = generateAllSections(legacySong);
+    // Simulate legacy data missing vocal member, vocal cells, and section.enabledParts
+    const legacyRawSong = JSON.parse(JSON.stringify(legacySong));
+    delete legacyRawSong.members.vocal;
+    for (const sec of legacyRawSong.sections) {
+      delete sec.enabledParts;
+      delete sec.hatDensity;
+      delete sec.kickDensity;
+    }
+    const legacyCells: Record<string, Record<string, unknown>> = {};
+    for (const sec of legacySong.sections) {
+      const c = legacyState.cellsBySection[sec.id];
+      legacyCells[sec.id] = {
+        drums: { engineVersion: c.drums.engineVersion, seeds: c.drums.seeds, selectedTake: 'A', locked: false },
+        bass: { engineVersion: c.bass.engineVersion, seeds: c.bass.seeds, selectedTake: 'A', locked: false },
+        keyboard: { engineVersion: c.keyboard.engineVersion, seeds: c.keyboard.seeds, selectedTake: 'A', locked: false },
+        pad: { engineVersion: c.pad.engineVersion, seeds: c.pad.seeds, selectedTake: 'A', locked: false },
+      };
+    }
+
+    const backend = createMemoryStorageBackend();
+    await backend.set('current_project', {
+      schemaVersion: STORAGE_SCHEMA_VERSION,
+      updatedAt: 12345,
+      song: legacyRawSong,
+      cellsBySection: legacyCells,
+    });
+
+    const loaded = await loadProject(backend);
+    expect(loaded).not.toBeNull();
+    expect(loaded!.song.members.vocal).toBeDefined();
+    expect(loaded!.song.members.vocal.enabled).toBe(true);
+    expect(loaded!.song.members.vocal.patternPreset).toBe('auto');
+
+    for (const sec of loaded!.song.sections) {
+      expect(sec.enabledParts).toEqual({
+        drums: true,
+        bass: true,
+        keyboard: true,
+        pad: true,
+        vocal: true,
+      });
+      const vCell = loaded!.bandState.cellsBySection[sec.id].vocal;
+      expect(vCell).toBeDefined();
+      expect(vCell.takes.A.length).toBeGreaterThan(0);
+    }
+  });
 });

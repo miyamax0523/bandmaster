@@ -1,7 +1,7 @@
 import { useState, type ChangeEvent } from 'react';
 import { isCellOutdated, isDrumLockedUnsynced } from '../lib/bandState';
 import { extractDrumLoopFromMidi } from '../lib/midiParser';
-import { isAutoTacet } from '../lib/noteSelector';
+import { isAutoTacet, isSectionPartEnabled } from '../lib/noteSelector';
 import { PATTERN_PRESET_GROUPS } from '../lib/patternPresets';
 import { useHorizontalSwipe } from '../lib/touchSwipe';
 import type {
@@ -30,6 +30,9 @@ interface BandmasterConsoleProps {
     patch: { hatDensity?: DensityLevel; kickDensity?: DensityLevel }
   ) => void;
   onChangePatternPreset: (inst: InstrumentType, preset: string) => void;
+  onToggleSectionPart: (sectionId: string, inst: InstrumentType) => void;
+  onOpenVocalModal: (sectionId: string) => void;
+  onClearSectionVocalMelody: (sectionId: string) => void;
   onRegenerateAll: () => void;
   onUndo: () => void;
   onRegenerateCell: (sectionId: string, inst: InstrumentType) => void;
@@ -46,6 +49,7 @@ const INSTRUMENTS: Array<{ key: InstrumentType; label: string; icon: string }> =
   { key: 'bass', label: 'Bass', icon: '🎸' },
   { key: 'keyboard', label: 'Keyboard', icon: '🎹' },
   { key: 'pad', label: 'PAD', icon: '🌊' },
+  { key: 'vocal', label: 'Vocal', icon: '🎤' },
 ];
 
 const DENSITY_LEVELS: readonly DensityLevel[] = [1, 2, 3, 4, 5];
@@ -62,6 +66,9 @@ export function BandmasterConsole({
   onClearSectionDrumLoop,
   onChangeSectionDrumDensity,
   onChangePatternPreset,
+  onToggleSectionPart,
+  onOpenVocalModal,
+  onClearSectionVocalMelody,
   onRegenerateAll,
   onUndo,
   onRegenerateCell,
@@ -177,21 +184,23 @@ export function BandmasterConsole({
         {INSTRUMENTS.map(({ key, label, icon }) => {
           const member = song.members[key];
           const cell = cells?.[key];
-          if (!cell) return null;
+          if (!member || !cell) return null;
 
+          const sectionEnabled = isSectionPartEnabled(section, key);
+          const effectivelyEnabled = member.enabled && sectionEnabled;
           const autoTacet = isAutoTacet(song, section, key);
           const outdated = !cell.locked && isCellOutdated(cell);
           const unsyncedDrum =
             key === 'drums' && isDrumLockedUnsynced(section, cells);
           const activeCount =
-            cell.selectedTake === 'OFF' || !member.enabled || autoTacet
+            cell.selectedTake === 'OFF' || !effectivelyEnabled || autoTacet
               ? 0
               : cell.takes[cell.selectedTake].length;
 
           return (
             <article
               key={key}
-              className={`instrument-card ${!member.enabled ? 'is-disabled' : ''}`}
+              className={`instrument-card ${!effectivelyEnabled ? 'is-disabled' : ''}`}
             >
               <div className="card-header">
                 <div className="card-title-group">
@@ -201,12 +210,24 @@ export function BandmasterConsole({
                     <span className="card-sub">
                       {!member.enabled
                         ? 'パート不参加 (OFF)'
-                        : `${activeCount} notes`}
+                        : !sectionEnabled
+                          ? 'このセクションOFF'
+                          : `${activeCount} notes`}
                     </span>
                   </div>
                 </div>
 
                 <div className="card-actions">
+                  <button
+                    type="button"
+                    className={`section-part-toggle ${sectionEnabled ? 'on' : 'off'}`}
+                    aria-pressed={sectionEnabled}
+                    disabled={!member.enabled}
+                    onClick={() => onToggleSectionPart(section.id, key)}
+                    title="このセクションで鳴らす ON/OFF"
+                  >
+                    {sectionEnabled ? 'ON' : 'OFF'}
+                  </button>
                   <button
                     type="button"
                     className={`btn-icon ${cell.locked ? 'locked-on' : ''}`}
@@ -218,7 +239,7 @@ export function BandmasterConsole({
                   <button
                     type="button"
                     className="btn-icon"
-                    disabled={cell.locked || !member.enabled}
+                    disabled={cell.locked || !effectivelyEnabled}
                     onClick={() => onRegenerateCell(section.id, key)}
                     title="このセルのみ再生成"
                   >
@@ -257,6 +278,35 @@ export function BandmasterConsole({
                 </>
               )}
 
+              {key === 'vocal' && (
+                <>
+                  <div className="source-line">
+                    ソース:{' '}
+                    {section.vocalMelody
+                      ? `🎤 ${section.vocalMelody.sourceLabel} (${section.vocalMelody.notes.length}音)`
+                      : '内蔵Vocal/ラップ生成'}
+                  </div>
+                  <div className="drum-midi-actions">
+                    <button
+                      type="button"
+                      className="btn btn-secondary drum-midi-btn"
+                      onClick={() => onOpenVocalModal(section.id)}
+                    >
+                      🎤 鼻歌録音 / 編集
+                    </button>
+                    {section.vocalMelody && (
+                      <button
+                        type="button"
+                        className="btn btn-danger drum-midi-btn"
+                        onClick={() => onClearSectionVocalMelody(section.id)}
+                      >
+                        ✕ 解除
+                      </button>
+                    )}
+                  </div>
+                </>
+              )}
+
               <div className="badge-row">
                 {outdated && (
                   <span className="badge badge-warn">旧版テイク (要再生成)</span>
@@ -274,7 +324,7 @@ export function BandmasterConsole({
                   <select
                     className="console-preset-select"
                     value={member.patternPreset ?? 'auto'}
-                    disabled={!member.enabled || cell.locked}
+                    disabled={!effectivelyEnabled || cell.locked}
                     onChange={(e) => onChangePatternPreset(key, e.target.value)}
                   >
                     {PATTERN_PRESET_GROUPS[key].map((grp) => (
@@ -294,7 +344,7 @@ export function BandmasterConsole({
                 selectedTake={cell.selectedTake}
                 locked={cell.locked}
                 autoTacet={autoTacet}
-                disabled={!member.enabled}
+                disabled={!effectivelyEnabled}
                 onSelect={(take) => onSelectTake(section.id, key, take)}
               />
 
@@ -310,7 +360,7 @@ export function BandmasterConsole({
                             key={lvl}
                             type="button"
                             className={`density-btn ${active ? 'active' : ''}`}
-                            disabled={cell.locked || !member.enabled}
+                            disabled={cell.locked || !effectivelyEnabled}
                             onClick={() =>
                               onChangeSectionDrumDensity(section.id, {
                                 hatDensity: lvl,
@@ -334,7 +384,7 @@ export function BandmasterConsole({
                             key={lvl}
                             type="button"
                             className={`density-btn ${active ? 'active' : ''}`}
-                            disabled={cell.locked || !member.enabled}
+                            disabled={cell.locked || !effectivelyEnabled}
                             onClick={() =>
                               onChangeSectionDrumDensity(section.id, {
                                 kickDensity: lvl,

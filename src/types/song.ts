@@ -24,8 +24,15 @@ export type DensityLevel = 1 | 2 | 3 | 4 | 5;
 export type KickMode = 'acoustic' | '808';
 export type Bass808Behavior = 'octaveUp' | 'tacet' | 'normal';
 export type TakeStyle = 'A' | 'B' | 'C';
-export type InstrumentType = 'drums' | 'bass' | 'keyboard' | 'pad';
-export type LogicalTrackType = 'drums' | 'kick808' | 'bass' | 'keyboard' | 'pad';
+export type InstrumentType = 'drums' | 'bass' | 'keyboard' | 'pad' | 'vocal';
+export type PartId = InstrumentType;
+export type LogicalTrackType =
+  | 'drums'
+  | 'kick808'
+  | 'bass'
+  | 'keyboard'
+  | 'pad'
+  | 'vocal';
 export type SwingTarget = '8th' | '16th';
 export type QuantizeGrid = 'straight16' | 'triplet8';
 export type AnalysisMethod = 'basic-pitch' | 'simple-fallback' | 'manual';
@@ -65,6 +72,7 @@ export const TRACK_CHANNELS: Record<LogicalTrackType, number> = {
   bass: 0,
   keyboard: 1,
   pad: 2,
+  vocal: 4,
 };
 
 export interface MidiNote {
@@ -73,6 +81,18 @@ export interface MidiNote {
   startTick: number; // >= 0 integer
   durationTicks: number; // >= 1 integer
   channel?: number;
+}
+
+export type MidiNoteEvent = MidiNote;
+
+export function createDefaultEnabledParts(): Record<InstrumentType, boolean> {
+  return {
+    drums: true,
+    bass: true,
+    keyboard: true,
+    pad: true,
+    vocal: true,
+  };
 }
 
 export interface DrumLoopData {
@@ -105,6 +125,16 @@ export interface UnisonRiffData {
   accentTicks: number[]; // drum kick sync ticks within 1..4 bars
 }
 
+export interface VocalMelodyData {
+  notes: MidiNote[]; // MIDI 48..76 (C3..E5)
+  sourceLabel: string;
+  bars?: number; // 1..4
+  grid?: QuantizeGrid;
+  offsetMs?: number; // -200..+200
+  analysisMethod?: AnalysisMethod;
+  snappedToScale?: boolean;
+}
+
 export interface Section {
   id: string;
   type: SectionType;
@@ -115,9 +145,13 @@ export interface Section {
   hatDensity?: DensityLevel; // 1..5 (default 3)
   kickDensity?: DensityLevel; // 1..5 (default 3)
   chords: string[];
+  enabledParts?: Record<InstrumentType, boolean>;
   uploadedDrumLoop?: DrumLoopData;
   unisonRiff?: UnisonRiffData;
+  vocalMelody?: VocalMelodyData;
 }
+
+export type SectionConfig = Section;
 
 export interface SongConfig {
   title: string;

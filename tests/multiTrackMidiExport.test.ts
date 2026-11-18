@@ -48,8 +48,9 @@ describe('multiTrackMidiExport', () => {
       'Bass',
       'Keyboard',
       'PAD',
+      'Vocal',
     ]);
-    expect(parsed.ntrks).toBe(6);
+    expect(parsed.ntrks).toBe(7);
     expect(parsed.tracks[0].name).toBe('Conductor');
     expect(parsed.tracks[0].notes.length).toBe(0);
 
@@ -66,6 +67,7 @@ describe('multiTrackMidiExport', () => {
     song.exportOnlyActiveTracks = true;
     song.members.keyboard.enabled = false;
     song.members.pad.enabled = false;
+    song.members.vocal.enabled = false;
     song.sections = [
       {
         id: 's1',
@@ -99,12 +101,13 @@ describe('multiTrackMidiExport', () => {
     song.members.bass.enabled = false;
     song.members.keyboard.enabled = false;
     song.members.pad.enabled = false;
+    song.members.vocal.enabled = false;
 
     const state = generateAllSections(song);
     expect(canExportMidi(song, state)).toBe(false);
 
     const res = exportMultiTrackMidi(song, state);
     expect(res.totalNotes).toBe(0);
-    expect(res.ntrks).toBe(6); // Conductor + 5 empty tracks
+    expect(res.ntrks).toBe(7); // Conductor + 6 empty tracks
   });
 });

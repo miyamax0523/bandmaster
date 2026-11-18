@@ -1,9 +1,12 @@
 import {
   PPQ,
   TICKS_PER_BAR,
+  type KeyName,
   type MidiNote,
   type QuantizeGrid,
+  type ScaleType,
 } from '../types/song';
+import { snapPitchToScale } from './chordUtils';
 
 export interface RawRiffNote {
   pitch: number;
@@ -206,6 +209,151 @@ export function processGuitarRiff(
   return {
     cleanedBassNotes: step6,
     accentTicks: extractAccentTicks(step6, bars),
+    resolvedGrid,
+  };
+}
+
+export interface ProcessVocalOptions {
+  bpm: number;
+  bars: number; // 1..4
+  offsetMs?: number; // -200..+200
+  grid?: QuantizeGrid | 'auto';
+  key: KeyName;
+  scale: ScaleType;
+  snapToScale?: boolean;
+  minPitch?: number;
+  maxPitch?: number;
+}
+
+export interface ProcessVocalResult {
+  cleanedVocalNotes: MidiNote[];
+  resolvedGrid: QuantizeGrid;
+}
+
+/**
+ * Vocal melody processing pipeline for recorded/uploaded audio or imported MIDI:
+ * Filters vocal pitch range, trims head onset, applies offsetMs & grid quantize,
+ * enforces top-note monophony, folds into MIDI 48..76 (C3..E5), and optionally snaps to Key/Scale.
+ */
+export function processVocalMelody(
+  rawNotes: readonly RawRiffNote[],
+  options: ProcessVocalOptions
+): ProcessVocalResult {
+  const bars = Math.min(4, Math.max(1, Math.round(options.bars)));
+  const maxEnd = bars * TICKS_PER_BAR;
+  const offsetMs = Math.min(200, Math.max(-200, options.offsetMs ?? 0));
+  const minPitch = options.minPitch ?? 48;
+  const maxPitch = options.maxPitch ?? 76;
+
+  if (rawNotes.length === 0) {
+    return {
+      cleanedVocalNotes: [],
+      resolvedGrid: options.grid === 'triplet8' ? 'triplet8' : 'straight16',
+    };
+  }
+
+  const converted = rawNotes.map((n) => {
+    const vel =
+      n.amplitude !== undefined
+        ? Math.min(127, Math.max(1, Math.round(n.amplitude * 127)))
+        : Math.min(127, Math.max(1, Math.round(n.velocity ?? 100)));
+    return {
+      pitch: Math.round(n.pitch),
+      startTick: Math.round(n.startTick),
+      durationTicks: Math.round(n.durationTicks),
+      velocity: vel,
+    };
+  });
+
+  const maxVel = converted.reduce((m, n) => Math.max(m, n.velocity), 0);
+  const velThreshold = Math.max(18, Math.round(maxVel * 0.15));
+
+  const gated = converted.filter(
+    (n) =>
+      n.velocity >= velThreshold &&
+      n.durationTicks >= 30 &&
+      n.pitch >= 36 &&
+      n.pitch <= 96
+  );
+
+  if (gated.length === 0) {
+    return {
+      cleanedVocalNotes: [],
+      resolvedGrid: options.grid === 'triplet8' ? 'triplet8' : 'straight16',
+    };
+  }
+
+  const minStart = gated.reduce((m, n) => Math.min(m, n.startTick), Infinity);
+  const trimmed = gated.map((n) => ({
+    ...n,
+    startTick: Math.max(0, n.startTick - minStart),
+  }));
+
+  const safeBpm = Math.max(1, options.bpm);
+  const offsetTicks = Math.round((offsetMs / 1000) * (safeBpm / 60) * PPQ);
+  const shifted = trimmed.map((n) => ({
+    ...n,
+    startTick: Math.max(0, n.startTick + offsetTicks),
+  }));
+
+  const resolvedGrid: QuantizeGrid =
+    options.grid === undefined || options.grid === 'auto'
+      ? detectQuantizeGrid(shifted)
+      : options.grid;
+  const gridTicks = resolvedGrid === 'triplet8' ? 160 : 120;
+
+  const quantized = shifted.map((n) => ({
+    ...n,
+    startTick: Math.round(n.startTick / gridTicks) * gridTicks,
+    durationTicks: Math.max(
+      gridTicks,
+      Math.round(n.durationTicks / gridTicks) * gridTicks
+    ),
+  }));
+
+  // Top-note monophonization for lead melody
+  const highestAtTick = new Map<number, (typeof quantized)[number]>();
+  for (const n of quantized) {
+    const existing = highestAtTick.get(n.startTick);
+    if (!existing || n.pitch > existing.pitch) {
+      highestAtTick.set(n.startTick, { ...n });
+    }
+  }
+
+  const mono = Array.from(highestAtTick.values()).sort(
+    (a, b) => a.startTick - b.startTick
+  );
+  for (let i = 0; i < mono.length - 1; i++) {
+    const gap = mono[i + 1].startTick - mono[i].startTick;
+    mono[i].durationTicks = Math.max(1, Math.min(mono[i].durationTicks, gap));
+  }
+
+  const folded = mono.map((n) => {
+    let p = n.pitch;
+    while (p > maxPitch) p -= 12;
+    while (p < minPitch) p += 12;
+    p = Math.min(maxPitch, Math.max(minPitch, p));
+    if (options.snapToScale) {
+      p = snapPitchToScale(p, options.key, options.scale, minPitch, maxPitch);
+    }
+    return {
+      ...n,
+      pitch: p,
+    };
+  });
+
+  const cleanedVocalNotes: MidiNote[] = folded
+    .filter((n) => n.startTick >= 0 && n.startTick < maxEnd)
+    .map((n) => ({
+      pitch: n.pitch,
+      velocity: n.velocity,
+      startTick: n.startTick,
+      durationTicks: Math.max(1, Math.min(n.durationTicks, maxEnd - n.startTick)),
+      channel: 4,
+    }));
+
+  return {
+    cleanedVocalNotes,
     resolvedGrid,
   };
 }

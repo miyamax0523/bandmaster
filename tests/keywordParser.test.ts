@@ -43,6 +43,11 @@ function makeSong(overrides: Partial<SongConfig> = {}): SongConfig {
         padStyle: 'Power',
         instructionText: '',
       },
+      vocal: {
+        enabled: true,
+        activeSectionsOnly: false,
+        instructionText: '',
+      },
     },
     sections: [],
     ...overrides,

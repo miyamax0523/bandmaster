@@ -1,4 +1,5 @@
 import {
+  createDefaultEnabledParts,
   CURRENT_ENGINE_VERSION,
   type InstrumentType,
   type MidiNote,
@@ -8,6 +9,7 @@ import {
 } from '../types/song';
 import type { BandState, SectionBandCells, SectionInstrumentCell } from '../types/track';
 import {
+  createSeedTriple,
   GENERATION_ORDER,
   generateCellTakes,
   getSelectedDrumNotes,
@@ -140,6 +142,7 @@ export function serializeProject(
     const storedSec = {} as Record<InstrumentType, StoredInstrumentCell>;
     for (const inst of GENERATION_ORDER) {
       const cell = secCells[inst];
+      if (!cell) continue;
       const keepFullNotes =
         cell.locked || cell.engineVersion !== CURRENT_ENGINE_VERSION;
 
@@ -178,6 +181,14 @@ export function hydrateProject(stored: StoredBandProject): {
   bandState: BandState;
 } {
   const { song } = stored;
+  if (!song.members.vocal) {
+    song.members.vocal = {
+      enabled: true,
+      activeSectionsOnly: false,
+      patternPreset: 'auto',
+      instructionText: '',
+    };
+  }
   for (const inst of GENERATION_ORDER) {
     if (song.members[inst]) {
       song.members[inst] = {
@@ -189,10 +200,15 @@ export function hydrateProject(stored: StoredBandProject): {
   const cellsBySection: Record<string, SectionBandCells> = {};
 
   for (let secIdx = 0; secIdx < song.sections.length; secIdx++) {
+    const rawSec = song.sections[secIdx];
     const section: Section = {
-      ...song.sections[secIdx],
-      hatDensity: song.sections[secIdx].hatDensity ?? 3,
-      kickDensity: song.sections[secIdx].kickDensity ?? 3,
+      ...rawSec,
+      hatDensity: rawSec.hatDensity ?? 3,
+      kickDensity: rawSec.kickDensity ?? 3,
+      enabledParts: {
+        ...createDefaultEnabledParts(),
+        ...rawSec.enabledParts,
+      },
     };
     song.sections[secIdx] = section;
     const storedSec = stored.cellsBySection[section.id];
@@ -203,6 +219,7 @@ export function hydrateProject(stored: StoredBandProject): {
     // Step 1: Restore locked or outdated-version cells verbatim first
     for (const inst of GENERATION_ORDER) {
       const sCell = storedSec[inst];
+      if (!sCell) continue;
       if (
         (sCell.locked || sCell.engineVersion !== CURRENT_ENGINE_VERSION) &&
         sCell.takes
@@ -221,23 +238,29 @@ export function hydrateProject(stored: StoredBandProject): {
       }
     }
 
-    // Step 2: Deterministically regenerate unlocked current-version cells in drums -> bass -> keyboard -> pad order
+    // Step 2: Deterministically regenerate unlocked current-version or newly added part cells
     for (const inst of GENERATION_ORDER) {
       if (restored[inst]) continue;
       const sCell = storedSec[inst];
-      const drumNotes = inst === 'bass' ? getSelectedDrumNotes(restored) : [];
+      const seeds = sCell?.seeds
+        ? { ...sCell.seeds }
+        : createSeedTriple(7100 + secIdx * 37 + inst.length);
+      const drumNotes =
+        inst === 'bass' && section.enabledParts?.drums !== false
+          ? getSelectedDrumNotes(restored)
+          : [];
       const takes = generateCellTakes(
         song,
         section,
         secIdx,
         inst,
-        sCell.seeds,
+        seeds,
         drumNotes
       );
       const cell: SectionInstrumentCell = {
-        engineVersion: sCell.engineVersion,
-        seeds: { ...sCell.seeds },
-        selectedTake: sCell.selectedTake,
+        engineVersion: sCell?.engineVersion ?? CURRENT_ENGINE_VERSION,
+        seeds,
+        selectedTake: sCell?.selectedTake ?? 'A',
         locked: false,
         takes,
       };

@@ -17,13 +17,25 @@ export function isSectionActiveForAutoTacet(section: Section): boolean {
   );
 }
 
+export function isSectionPartEnabled(
+  section: Section,
+  instrument: InstrumentType
+): boolean {
+  return section.enabledParts?.[instrument] ?? true;
+}
+
 export function isAutoTacet(
   song: SongConfig,
   section: Section,
   instrument: InstrumentType
 ): boolean {
   const member = song.members[instrument];
-  return member.enabled && member.activeSectionsOnly && !isSectionActiveForAutoTacet(section);
+  return (
+    Boolean(member?.enabled) &&
+    isSectionPartEnabled(section, instrument) &&
+    Boolean(member?.activeSectionsOnly) &&
+    !isSectionActiveForAutoTacet(section)
+  );
 }
 
 export function applySwingToTick(
@@ -96,6 +108,7 @@ export function selectSongTracks(
     bass: [],
     keyboard: [],
     pad: [],
+    vocal: [],
   };
 
   let sectionStartTick = 0;
@@ -104,11 +117,12 @@ export function selectSongTracks(
     const sectionEnd = section.bars * TICKS_PER_BAR;
     const cells = bandState.cellsBySection[section.id];
 
-    // Step 1: resolveSongTracks
+    // Step 1: resolveSongTracks (respects global enabled, section enabledParts, OFF, Auto Tacet)
     const resolveInstrumentNotes = (inst: InstrumentType): MidiNote[] => {
       if (!cells) return [];
       const member = song.members[inst];
-      if (!member.enabled) return [];
+      if (!member?.enabled) return [];
+      if (!isSectionPartEnabled(section, inst)) return [];
       const cell = cells[inst];
       if (!cell || cell.selectedTake === 'OFF') return [];
       if (isAutoTacet(song, section, inst)) return [];
@@ -120,11 +134,15 @@ export function selectSongTracks(
     let bassNotes = resolveInstrumentNotes('bass');
     let keyboardNotes = resolveInstrumentNotes('keyboard');
     const padNotes = resolveInstrumentNotes('pad');
+    let vocalNotes = resolveInstrumentNotes('vocal');
 
     // Step 2: Swing application
     const hasUnisonRiff = Boolean(section.unisonRiff);
     const hasExternalDrumLoop = Boolean(
       section.uploadedDrumLoop ?? song.uploadedDrumLoop
+    );
+    const hasCustomVocal = Boolean(
+      section.vocalMelody && section.vocalMelody.notes.length > 0
     );
 
     if (song.swing > 0 && !hasUnisonRiff) {
@@ -142,6 +160,12 @@ export function selectSongTracks(
         ...n,
         startTick: applySwingToTick(n.startTick, song.swing, song.swingTarget),
       }));
+      if (!hasCustomVocal) {
+        vocalNotes = vocalNotes.map((n) => ({
+          ...n,
+          startTick: applySwingToTick(n.startTick, song.swing, song.swingTarget),
+        }));
+      }
     }
 
     // Step 3: Unconditional logical 808 Kick separation
@@ -214,6 +238,7 @@ export function selectSongTracks(
     finalizeTrack(bassNotes, 'bass');
     finalizeTrack(keyboardNotes, 'keyboard');
     finalizeTrack(padNotes, 'pad');
+    finalizeTrack(vocalNotes, 'vocal');
 
     sectionStartTick += sectionEnd;
   }
@@ -232,6 +257,7 @@ export function countTotalActiveNotes(tracks: LogicalTracks): number {
     tracks.kick808.length +
     tracks.bass.length +
     tracks.keyboard.length +
-    tracks.pad.length
+    tracks.pad.length +
+    tracks.vocal.length
   );
 }

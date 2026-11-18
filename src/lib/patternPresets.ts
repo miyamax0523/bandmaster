@@ -127,4 +127,24 @@ export const PATTERN_PRESET_GROUPS: Record<
       ],
     },
   ],
+  vocal: [
+    {
+      category: 'ラップ・リズミック押し（抑揚控えめ）',
+      options: [
+        { value: 'rap_16th_push', label: '16分リズミック押し・狭音程連打' },
+        { value: 'rap_triplet_trap', label: '3連トラップ・フロウ・休符混じり' },
+        { value: 'rap_nu_metal', label: 'ミクスチャー／ニューメタル風・シンコペーション刻み' },
+        { value: 'rap_monotone_chant', label: 'モノトーン・チャント・ルート中心' },
+      ],
+    },
+    {
+      category: 'メロディ・歌モノ',
+      options: [
+        { value: 'auto', label: 'おまかせ（Energy連動）' },
+        { value: 'melody_pop', label: 'キャッチー8分メロディ' },
+        { value: 'melody_ballad', label: 'バラード・ロングトーン中心' },
+        { value: 'melody_alt_minor', label: 'オルタナ／ダーク・ペンタトニック主体' },
+      ],
+    },
+  ],
 };

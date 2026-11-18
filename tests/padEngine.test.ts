@@ -25,6 +25,7 @@ function createSong(padStyle: 'Power' | 'Floating Tension' | 'Dark Ambient' = 'P
         padStyle,
         instructionText: '',
       },
+      vocal: { enabled: true, activeSectionsOnly: false, instructionText: '' },
     },
     sections: [],
   };

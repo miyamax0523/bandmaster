@@ -54,7 +54,7 @@ function enforceMonophonicAndClip(
 
 export function generateBassNotes(input: EngineInput): MidiNote[] {
   const { song, section, style, seed, params, drumNotes = [] } = input;
-  if (!song.members.bass.enabled) {
+  if (!song.members.bass.enabled || section.enabledParts?.bass === false) {
     return [];
   }
 

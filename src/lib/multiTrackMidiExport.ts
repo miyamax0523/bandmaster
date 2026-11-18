@@ -176,6 +176,18 @@ export function exportMultiTrackMidi(
     })),
   });
 
+  specs.push({
+    name: 'Vocal',
+    channel: TRACK_CHANNELS.vocal,
+    program: 53, // Voice Oohs
+    notes: tracks.vocal.map((n) => ({
+      pitch: n.pitch,
+      velocity: n.velocity,
+      startTick: n.startTick,
+      durationTicks: n.durationTicks,
+    })),
+  });
+
   const activeSpecs = song.exportOnlyActiveTracks
     ? specs.filter((s) => s.notes.length > 0)
     : specs;

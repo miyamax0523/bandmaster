@@ -49,7 +49,10 @@ function buildKeyboardVoicing(
 
 export function generateKeyboardNotes(input: EngineInput): MidiNote[] {
   const { song, section, style, seed, params } = input;
-  if (!song.members.keyboard.enabled) {
+  if (
+    !song.members.keyboard.enabled ||
+    section.enabledParts?.keyboard === false
+  ) {
     return [];
   }
 

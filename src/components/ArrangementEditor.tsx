@@ -9,10 +9,12 @@ import {
   type ChordPaletteMode,
 } from '../lib/chordUtils';
 import { extractDrumLoopFromMidi } from '../lib/midiParser';
+import { isSectionPartEnabled } from '../lib/noteSelector';
 import { useHorizontalSwipe } from '../lib/touchSwipe';
 import type {
   DrumLoopData,
   EnergyLevel,
+  InstrumentType,
   KickMode,
   Section,
   SectionType,
@@ -42,9 +44,12 @@ interface ArrangementEditorProps {
   onChangeSectionKickMode: (id: string, mode: KickMode) => void;
   onChangeSectionDrumLoop: (id: string, loop?: DrumLoopData) => void;
   onTransposeSectionChords: (id: string, semitones: number) => void;
+  onToggleSectionPart: (id: string, inst: InstrumentType) => void;
   onToggleRiff808Octave: (id: string, val?: boolean) => void;
   onClearRiff: (id: string) => void;
   onOpenRiffModal: (sectionId: string) => void;
+  onOpenVocalModal: (sectionId: string) => void;
+  onClearVocalMelody: (id: string) => void;
 }
 
 const SECTION_TYPES: SectionType[] = [
@@ -72,6 +77,18 @@ const PALETTE_MODES: Array<{ id: ChordPaletteMode; label: string }> = [
 
 const SUFFIX_CONVERTERS = ['M7', 'M9', 'add9', 'm7', 'm9', 'sus2', 'sus4', '5'] as const;
 
+const SECTION_PART_CHIPS: Array<{
+  key: InstrumentType;
+  label: string;
+  icon: string;
+}> = [
+  { key: 'drums', label: 'Drums', icon: '🥁' },
+  { key: 'bass', label: 'Bass', icon: '🎸' },
+  { key: 'keyboard', label: 'Key', icon: '🎹' },
+  { key: 'pad', label: 'Pad', icon: '🌊' },
+  { key: 'vocal', label: 'Vocal', icon: '🎤' },
+];
+
 export function ArrangementEditor({
   song,
   selectedSectionId,
@@ -91,9 +108,12 @@ export function ArrangementEditor({
   onChangeSectionKickMode,
   onChangeSectionDrumLoop,
   onTransposeSectionChords,
+  onToggleSectionPart,
   onToggleRiff808Octave,
   onClearRiff,
   onOpenRiffModal,
+  onOpenVocalModal,
+  onClearVocalMelody,
 }: ArrangementEditorProps) {
   const [midiError, setMidiError] = useState<string | null>(null);
   const [paletteMode, setPaletteMode] = useState<ChordPaletteMode>('triad');
@@ -460,6 +480,40 @@ export function ArrangementEditor({
                 </button>
               </div>
             </div>
+
+            <div className="field">
+              <span>参加パート（セクション別 ON/OFF）</span>
+              <div
+                className="section-part-chips"
+                role="group"
+                aria-label="セクション別パートON/OFF"
+              >
+                {SECTION_PART_CHIPS.map(({ key, label, icon }) => {
+                  const globalOn = song.members[key]?.enabled ?? true;
+                  const partOn = isSectionPartEnabled(current, key);
+                  const effectiveOn = globalOn && partOn;
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      className={`section-part-chip ${
+                        effectiveOn ? 'active' : 'muted'
+                      }`}
+                      aria-pressed={partOn}
+                      disabled={!globalOn}
+                      onClick={() => onToggleSectionPart(current.id, key)}
+                      title={
+                        !globalOn
+                          ? 'MEMBERSタブで不参加(OFF)設定中'
+                          : `${label} をこのセクションで${partOn ? 'ミュート' : '鳴らす'}`
+                      }
+                    >
+                      {icon} {label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           </div>
         </section>
 
@@ -646,6 +700,34 @@ export function ArrangementEditor({
                   </div>
                 )}
               </div>
+            )}
+          </div>
+
+          <div className="riff-box">
+            <div className="toolbar-row">
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => onOpenVocalModal(current.id)}
+              >
+                🎤 Vocal 鼻歌録音 / 編集
+              </button>
+              {current.vocalMelody && (
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  onClick={() => onClearVocalMelody(current.id)}
+                >
+                  Vocal 解除
+                </button>
+              )}
+            </div>
+
+            {current.vocalMelody && (
+              <p className="info-box">
+                設定済み Vocal: <strong>{current.vocalMelody.sourceLabel}</strong> (
+                {current.vocalMelody.bars ?? 2}小節 / {current.vocalMelody.notes.length}音)
+              </p>
             )}
           </div>
         </section>

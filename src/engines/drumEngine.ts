@@ -39,7 +39,7 @@ function clampVelocity(v: number): number {
 
 export function generateDrumNotes(input: EngineInput): MidiNote[] {
   const { song, section, style, seed, params } = input;
-  if (!song.members.drums.enabled) {
+  if (!song.members.drums.enabled || section.enabledParts?.drums === false) {
     return [];
   }
 

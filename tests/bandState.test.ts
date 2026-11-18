@@ -11,6 +11,7 @@ import {
   selectInstrumentTake,
   setSectionUnisonRiff,
   toggleCellLock,
+  toggleSectionPartEnabled,
   toggleSectionRiffOctaveUpOn808,
   updateSectionBars,
   updateSectionDrumDensity,
@@ -281,5 +282,65 @@ describe('bandState', () => {
     const tracks4 = selectSongTracks(shrunkBack.song, shrunkBack.bandState);
     expect(tracks4.drums.every((n) => n.startTick < fourBarEnd)).toBe(true);
     expect(tracks4.bass.every((n) => n.startTick < fourBarEnd)).toBe(true);
+  });
+
+  it('mutes and restores individual parts per section via enabledParts even when locked', () => {
+    const song = createDefaultSongConfig('rockBand');
+    song.members.keyboard.activeSectionsOnly = false;
+    song.sections = [
+      {
+        id: 's1',
+        type: 'Verse',
+        name: 'Aメロ',
+        bars: 1,
+        energy: 'Mid',
+        kickMode: 'acoustic',
+        chords: ['Em'],
+      },
+      {
+        id: 's2',
+        type: 'Chorus',
+        name: 'サビ',
+        bars: 1,
+        energy: 'High',
+        kickMode: 'acoustic',
+        chords: ['C'],
+      },
+    ];
+    let state = generateAllSections(song);
+    // Lock vocal in s1 and put distinct locked marker note
+    state = toggleCellLock(state, 's1', 'vocal');
+    state.cellsBySection.s1.vocal.takes.A = [
+      { pitch: 64, velocity: 111, startTick: 0, durationTicks: 480 },
+    ];
+
+    // Before mute: vocal notes exist in both s1 [0..1920) and s2 [1920..3840)
+    const tracksBefore = selectSongTracks(song, state);
+    expect(tracksBefore.vocal.some((n) => n.startTick < TICKS_PER_BAR && n.pitch === 64)).toBe(
+      true
+    );
+    expect(tracksBefore.vocal.some((n) => n.startTick >= TICKS_PER_BAR)).toBe(true);
+
+    // Disable vocal in s1 only
+    const muted = toggleSectionPartEnabled(song, state, 's1', 'vocal', false);
+    const tracksMuted = selectSongTracks(muted.song, muted.bandState);
+    expect(tracksMuted.vocal.filter((n) => n.startTick < TICKS_PER_BAR)).toEqual([]);
+    // s2 vocal remains unaffected
+    expect(tracksMuted.vocal.some((n) => n.startTick >= TICKS_PER_BAR)).toBe(true);
+
+    // Re-enable vocal in s1 -> locked marker note restores intact
+    const restored = toggleSectionPartEnabled(
+      muted.song,
+      muted.bandState,
+      's1',
+      'vocal',
+      true
+    );
+    const tracksRestored = selectSongTracks(restored.song, restored.bandState);
+    expect(
+      tracksRestored.vocal.some(
+        (n) => n.startTick === 0 && n.pitch === 64 && n.velocity === 111
+      )
+    ).toBe(true);
   });
 });

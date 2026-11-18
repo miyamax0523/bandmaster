@@ -12,7 +12,9 @@ import {
   reorderSectionsInSong,
   selectInstrumentTake,
   setSectionUnisonRiff,
+  setSectionVocalMelody,
   toggleCellLock,
+  toggleSectionPartEnabled,
   toggleSectionRiffOctaveUpOn808,
   updateSectionBars,
   updateSectionDrumDensity,
@@ -27,16 +29,18 @@ import {
   createDebouncedProjectSaver,
   loadProject,
 } from '../lib/storage';
-import type {
-  DensityLevel,
-  DrumLoopData,
-  InstrumentType,
-  KickMode,
-  MemberConfig,
-  Section,
-  SongConfig,
-  TakeStyle,
-  UnisonRiffData,
+import {
+  createDefaultEnabledParts,
+  type DensityLevel,
+  type DrumLoopData,
+  type InstrumentType,
+  type KickMode,
+  type MemberConfig,
+  type Section,
+  type SongConfig,
+  type TakeStyle,
+  type UnisonRiffData,
+  type VocalMelodyData,
 } from '../types/song';
 import type { BandState } from '../types/track';
 
@@ -205,6 +209,7 @@ export function useBandGenerator() {
       kickMode: 'acoustic',
       hatDensity: 3,
       kickDensity: 3,
+      enabledParts: createDefaultEnabledParts(),
       chords: ['Em', 'C', 'G', 'D'],
     };
     nextSong.sections.push(newSec);
@@ -359,6 +364,34 @@ export function useBandGenerator() {
     [song, bandState, commitChange]
   );
 
+  const toggleSectionPart = useCallback(
+    (sectionId: string, instrument: InstrumentType, enabled?: boolean) => {
+      const res = toggleSectionPartEnabled(
+        song,
+        bandState,
+        sectionId,
+        instrument,
+        enabled
+      );
+      commitChange(res.song, res.bandState, true);
+    },
+    [song, bandState, commitChange]
+  );
+
+  const changeSectionVocalMelody = useCallback(
+    (sectionId: string, melody?: VocalMelodyData) => {
+      const res = setSectionVocalMelody(
+        song,
+        bandState,
+        sectionId,
+        melody,
+        Date.now() & 0xffff
+      );
+      commitChange(res.song, res.bandState, true);
+    },
+    [song, bandState, commitChange]
+  );
+
   const transposeSectionChords = useCallback(
     (sectionId: string, semitones: number) => {
       const sec = song.sections.find((s) => s.id === sectionId);
@@ -413,6 +446,8 @@ export function useBandGenerator() {
     changeSongDrumLoop,
     changeSectionRiff,
     toggleSectionRiff808Octave,
+    toggleSectionPart,
+    changeSectionVocalMelody,
     transposeSectionChords,
   };
 }

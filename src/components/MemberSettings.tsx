@@ -46,6 +46,12 @@ const INST_META: Array<{
     icon: '🌊',
     tags: ['浮遊', '空間', 'deftones', 'radiohead'],
   },
+  {
+    key: 'vocal',
+    label: 'Vocal',
+    icon: '🎤',
+    tags: ['タイト', 'メロディアス'],
+  },
 ];
 
 export function MemberSettings({ song, onUpdateMember }: MemberSettingsProps) {

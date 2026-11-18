@@ -711,7 +711,11 @@ input[type='range'] {
 }
 
 .instrument-card.is-disabled {
-  opacity: 0.6;
+  border-color: #242938;
+}
+
+.instrument-card.is-disabled > *:not(.card-header) {
+  opacity: 0.48;
 }
 
 .card-header {
@@ -720,6 +724,65 @@ input[type='range'] {
   justify-content: space-between;
   gap: 8px;
   margin-bottom: 8px;
+}
+
+.card-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.section-part-toggle {
+  min-height: 32px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.74rem;
+  font-weight: 700;
+  border: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.section-part-toggle.on {
+  background: rgba(16, 185, 129, 0.2);
+  border-color: #10b981;
+  color: #a7f3d0;
+}
+
+.section-part-toggle.off {
+  background: rgba(239, 68, 68, 0.16);
+  border-color: rgba(239, 68, 68, 0.55);
+  color: #fca5a5;
+}
+
+.section-part-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-width: 100%;
+}
+
+.section-part-chip {
+  min-height: 34px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.section-part-chip.active {
+  background: rgba(59, 130, 246, 0.22);
+  border-color: var(--primary);
+  color: #dbeafe;
+}
+
+.section-part-chip.muted {
+  opacity: 0.52;
+  text-decoration: line-through;
+  color: var(--text-muted);
 }
 
 .card-title-group {
@@ -740,11 +803,6 @@ input[type='range'] {
 .card-sub {
   font-size: 0.76rem;
   color: var(--text-muted);
-}
-
-.card-actions {
-  display: flex;
-  gap: 6px;
 }
 
 .source-line {

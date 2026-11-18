@@ -9,7 +9,7 @@ function clampVelocity(v: number): number {
 
 export function generatePadNotes(input: EngineInput): MidiNote[] {
   const { song, section, style, seed, params } = input;
-  if (!song.members.pad.enabled) {
+  if (!song.members.pad.enabled || section.enabledParts?.pad === false) {
     return [];
   }
 

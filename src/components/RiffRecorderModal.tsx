@@ -12,22 +12,32 @@ import { extractRiffNotesFromMidi } from '../lib/midiParser';
 import {
   extractAccentTicks,
   processGuitarRiff,
+  processVocalMelody,
   type RawRiffNote,
 } from '../lib/riffProcessor';
+import { fitPitchClassToRange, noteNameToSemitone, snapPitchToScale } from '../lib/chordUtils';
 import {
   TICKS_PER_BAR,
+  TRACK_CHANNELS,
   type AnalysisMethod,
+  type KeyName,
   type MidiNote,
   type QuantizeGrid,
+  type ScaleType,
   type Section,
   type UnisonRiffData,
+  type VocalMelodyData,
 } from '../types/song';
 
 interface RiffRecorderModalProps {
+  mode?: 'riff' | 'vocal';
   section: Section;
   bpm: number;
+  songKey?: KeyName;
+  scale?: ScaleType;
   onStopPreviewPlayback: () => void;
-  onSave: (riff: UnisonRiffData) => void;
+  onSave?: (riff: UnisonRiffData) => void;
+  onSaveVocal?: (melody: VocalMelodyData) => void;
   onClose: () => void;
 }
 
@@ -38,39 +48,82 @@ function formatMidiPitch(pitch: number): string {
   return `${NOTE_NAMES[pitch % 12]}${oct}`;
 }
 
-// Display MIDI 55 (G3) down to MIDI 24 (C1)
-const PITCH_ROWS = Array.from({ length: 32 }, (_, idx) => 55 - idx);
+// Riff: MIDI 55 (G3) down to MIDI 24 (C1)
+const RIFF_PITCH_ROWS = Array.from({ length: 32 }, (_, idx) => 55 - idx);
+// Vocal: MIDI 76 (E5) down to MIDI 48 (C3)
+const VOCAL_PITCH_ROWS = Array.from({ length: 29 }, (_, idx) => 76 - idx);
 
 export function RiffRecorderModal({
+  mode = 'riff',
   section,
   bpm,
+  songKey = 'E',
+  scale = 'Minor',
   onStopPreviewPlayback,
   onSave,
+  onSaveVocal,
   onClose,
 }: RiffRecorderModalProps) {
-  const initialRiff = section.unisonRiff;
+  const isVocal = mode === 'vocal';
+  const minPitch = isVocal ? 48 : 24;
+  const maxPitch = isVocal ? 76 : 55;
+  const pitchRows = isVocal ? VOCAL_PITCH_ROWS : RIFF_PITCH_ROWS;
+
+  const initialRiff = !isVocal ? section.unisonRiff : undefined;
+  const initialVocal = isVocal ? section.vocalMelody : undefined;
+
   const [sourceName, setSourceName] = useState<string>(
-    initialRiff?.sourceName ?? 'Manual Grid'
+    isVocal
+      ? initialVocal?.sourceLabel ?? 'Manual Melody'
+      : initialRiff?.sourceName ?? 'Manual Grid'
   );
   const [analysisMethod, setAnalysisMethod] = useState<AnalysisMethod>(
-    initialRiff?.analysisMethod ?? 'manual'
+    (isVocal ? initialVocal?.analysisMethod : initialRiff?.analysisMethod) ??
+      'manual'
   );
-  const [bars, setBars] = useState<number>(initialRiff?.bars ?? Math.min(2, section.bars));
-  const [grid, setGrid] = useState<QuantizeGrid>(initialRiff?.grid ?? 'straight16');
-  const [offsetMs, setOffsetMs] = useState<number>(initialRiff?.offsetMs ?? 0);
+  const [bars, setBars] = useState<number>(
+    (isVocal ? initialVocal?.bars : initialRiff?.bars) ??
+      Math.min(2, section.bars)
+  );
+  const [grid, setGrid] = useState<QuantizeGrid>(
+    (isVocal ? initialVocal?.grid : initialRiff?.grid) ?? 'straight16'
+  );
+  const [offsetMs, setOffsetMs] = useState<number>(
+    (isVocal ? initialVocal?.offsetMs : initialRiff?.offsetMs) ?? 0
+  );
   const [octaveUpOn808, setOctaveUpOn808] = useState<boolean>(
     initialRiff?.octaveUpOn808 ?? false
   );
+  const [snapToScale, setSnapToScale] = useState<boolean>(
+    initialVocal?.snappedToScale ?? true
+  );
 
   const [rawNotes, setRawNotes] = useState<RawRiffNote[] | null>(null);
-  const [manualNotes, setManualNotes] = useState<MidiNote[]>(
-    initialRiff?.cleanedBassNotes.map((n) => ({ ...n })) ?? [
-      { pitch: 28, velocity: 105, startTick: 0, durationTicks: 240, channel: 0 },
-      { pitch: 28, velocity: 98, startTick: 360, durationTicks: 120, channel: 0 },
-      { pitch: 31, velocity: 100, startTick: 720, durationTicks: 240, channel: 0 },
-      { pitch: 28, velocity: 102, startTick: 960, durationTicks: 240, channel: 0 },
-    ]
-  );
+  const [manualNotes, setManualNotes] = useState<MidiNote[]>(() => {
+    if (isVocal) {
+      if (initialVocal?.notes && initialVocal.notes.length > 0) {
+        return initialVocal.notes.map((n) => ({ ...n }));
+      }
+      const rootSemi = noteNameToSemitone(songKey);
+      const r = fitPitchClassToRange(rootSemi, 57, 67);
+      const third = snapPitchToScale(r + (scale === 'Major' ? 4 : 3), songKey, scale, 48, 76);
+      const fifth = snapPitchToScale(r + 7, songKey, scale, 48, 76);
+      return [
+        { pitch: r, velocity: 98, startTick: 0, durationTicks: 240, channel: TRACK_CHANNELS.vocal },
+        { pitch: third, velocity: 95, startTick: 480, durationTicks: 240, channel: TRACK_CHANNELS.vocal },
+        { pitch: fifth, velocity: 100, startTick: 960, durationTicks: 480, channel: TRACK_CHANNELS.vocal },
+        { pitch: r, velocity: 92, startTick: 1440, durationTicks: 480, channel: TRACK_CHANNELS.vocal },
+      ];
+    }
+    return (
+      initialRiff?.cleanedBassNotes.map((n) => ({ ...n })) ?? [
+        { pitch: 28, velocity: 105, startTick: 0, durationTicks: 240, channel: 0 },
+        { pitch: 28, velocity: 98, startTick: 360, durationTicks: 120, channel: 0 },
+        { pitch: 31, velocity: 100, startTick: 720, durationTicks: 240, channel: 0 },
+        { pitch: 28, velocity: 102, startTick: 960, durationTicks: 240, channel: 0 },
+      ]
+    );
+  });
 
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [fallbackNotice, setFallbackNotice] = useState<string | null>(
@@ -91,12 +144,12 @@ export function RiffRecorderModal({
   useEffect(() => {
     const el = pianoRollScrollRef.current;
     if (!el) return;
-    // Center the initial scroll viewport around the active notes (or E1/G1 bass range)
+    const defaultTarget = isVocal ? 62 : 31;
     const targetPitch =
       activeNotes.length > 0
         ? activeNotes.reduce((sum, n) => sum + n.pitch, 0) / activeNotes.length
-        : 31;
-    const rowIdx = Math.max(0, 55 - Math.round(targetPitch));
+        : defaultTarget;
+    const rowIdx = Math.max(0, maxPitch - Math.round(targetPitch));
     el.scrollTop = Math.max(0, rowIdx * 28 - 90);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -114,11 +167,27 @@ export function RiffRecorderModal({
 
   const processedFromRaw = useMemo(() => {
     if (!rawNotes) return null;
-    return processGuitarRiff(rawNotes, { bpm, bars, offsetMs, grid });
-  }, [rawNotes, bpm, bars, offsetMs, grid]);
+    if (isVocal) {
+      return {
+        notes: processVocalMelody(rawNotes, {
+          bpm,
+          bars,
+          offsetMs,
+          grid,
+          key: songKey,
+          scale,
+          snapToScale,
+        }).cleanedVocalNotes,
+      };
+    }
+    return {
+      notes: processGuitarRiff(rawNotes, { bpm, bars, offsetMs, grid })
+        .cleanedBassNotes,
+    };
+  }, [rawNotes, isVocal, bpm, bars, offsetMs, grid, songKey, scale, snapToScale]);
 
   const activeNotes: MidiNote[] = useMemo(() => {
-    if (processedFromRaw) return processedFromRaw.cleanedBassNotes;
+    if (processedFromRaw) return processedFromRaw.notes;
     const riffEnd = bars * TICKS_PER_BAR;
     return manualNotes
       .filter((n) => n.startTick >= 0 && n.startTick < riffEnd)
@@ -264,7 +333,7 @@ export function RiffRecorderModal({
         velocity: 105,
         startTick: tick,
         durationTicks: stepTicks,
-        channel: 0,
+        channel: isVocal ? TRACK_CHANNELS.vocal : 0,
       });
     }
 
@@ -273,16 +342,39 @@ export function RiffRecorderModal({
     setManualNotes(current);
   };
 
+  const handleSnapCurrentNotesToScale = () => {
+    const snapped = activeNotes.map((n) => ({
+      ...n,
+      pitch: snapPitchToScale(n.pitch, songKey, scale, minPitch, maxPitch),
+      channel: isVocal ? TRACK_CHANNELS.vocal : 0,
+    }));
+    setSnapToScale(true);
+    setRawNotes(null);
+    setManualNotes(snapped);
+  };
+
   const handleConfirm = () => {
     const cleaned = activeNotes.map((n) => ({
-      pitch: Math.min(55, Math.max(24, n.pitch)),
+      pitch: Math.min(maxPitch, Math.max(minPitch, n.pitch)),
       velocity: Math.min(127, Math.max(1, n.velocity)),
       startTick: n.startTick,
       durationTicks: n.durationTicks,
-      channel: 0,
+      channel: isVocal ? TRACK_CHANNELS.vocal : 0,
     }));
+    if (isVocal) {
+      onSaveVocal?.({
+        notes: cleaned,
+        sourceLabel: sourceName,
+        bars,
+        grid,
+        offsetMs,
+        analysisMethod,
+        snappedToScale: snapToScale,
+      });
+      return;
+    }
     const accentTicks = extractAccentTicks(cleaned, bars);
-    onSave({
+    onSave?.({
       sourceName,
       analysisMethod,
       bars,
@@ -299,11 +391,15 @@ export function RiffRecorderModal({
       className="modal-backdrop"
       role="dialog"
       aria-modal="true"
-      aria-label="ギターユニゾンリフ設定"
+      aria-label={isVocal ? 'Vocal 鼻歌録音 / メロディ編集' : 'ギターユニゾンリフ設定'}
     >
       <div className="modal-panel">
         <div className="panel-header-row">
-          <h2 className="panel-title">🎸 ギターユニゾンリフ ({section.name})</h2>
+          <h2 className="panel-title">
+            {isVocal
+              ? `🎤 Vocal 鼻歌録音 / メロディ編集 (${section.name})`
+              : `🎸 ギターユニゾンリフ (${section.name})`}
+          </h2>
           <button
             type="button"
             className="btn-icon"
@@ -340,7 +436,7 @@ export function RiffRecorderModal({
 
         <div className="toolbar-row">
           <label className="btn btn-primary file-btn">
-            🔊 ギター音声読込 (WAV推奨)
+            {isVocal ? '🔊 鼻歌・ボーカル音声読込 (WAV推奨)' : '🔊 ギター音声読込 (WAV推奨)'}
             <input
               type="file"
               accept="audio/*,.wav,.mp3,.ogg,.flac,.m4a"
@@ -355,10 +451,10 @@ export function RiffRecorderModal({
             disabled={isBusy}
             onClick={handleStartMicRecording}
           >
-            🎙 マイク録音 ({bars}小節)
+            {isVocal ? `🎤 鼻歌録音 (${bars}小節)` : `🎙 マイク録音 (${bars}小節)`}
           </button>
           <label className="btn btn-secondary file-btn">
-            🎼 MIDIリフ読込
+            {isVocal ? '🎼 MIDIメロディ読込' : '🎼 MIDIリフ読込'}
             <input
               type="file"
               accept=".mid,.midi,audio/midi"
@@ -373,7 +469,7 @@ export function RiffRecorderModal({
             disabled={isBusy}
             onClick={() => {
               setRawNotes(null);
-              setSourceName('Manual Grid');
+              setSourceName(isVocal ? 'Manual Melody' : 'Manual Grid');
               setAnalysisMethod('manual');
               setFallbackNotice(null);
               setManualNotes([]);
@@ -472,7 +568,7 @@ export function RiffRecorderModal({
             />
           </label>
 
-          {section.kickMode === '808' && (
+          {!isVocal && section.kickMode === '808' && (
             <label className="switch-row compact">
               <span>808セクション時：リフを+12（1オクターブ上）する</span>
               <input
@@ -482,10 +578,37 @@ export function RiffRecorderModal({
               />
             </label>
           )}
+
+          {isVocal && (
+            <div className="toolbar-row">
+              <label className="switch-row compact" style={{ flex: 1 }}>
+                <span>
+                  解析時にスケール吸着 ({songKey} {scale})
+                </span>
+                <input
+                  type="checkbox"
+                  checked={snapToScale}
+                  onChange={(e) => setSnapToScale(e.target.checked)}
+                />
+              </label>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                disabled={isBusy || activeNotes.length === 0}
+                onClick={handleSnapCurrentNotesToScale}
+              >
+                🧲 スケール吸着 ({songKey} {scale})
+              </button>
+            </div>
+          )}
         </div>
 
         <div className="piano-roll-caption">
-          ソース: {sourceName} · タップで入力/削除（ベース音域 MIDI 24 [C1] 〜 55 [G3] / 単音保証 · 現在 {activeNotes.length}音）
+          ソース: {sourceName} · タップで入力/削除（
+          {isVocal
+            ? 'ボーカル音域 MIDI 48 [C3] 〜 76 [E5]'
+            : 'ベース音域 MIDI 24 [C1] 〜 55 [G3]'}{' '}
+          / 単音保証 · 現在 {activeNotes.length}音）
         </div>
         <div className="piano-roll-scroll" ref={pianoRollScrollRef}>
           <table className="piano-roll-grid">
@@ -503,7 +626,7 @@ export function RiffRecorderModal({
               </tr>
             </thead>
             <tbody>
-              {PITCH_ROWS.map((pitch) => (
+              {pitchRows.map((pitch) => (
                 <tr key={pitch}>
                   <td className="pitch-col">{formatMidiPitch(pitch)}</td>
                   {Array.from({ length: totalSteps }, (_, s) => {

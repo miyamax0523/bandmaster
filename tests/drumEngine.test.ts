@@ -25,6 +25,7 @@ function createSong(drumText = ''): SongConfig {
       bass: { enabled: true, activeSectionsOnly: false, instructionText: '' },
       keyboard: { enabled: true, activeSectionsOnly: false, instructionText: '' },
       pad: { enabled: true, activeSectionsOnly: false, instructionText: '' },
+      vocal: { enabled: true, activeSectionsOnly: false, instructionText: '' },
     },
     sections: [],
   };

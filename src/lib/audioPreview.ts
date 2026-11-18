@@ -35,6 +35,7 @@ export function createDefaultMixerState(): MixerState {
     bass: { volume: 1.0, muted: false, solo: false },
     keyboard: { volume: 0.85, muted: false, solo: false },
     pad: { volume: 0.75, muted: false, solo: false },
+    vocal: { volume: 0.9, muted: false, solo: false },
   };
 }
 
@@ -79,6 +80,7 @@ export class AudioPreviewEngine {
     bass: [],
     keyboard: [],
     pad: [],
+    vocal: [],
   };
   private bpm = 135;
   private totalTicks = 0;
@@ -135,6 +137,7 @@ export class AudioPreviewEngine {
         bass: { ...this.mixer.bass },
         keyboard: { ...this.mixer.keyboard },
         pad: { ...this.mixer.pad },
+        vocal: { ...this.mixer.vocal },
       },
     };
   }
@@ -162,6 +165,7 @@ export class AudioPreviewEngine {
         'bass',
         'keyboard',
         'pad',
+        'vocal',
       ] as LogicalTrackType[]) {
         const g = this.ctx.createGain();
         g.connect(this.headroomGain);
@@ -193,6 +197,7 @@ export class AudioPreviewEngine {
       'bass',
       'keyboard',
       'pad',
+      'vocal',
     ] as LogicalTrackType[]) {
       const gainNode = this.trackGains[track];
       if (!gainNode) continue;
@@ -478,8 +483,9 @@ export class AudioPreviewEngine {
       'bass',
       'keyboard',
       'pad',
+      'vocal',
     ] as LogicalTrackType[]) {
-      const notes = this.tracks[track];
+      const notes = this.tracks[track] ?? [];
       for (const note of notes) {
         if (note.startTick >= fromTick && note.startTick < toTick) {
           const offsetFromBase = note.startTick - baseTick;
@@ -530,6 +536,16 @@ export class AudioPreviewEngine {
         velGain * 0.45,
         'triangle',
         2600
+      );
+    } else if (track === 'vocal') {
+      // Clear monophonic lead / formant-like vocal synth
+      this.synthVocalLead(
+        this.ctx,
+        dest,
+        midiToFrequency(note.pitch),
+        startTime,
+        Math.min(1.6, durSec),
+        velGain * 0.58
       );
     } else {
       // pad
@@ -753,5 +769,51 @@ export class AudioPreviewEngine {
     osc.start(startTime);
     osc.stop(endTime);
     this.registerVoice([osc, filter, gain], [osc], endTime);
+  }
+
+  private synthVocalLead(
+    ctx: AudioContext,
+    dest: GainNode,
+    freq: number,
+    startTime: number,
+    durSec: number,
+    velGain: number
+  ): void {
+    const carrier = ctx.createOscillator();
+    const harmonic = ctx.createOscillator();
+    const formantFilter = ctx.createBiquadFilter();
+    const gain = ctx.createGain();
+
+    carrier.type = 'sawtooth';
+    carrier.frequency.setValueAtTime(freq, startTime);
+
+    harmonic.type = 'triangle';
+    harmonic.frequency.setValueAtTime(freq * 1.003, startTime);
+
+    formantFilter.type = 'lowpass';
+    formantFilter.frequency.setValueAtTime(2100, startTime);
+
+    const safeDur = Math.max(0.05, durSec);
+    const endTime = startTime + safeDur;
+    const attackEnd = Math.min(endTime - 0.015, startTime + 0.025);
+
+    gain.gain.setValueAtTime(0.001, startTime);
+    gain.gain.linearRampToValueAtTime(Math.max(0.002, velGain), attackEnd);
+    gain.gain.exponentialRampToValueAtTime(0.001, endTime);
+
+    carrier.connect(formantFilter);
+    harmonic.connect(formantFilter);
+    formantFilter.connect(gain);
+    gain.connect(dest);
+
+    carrier.start(startTime);
+    harmonic.start(startTime);
+    carrier.stop(endTime);
+    harmonic.stop(endTime);
+    this.registerVoice(
+      [carrier, harmonic, formantFilter, gain],
+      [carrier, harmonic],
+      endTime
+    );
   }
 }

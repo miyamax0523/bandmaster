@@ -25,6 +25,7 @@ function createSong(): SongConfig {
         instructionText: '',
       },
       pad: { enabled: true, activeSectionsOnly: false, instructionText: '' },
+      vocal: { enabled: true, activeSectionsOnly: false, instructionText: '' },
     },
     sections: [],
   };
