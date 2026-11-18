@@ -737,6 +737,23 @@ input[type='range'] {
   margin-bottom: 6px;
 }
 
+.drum-midi-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+  max-width: 100%;
+}
+
+.drum-midi-btn {
+  min-height: 40px;
+  padding: 6px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+
 .badge-row,
 .chip-list,
 .warning-stack,

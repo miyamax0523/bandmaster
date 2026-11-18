@@ -182,6 +182,8 @@ export function App() {
               canUndo={canUndo}
               onSelectSection={setSelectedSectionId}
               onPreviewSection={audio.previewSection}
+              onChangeSectionDrumLoop={changeSectionDrumLoop}
+              onClearSectionDrumLoop={(id) => changeSectionDrumLoop(id, undefined)}
               onRegenerateAll={regenerateAll}
               onUndo={undo}
               onRegenerateCell={regenerateCell}

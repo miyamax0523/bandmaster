@@ -1,7 +1,14 @@
+import { useState, type ChangeEvent } from 'react';
 import { isCellOutdated, isDrumLockedUnsynced } from '../lib/bandState';
+import { extractDrumLoopFromMidi } from '../lib/midiParser';
 import { isAutoTacet } from '../lib/noteSelector';
 import { useHorizontalSwipe } from '../lib/touchSwipe';
-import type { InstrumentType, SongConfig, TakeStyle } from '../types/song';
+import type {
+  DrumLoopData,
+  InstrumentType,
+  SongConfig,
+  TakeStyle,
+} from '../types/song';
 import type { BandState } from '../types/track';
 import { MidiExportButton } from './MidiExportButton';
 import { TakeSelector } from './TakeSelector';
@@ -14,6 +21,8 @@ interface BandmasterConsoleProps {
   canUndo: boolean;
   onSelectSection: (id: string) => void;
   onPreviewSection: (sectionId: string) => void;
+  onChangeSectionDrumLoop: (sectionId: string, loop?: DrumLoopData) => void;
+  onClearSectionDrumLoop: (sectionId: string) => void;
   onRegenerateAll: () => void;
   onUndo: () => void;
   onRegenerateCell: (sectionId: string, inst: InstrumentType) => void;
@@ -40,12 +49,15 @@ export function BandmasterConsole({
   canUndo,
   onSelectSection,
   onPreviewSection,
+  onChangeSectionDrumLoop,
+  onClearSectionDrumLoop,
   onRegenerateAll,
   onUndo,
   onRegenerateCell,
   onSelectTake,
   onToggleLock,
 }: BandmasterConsoleProps) {
+  const [midiError, setMidiError] = useState<string | null>(null);
   const currentIdx = Math.max(
     0,
     song.sections.findIndex((s) => s.id === selectedSectionId)
@@ -66,6 +78,20 @@ export function BandmasterConsole({
   );
 
   if (!section) return null;
+
+  const handleSectionDrumUpload = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      setMidiError(null);
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const { drumLoop } = extractDrumLoopFromMidi(bytes, file.name);
+      onChangeSectionDrumLoop(section.id, drumLoop);
+    } catch (err) {
+      setMidiError(err instanceof Error ? err.message : 'MIDI読込失敗');
+    }
+  };
 
   const cells = bandState.cellsBySection[section.id];
   const drumSourceLabel = section.uploadedDrumLoop
@@ -191,7 +217,33 @@ export function BandmasterConsole({
               </div>
 
               {key === 'drums' && (
-                <div className="source-line">ソース: {drumSourceLabel}</div>
+                <>
+                  <div className="source-line">ソース: {drumSourceLabel}</div>
+                  <div className="drum-midi-actions">
+                    <label className="btn btn-secondary drum-midi-btn">
+                      🥁 ドラムMIDI読込
+                      <input
+                        type="file"
+                        accept=".mid,.midi,audio/midi"
+                        hidden
+                        onChange={handleSectionDrumUpload}
+                      />
+                    </label>
+                    {section.uploadedDrumLoop && (
+                      <button
+                        type="button"
+                        className="btn btn-danger drum-midi-btn"
+                        onClick={() => {
+                          setMidiError(null);
+                          onClearSectionDrumLoop(section.id);
+                        }}
+                      >
+                        ✕ 解除
+                      </button>
+                    )}
+                  </div>
+                  {midiError && <p className="error-text">{midiError}</p>}
+                </>
               )}
 
               <div className="badge-row">
