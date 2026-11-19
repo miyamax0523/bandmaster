@@ -12,6 +12,7 @@ import {
   createSeedTriple,
   GENERATION_ORDER,
   generateCellTakes,
+  getAverageVocalPitch,
   getSelectedDrumNotes,
 } from './bandState';
 
@@ -205,6 +206,7 @@ export function hydrateProject(stored: StoredBandProject): {
       ...rawSec,
       hatDensity: rawSec.hatDensity ?? 3,
       kickDensity: rawSec.kickDensity ?? 3,
+      vocalDensity: rawSec.vocalDensity ?? 3,
       enabledParts: {
         ...createDefaultEnabledParts(),
         ...rawSec.enabledParts,
@@ -249,13 +251,18 @@ export function hydrateProject(stored: StoredBandProject): {
         inst === 'bass' && section.enabledParts?.drums !== false
           ? getSelectedDrumNotes(restored)
           : [];
+      const prevVocalAvgPitch =
+        inst === 'vocal' && secIdx > 0
+          ? getAverageVocalPitch(cellsBySection[song.sections[secIdx - 1].id])
+          : undefined;
       const takes = generateCellTakes(
         song,
         section,
         secIdx,
         inst,
         seeds,
-        drumNotes
+        drumNotes,
+        prevVocalAvgPitch
       );
       const cell: SectionInstrumentCell = {
         engineVersion: sCell?.engineVersion ?? CURRENT_ENGINE_VERSION,

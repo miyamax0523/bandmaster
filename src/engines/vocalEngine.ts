@@ -8,6 +8,7 @@ import {
   getScalePitchClasses,
   noteNameToSemitone,
   resolveChordForBar,
+  type ParsedChord,
 } from '../lib/chordUtils';
 import { createSeededRng } from '../lib/random';
 import type { EngineInput } from './types';
@@ -68,13 +69,30 @@ function enforceMonophonicAndClip(
   return deduped;
 }
 
+function buildScaleGrid(
+  scalePcs: ReadonlySet<number>,
+  minP = 52,
+  maxP = 72
+): number[] {
+  const out: number[] = [];
+  for (let p = minP; p <= maxP; p++) {
+    if (scalePcs.has(p % 12)) {
+      out.push(p);
+    }
+  }
+  return out;
+}
+
 function nearestScalePitch(
   target: number,
   scalePcs: ReadonlySet<number>,
-  minP = 55,
-  maxP = 74
+  minP = 52,
+  maxP = 72
 ): number {
   const clamped = Math.min(maxP, Math.max(minP, Math.round(target)));
+  if (scalePcs.has(clamped % 12)) {
+    return clamped;
+  }
   let best = clamped;
   let bestDist = Infinity;
   for (let p = minP; p <= maxP; p++) {
@@ -88,22 +106,74 @@ function nearestScalePitch(
   return best;
 }
 
-function buildScaleGrid(
+function getScaleChordTones(
+  chord: ParsedChord,
   scalePcs: ReadonlySet<number>,
-  minP = 55,
-  maxP = 74
+  minP: number,
+  maxP: number
 ): number[] {
-  const out: number[] = [];
-  for (let p = minP; p <= maxP; p++) {
-    if (scalePcs.has(p % 12)) {
-      out.push(p);
+  const candidatePcs: number[] = [];
+  for (const iv of chord.intervals) {
+    const pc = (chord.rootSemitone + iv) % 12;
+    if (scalePcs.has(pc) && !candidatePcs.includes(pc)) {
+      candidatePcs.push(pc);
     }
   }
-  return out;
+  // Include 7th and 9th diatonic color tones if in scale
+  for (const ext of [10, 11, 14]) {
+    const pc = (chord.rootSemitone + ext) % 12;
+    if (scalePcs.has(pc) && !candidatePcs.includes(pc)) {
+      candidatePcs.push(pc);
+    }
+  }
+
+  const pitches: number[] = [];
+  for (let p = minP; p <= maxP; p++) {
+    if (candidatePcs.includes(p % 12)) {
+      pitches.push(p);
+    }
+  }
+  if (pitches.length > 0) return pitches;
+
+  const fallback = buildScaleGrid(scalePcs, minP, maxP);
+  return fallback.length > 0 ? fallback : [nearestScalePitch(60, scalePcs, 48, 76)];
+}
+
+function pickClosestFromList(target: number, candidates: readonly number[]): number {
+  let best = candidates[0];
+  let bestDist = Infinity;
+  for (const c of candidates) {
+    const d = Math.abs(c - target);
+    if (d < bestDist) {
+      bestDist = d;
+      best = c;
+    }
+  }
+  return best;
+}
+
+function computeContinuityRange(
+  energy: 'Low' | 'Mid' | 'High',
+  prevVocalAvgPitch?: number
+): { minP: number; maxP: number } {
+  if (prevVocalAvgPitch === undefined || Number.isNaN(prevVocalAvgPitch)) {
+    if (energy === 'Low') return { minP: 54, maxP: 66 };
+    if (energy === 'High') return { minP: 57, maxP: 72 };
+    return { minP: 55, maxP: 69 };
+  }
+
+  // Smooth transition from previous section (e.g., Rap -> Chorus Melody):
+  // center lifts at most +4..+5 semitones and ceiling stays <= prevCenter + 7 (clamped to 52..72)
+  const prevCenter = Math.min(70, Math.max(54, Math.round(prevVocalAvgPitch)));
+  const maxLift = energy === 'High' ? 4 : energy === 'Low' ? -2 : 2;
+  const targetCenter = Math.min(68, Math.max(54, prevCenter + maxLift));
+  const minP = Math.max(52, Math.min(prevCenter - 2, targetCenter - 5));
+  const maxP = Math.min(72, Math.max(minP + 7, prevCenter + 7));
+  return { minP, maxP };
 }
 
 export function generateVocalNotes(input: EngineInput): MidiNote[] {
-  const { song, section, style, seed, params } = input;
+  const { song, section, style, seed, params, prevVocalAvgPitch } = input;
   const member = song.members.vocal;
   if (!member?.enabled || section.enabledParts?.vocal === false) {
     return [];
@@ -111,6 +181,7 @@ export function generateVocalNotes(input: EngineInput): MidiNote[] {
 
   const rng = createSeededRng(seed);
   const sectionEnd = section.bars * TICKS_PER_BAR;
+  const vocalDensity = section.vocalDensity ?? 3;
 
   // Mode A: Custom recorded/edited Vocal Melody priority mode
   const melody = section.vocalMelody;
@@ -145,7 +216,6 @@ export function generateVocalNotes(input: EngineInput): MidiNote[] {
           velocity = clampVelocity(velocity + (isDownbeat ? 5 : -3));
           durationTicks = Math.max(60, Math.round(durationTicks * 0.9));
         } else {
-          // Take C: subtle velocity lift + occasional tail inflection
           velocity = clampVelocity(velocity + rng.nextInt(-6, 8));
           if (
             section.energy !== 'Low' &&
@@ -174,14 +244,35 @@ export function generateVocalNotes(input: EngineInput): MidiNote[] {
   const preset = member.patternPreset ?? 'auto';
   const keySemitone = noteNameToSemitone(song.key);
   const scalePcs = new Set(getScalePitchClasses(song.key, song.scale));
-  const scaleNotes = buildScaleGrid(scalePcs, 55, 74);
+  const { minP: bandMin, maxP: bandMax } = computeContinuityRange(
+    section.energy,
+    prevVocalAvgPitch
+  );
+  const scaleNotes = buildScaleGrid(scalePcs, 52, 72);
 
-  // Rap anchor pitch centered comfortably (G3..F4)
-  const rapAnchor = fitPitchClassToRange(keySemitone, 56, 65);
-  const m3Pitch = rapAnchor + (song.scale === 'Major' ? 4 : 3);
-  const fifthPitch = rapAnchor + 7;
-  const semiBelow = rapAnchor - 1;
-  const wholeBelow = rapAnchor - 2;
+  // Rap anchor strictly within song Key/Scale around E3..F4
+  const rawAnchor = fitPitchClassToRange(
+    keySemitone,
+    Math.max(54, bandMin),
+    Math.min(64, bandMax)
+  );
+  const rapAnchor = nearestScalePitch(rawAnchor, scalePcs, 52, 68);
+  const anchorIdx = Math.max(
+    0,
+    scaleNotes.indexOf(rapAnchor)
+  );
+  const scaleStep = (delta: number): number => {
+    const idx = Math.min(
+      scaleNotes.length - 1,
+      Math.max(0, anchorIdx + delta)
+    );
+    return scaleNotes[idx] ?? rapAnchor;
+  };
+  const rapBelow = scaleStep(-1);
+  const rapTwoBelow = scaleStep(-2);
+  const rapSecond = scaleStep(1);
+  const rapThird = scaleStep(2);
+  const rapFifth = scaleStep(4);
 
   const baseVel =
     section.energy === 'High' ? 104 : section.energy === 'Low' ? 78 : 92;
@@ -189,133 +280,278 @@ export function generateVocalNotes(input: EngineInput): MidiNote[] {
 
   const isRapPreset = preset.startsWith('rap_');
   if (isRapPreset) {
-    // Minimal-leap arpeggiator-style rap delivery
+    // Prepare deterministic 2-bar motif for rap_hook_chant
+    const hookVariant = rng.nextInt(0, 2);
+    const hookMotifBar0 =
+      hookVariant === 0
+        ? [0, 360, 480, 960, 1200, 1440]
+        : hookVariant === 1
+          ? [0, 240, 480, 840, 960, 1440]
+          : [0, 480, 720, 960, 1320, 1440];
+    const hookMotifBar1 =
+      style === 'C'
+        ? [0, 240, 480, 720, 960, 1200]
+        : [0, 360, 480, 960, 1200];
+
     for (let bar = 0; bar < section.bars; bar++) {
       const barStart = bar * TICKS_PER_BAR;
       const isPhraseEndBar = bar % 2 === 1 || bar === section.bars - 1;
 
-      if (preset === 'rap_16th_push') {
+      if (preset === 'rap_16th_push' || preset === 'rap_double_time') {
+        const isDouble = preset === 'rap_double_time';
         const restStartStep =
-          style === 'B'
-            ? 14
-            : style === 'C'
-              ? rng.nextInt(10, 12)
-              : rng.nextInt(12, 14);
+          vocalDensity <= 1
+            ? 8
+            : vocalDensity === 2
+              ? 10
+              : isDouble
+                ? rng.nextInt(10, 12)
+                : style === 'B'
+                  ? 14
+                  : style === 'C'
+                    ? rng.nextInt(10, 13)
+                    : rng.nextInt(12, 14);
         const burstGapStep = style === 'A' ? 7 : rng.nextInt(5, 8);
-        for (let s = 0; s < 16; s++) {
+        const stepStride =
+          vocalDensity === 1 ? 4 : vocalDensity === 2 ? 2 : 1;
+
+        for (let s = 0; s < 16; s += stepStride) {
           if (s >= restStartStep) continue;
-          if (s === burstGapStep && rng.chance(style === 'B' ? 0.35 : 0.7)) {
+          if (
+            vocalDensity === 3 &&
+            s === burstGapStep &&
+            rng.chance(isDouble ? 0.25 : 0.6)
+          ) {
             continue;
           }
-          if (style === 'A' && s % 4 === 3 && rng.chance(0.45)) continue;
+          if (
+            vocalDensity <= 3 &&
+            style === 'A' &&
+            !isDouble &&
+            s % 4 === 3 &&
+            rng.chance(0.45)
+          ) {
+            continue;
+          }
+          if (vocalDensity === 5 && s >= restStartStep && isDouble) continue;
 
           let pitch = rapAnchor;
-          if (s === restStartStep - 1 && isPhraseEndBar) {
-            pitch = rng.chance(0.5) ? wholeBelow : semiBelow;
+          if (s === restStartStep - stepStride && isPhraseEndBar) {
+            pitch = rng.chance(0.5) ? rapTwoBelow : rapBelow;
           } else if (s % 4 === 2 && rng.chance(style === 'C' ? 0.55 : 0.3)) {
-            pitch = m3Pitch;
+            pitch = rapThird;
           } else if (s === 0 && bar > 0 && rng.chance(0.25)) {
-            pitch = fifthPitch;
+            pitch = isDouble ? rapSecond : rapFifth;
           } else if (s % 8 === 7 && rng.chance(0.4)) {
-            pitch = semiBelow;
+            pitch = rapBelow;
           }
 
           const accent = s % 4 === 0 ? 8 : s % 2 === 0 ? 0 : -10;
+          const dur =
+            vocalDensity === 1
+              ? 360
+              : vocalDensity === 2
+                ? 190
+                : 100;
           notes.push({
-            pitch: clampVocalPitch(pitch),
+            pitch,
             velocity: clampVelocity(baseVel + accent + rng.nextInt(-4, 4)),
             startTick: barStart + s * 120,
-            durationTicks: 100,
+            durationTicks: dur,
             channel: TRACK_CHANNELS.vocal,
           });
+        }
+        // High vocalDensity extra pickup on bar rest pocket
+        if (vocalDensity >= 4 && !isPhraseEndBar) {
+          for (const extra of vocalDensity === 5 ? [1440, 1560, 1680, 1800] : [1440, 1680]) {
+            if (extra >= restStartStep * 120) {
+              notes.push({
+                pitch: extra === 1800 ? rapBelow : rapAnchor,
+                velocity: clampVelocity(baseVel - 6 + rng.nextInt(-3, 4)),
+                startTick: barStart + extra,
+                durationTicks: 100,
+                channel: TRACK_CHANNELS.vocal,
+              });
+            }
+          }
         }
       } else if (preset === 'rap_triplet_trap') {
         const dropBeat =
           style === 'B' ? 3 : style === 'C' ? rng.nextInt(1, 2) : 2;
         for (let beat = 0; beat < 4; beat++) {
-          if (beat === 3 && isPhraseEndBar && rng.chance(0.65)) {
-            // Leave breathing pocket before next bar
+          if (vocalDensity === 1 && (beat === 1 || beat === 3)) continue;
+          if (beat === 3 && isPhraseEndBar && vocalDensity <= 3 && rng.chance(0.65)) {
             continue;
           }
-          if (beat === dropBeat && rng.chance(style === 'B' ? 0.25 : 0.6)) {
+          if (
+            vocalDensity <= 3 &&
+            beat === dropBeat &&
+            rng.chance(style === 'B' ? 0.25 : 0.55)
+          ) {
             continue;
           }
           const tupleCount =
-            style === 'C' && beat === 2 ? 3 : rng.chance(0.6) ? 3 : 2;
+            vocalDensity === 1
+              ? 1
+              : vocalDensity === 2
+                ? 2
+                : vocalDensity >= 4
+                  ? 3
+                  : style === 'C' && beat === 2
+                    ? 3
+                    : rng.chance(0.6)
+                      ? 3
+                      : 2;
           for (let sub = 0; sub < tupleCount; sub++) {
             const tick = barStart + beat * 480 + sub * 160;
             let pitch = rapAnchor;
             if (beat === 3 && sub === tupleCount - 1) {
-              pitch = wholeBelow;
+              pitch = rapTwoBelow;
             } else if (sub === 1 && rng.chance(0.35)) {
-              pitch = m3Pitch;
+              pitch = rapThird;
             } else if (beat === 1 && sub === 0 && rng.chance(0.25)) {
-              pitch = semiBelow;
+              pitch = rapBelow;
             }
             notes.push({
-              pitch: clampVocalPitch(pitch),
+              pitch,
               velocity: clampVelocity(
                 baseVel + (sub === 0 ? 6 : -8) + rng.nextInt(-4, 4)
               ),
               startTick: tick,
-              durationTicks: 135,
+              durationTicks: vocalDensity <= 2 ? 260 : 135,
               channel: TRACK_CHANNELS.vocal,
             });
           }
         }
+      } else if (preset === 'rap_laidback_groove') {
+        // Offbeat-heavy laid-back pocket sitting low around root/below
+        const laidBackSteps =
+          vocalDensity <= 1
+            ? [240, 1200]
+            : vocalDensity === 2
+              ? [240, 720, 1200, 1680]
+              : vocalDensity >= 4
+                ? [0, 240, 360, 600, 840, 960, 1080, 1320, 1560, 1680]
+                : style === 'C'
+                  ? [240, 360, 600, 840, 1080, 1320, 1680]
+                  : [240, 600, 840, 1200, 1560];
+        for (let i = 0; i < laidBackSteps.length; i++) {
+          const off = laidBackSteps[i];
+          if (vocalDensity === 3 && i > 1 && rng.chance(0.15)) continue;
+          const pitch =
+            isPhraseEndBar && i === laidBackSteps.length - 1
+              ? rapTwoBelow
+              : i % 3 === 1
+                ? rapBelow
+                : i % 4 === 2
+                  ? rapSecond
+                  : rapAnchor;
+          notes.push({
+            pitch,
+            velocity: clampVelocity(
+              baseVel - 4 + (off % 480 === 240 ? 6 : -2) + rng.nextInt(-4, 4)
+            ),
+            startTick: barStart + off,
+            durationTicks: vocalDensity <= 2 ? 280 : 160,
+            channel: TRACK_CHANNELS.vocal,
+          });
+        }
+      } else if (preset === 'rap_hook_chant') {
+        // Repeating 2-bar anthem hook motif
+        const motif = bar % 2 === 0 ? hookMotifBar0 : hookMotifBar1;
+        const activeSteps =
+          vocalDensity === 1
+            ? [0, 960]
+            : vocalDensity === 2
+              ? motif.filter((_, idx) => idx % 2 === 0)
+              : vocalDensity >= 4
+                ? Array.from(new Set([...motif, 240, 720, 1560])).sort((a, b) => a - b)
+                : motif;
+        for (let i = 0; i < activeSteps.length; i++) {
+          const off = activeSteps[i];
+          const pitch =
+            bar % 2 === 1 && i === activeSteps.length - 1
+              ? rapThird
+              : off === 480 || off === 1440
+                ? rapAnchor
+                : off === 1200
+                  ? rapSecond
+                  : rapAnchor;
+          notes.push({
+            pitch,
+            velocity: clampVelocity(
+              baseVel + (off % 480 === 0 ? 10 : -2) + rng.nextInt(-3, 3)
+            ),
+            startTick: barStart + off,
+            durationTicks: vocalDensity <= 2 ? 320 : 180,
+            channel: TRACK_CHANNELS.vocal,
+          });
+        }
       } else if (preset === 'rap_nu_metal') {
         const basePattern =
-          style === 'B'
-            ? [0, 360, 480, 720, 960, 1200, 1440, 1680]
-            : style === 'C'
-              ? [0, 120, 360, 480, 840, 960, 1200, 1440, 1560, 1680]
-              : [0, 360, 480, 840, 960, 1320, 1440, 1680];
+          vocalDensity <= 1
+            ? [0, 960]
+            : vocalDensity === 2
+              ? [0, 480, 960, 1440]
+              : vocalDensity >= 4
+                ? [0, 120, 240, 360, 480, 720, 840, 960, 1200, 1320, 1440, 1560, 1680]
+                : style === 'B'
+                  ? [0, 360, 480, 720, 960, 1200, 1440, 1680]
+                  : style === 'C'
+                    ? [0, 120, 360, 480, 840, 960, 1200, 1440, 1560, 1680]
+                    : [0, 360, 480, 840, 960, 1320, 1440, 1680];
         for (let i = 0; i < basePattern.length; i++) {
           const off = basePattern[i];
-          if (isPhraseEndBar && off > 1560) continue;
-          if (i > 0 && i < basePattern.length - 2 && rng.chance(0.18)) {
+          if (vocalDensity <= 3 && isPhraseEndBar && off > 1560) continue;
+          if (vocalDensity === 3 && i > 0 && i < basePattern.length - 2 && rng.chance(0.18)) {
             continue;
           }
           let pitch = rapAnchor;
           if (off === 360 || off === 840) {
-            pitch = m3Pitch;
+            pitch = rapThird;
           } else if (off === 1440 && bar % 2 === 1) {
-            pitch = fifthPitch;
+            pitch = rapFifth;
           } else if (off === 1680) {
-            pitch = wholeBelow;
+            pitch = rapTwoBelow;
           }
           notes.push({
-            pitch: clampVocalPitch(pitch),
+            pitch,
             velocity: clampVelocity(
               baseVel + (off === 480 || off === 1440 ? 10 : 0) + rng.nextInt(-3, 5)
             ),
             startTick: barStart + off,
-            durationTicks: 110,
+            durationTicks: vocalDensity <= 2 ? 260 : 110,
             channel: TRACK_CHANNELS.vocal,
           });
         }
       } else {
         // rap_monotone_chant
         const chantSteps =
-          style === 'C'
-            ? [0, 240, 480, 840, 960, 1200, 1440]
-            : style === 'B'
-              ? [0, 480, 960, 1200, 1440]
-              : [0, 240, 480, 960, 1200];
+          vocalDensity === 1
+            ? [0, 960]
+            : vocalDensity === 2
+              ? [0, 480, 960]
+              : vocalDensity >= 4
+                ? [0, 120, 240, 480, 720, 960, 1200, 1320, 1440, 1680]
+                : style === 'C'
+                  ? [0, 240, 480, 840, 960, 1200, 1440]
+                  : style === 'B'
+                    ? [0, 480, 960, 1200, 1440]
+                    : [0, 240, 480, 960, 1200];
         for (let i = 0; i < chantSteps.length; i++) {
           const off = chantSteps[i];
-          if (isPhraseEndBar && i === chantSteps.length - 1 && rng.chance(0.45)) {
+          if (vocalDensity <= 3 && isPhraseEndBar && i === chantSteps.length - 1 && rng.chance(0.45)) {
             continue;
           }
           const isTail = isPhraseEndBar && i === chantSteps.length - 1;
-          const pitch = isTail ? wholeBelow : rapAnchor;
+          const pitch = isTail ? rapBelow : rapAnchor;
           notes.push({
-            pitch: clampVocalPitch(pitch),
+            pitch,
             velocity: clampVelocity(
               baseVel + (off % 960 === 0 ? 6 : -4) + rng.nextInt(-3, 3)
             ),
             startTick: barStart + off,
-            durationTicks: 180,
+            durationTicks: vocalDensity <= 2 ? 360 : 180,
             channel: TRACK_CHANNELS.vocal,
           });
         }
@@ -325,19 +561,18 @@ export function generateVocalNotes(input: EngineInput): MidiNote[] {
     return enforceMonophonicAndClip(notes, sectionEnd);
   }
 
-  // Melody presets: auto, melody_pop, melody_ballad, melody_alt_minor
-  const minMelPitch = section.energy === 'High' ? 60 : 57;
-  const maxMelPitch = section.energy === 'High' ? 74 : 71;
+  // Melody presets (strict scale conformance + chord tone landing + smooth continuity)
   const pentOffsets =
     song.scale === 'Major' ? [0, 2, 4, 7, 9] : [0, 3, 5, 7, 10];
   const pentPcs = new Set(pentOffsets.map((o) => (keySemitone + o) % 12));
-  const pentGrid = buildScaleGrid(pentPcs, 55, 72);
+  const pentGrid = buildScaleGrid(pentPcs, bandMin, bandMax);
 
-  let prevPitch = fitPitchClassToRange(
+  const initialAnchor = fitPitchClassToRange(
     keySemitone,
-    minMelPitch,
-    Math.min(minMelPitch + 9, maxMelPitch)
+    bandMin,
+    Math.min(bandMin + 8, bandMax)
   );
+  let prevPitch = nearestScalePitch(initialAnchor, scalePcs, bandMin, bandMax);
 
   for (let bar = 0; bar < section.bars; bar++) {
     const barStart = bar * TICKS_PER_BAR;
@@ -347,37 +582,155 @@ export function generateVocalNotes(input: EngineInput): MidiNote[] {
       song.key,
       song.scale
     );
-    const chordThird = chord.rootSemitone + (chord.intervals[1] ?? 4);
-    const chordFifth = chord.rootSemitone + (chord.intervals[2] ?? 7);
+    const chordTones = getScaleChordTones(chord, scalePcs, bandMin, bandMax);
+    const barRoot = nearestScalePitch(
+      fitPitchClassToRange(chord.rootSemitone, bandMin, Math.min(bandMin + 9, bandMax)),
+      scalePcs,
+      bandMin,
+      bandMax
+    );
     const isPhraseEnd = bar % 2 === 1 || bar === section.bars - 1;
 
-    if (preset === 'melody_ballad' || (preset === 'auto' && section.energy === 'Low')) {
-      const slots =
-        style === 'C'
-          ? [
-              { off: 0, dur: 900 },
-              { off: 960, dur: 440 },
-              { off: 1440, dur: 420 },
-            ]
-          : [
-              { off: 0, dur: 920 },
-              { off: 960, dur: isPhraseEnd ? 720 : 880 },
-            ];
-      for (let i = 0; i < slots.length; i++) {
-        const slot = slots[i];
-        const targetPc =
-          i === 0 ? chord.rootSemitone : i === 1 ? chordThird : chordFifth;
-        const targetPitch = fitPitchClassToRange(targetPc, 57, 69);
-        const pitch = nearestScalePitch(
-          Math.round((prevPitch + targetPitch) / 2),
-          scalePcs,
-          57,
-          69
+    const chooseMelodyPitch = (isStrongBeat: boolean, isEndNote: boolean): number => {
+      if (isEndNote) {
+        return pickClosestFromList(prevPitch, chordTones);
+      }
+      if (isStrongBeat || rng.chance(0.65)) {
+        // Land smoothly on chord tone within <= 5 semitones if possible
+        const closeChordTones = chordTones.filter(
+          (p) => Math.abs(p - prevPitch) <= 5
         );
+        if (closeChordTones.length > 0) {
+          return rng.pick(closeChordTones);
+        }
+        return pickClosestFromList(prevPitch, chordTones);
+      }
+      const step = rng.pick([-2, -1, 1, 2]);
+      return nearestScalePitch(prevPitch + step, scalePcs, bandMin, bandMax);
+    };
+
+    // 1. melody_call_response: 4-bar cycle -> bars 0..1 sing, bars 2..3 sparse/rest
+    if (preset === 'melody_call_response') {
+      const cyclePos = bar % 4;
+      if (cyclePos === 3) {
+        // Last bar of response stays completely open rest (instrument space)
+        continue;
+      }
+      if (cyclePos === 2) {
+        // Bar 3: subtle 1-note resolving echo only at beat 1 (if density >= 3)
+        if (vocalDensity >= 3) {
+          const pitch = pickClosestFromList(prevPitch, chordTones);
+          prevPitch = pitch;
+          notes.push({
+            pitch,
+            velocity: clampVelocity(baseVel - 12),
+            startTick: barStart,
+            durationTicks: 480,
+            channel: TRACK_CHANNELS.vocal,
+          });
+        }
+        continue;
+      }
+    }
+
+    // 2. melody_soar_long: Sustained whole/dotted-half long tones on bars 2 & 4 (gate >= 95%)
+    if (preset === 'melody_soar_long') {
+      if (isPhraseEnd || section.bars === 1) {
+        const pitch = pickClosestFromList(prevPitch + 2, chordTones);
         prevPitch = pitch;
+        if (vocalDensity >= 4 && section.bars > 1) {
+          const leadPitch = nearestScalePitch(pitch - 2, scalePcs, bandMin, bandMax);
+          notes.push({
+            pitch: leadPitch,
+            velocity: clampVelocity(baseVel - 4),
+            startTick: barStart,
+            durationTicks: 440,
+            channel: TRACK_CHANNELS.vocal,
+          });
+          notes.push({
+            pitch,
+            velocity: clampVelocity(baseVel + 6),
+            startTick: barStart + 480,
+            durationTicks: 1400, // ~97% of remaining 1440 ticks
+            channel: TRACK_CHANNELS.vocal,
+          });
+        } else {
+          notes.push({
+            pitch,
+            velocity: clampVelocity(baseVel + 6),
+            startTick: barStart,
+            durationTicks: 1860, // ~97% of 1920 ticks
+            channel: TRACK_CHANNELS.vocal,
+          });
+        }
+        continue;
+      }
+    }
+
+    // 3. melody_staccato_rock: Short crisp rock articulation (40-55% gate) + rests
+    if (preset === 'melody_staccato_rock') {
+      const steps =
+        vocalDensity === 1
+          ? [0, 960]
+          : vocalDensity === 2
+            ? [0, 480, 960]
+            : vocalDensity >= 4
+              ? [0, 240, 480, 600, 720, 960, 1200, 1440, 1560]
+              : [0, 240, 480, 960, 1200, 1440];
+      for (let i = 0; i < steps.length; i++) {
+        const off = steps[i];
+        if (vocalDensity <= 3 && isPhraseEnd && off >= 1440) continue;
+        const pitch = chooseMelodyPitch(off % 480 === 0, i === steps.length - 1);
+        prevPitch = pitch;
+        // Calculate grid step toward next hit (240 or 480) and apply ~45% gate time (40..55%)
+        const nextOff = i + 1 < steps.length ? steps[i + 1] : TICKS_PER_BAR;
+        const stepSpan = Math.min(480, Math.max(120, nextOff - off));
+        const staccatoDur = Math.max(55, Math.round(stepSpan * 0.46));
         notes.push({
           pitch,
-          velocity: clampVelocity(baseVel - 6 + rng.nextInt(-5, 5)),
+          velocity: clampVelocity(baseVel + (off % 480 === 0 ? 8 : 0) + rng.nextInt(-3, 4)),
+          startTick: barStart + off,
+          durationTicks: staccatoDur,
+          channel: TRACK_CHANNELS.vocal,
+        });
+      }
+      continue;
+    }
+
+    // 4. melody_ballad OR low density (1..2) auto/long sustained phrasing
+    if (
+      preset === 'melody_ballad' ||
+      (preset === 'auto' && section.energy === 'Low') ||
+      vocalDensity <= 2
+    ) {
+      const slots =
+        vocalDensity === 1
+          ? [{ off: 0, dur: isPhraseEnd ? 1820 : 1400 }]
+          : vocalDensity === 2
+            ? [
+                { off: 0, dur: 900 },
+                { off: 960, dur: isPhraseEnd ? 840 : 900 },
+              ]
+            : style === 'C'
+              ? [
+                  { off: 0, dur: 900 },
+                  { off: 960, dur: 440 },
+                  { off: 1440, dur: 420 },
+                ]
+              : [
+                  { off: 0, dur: 920 },
+                  { off: 960, dur: isPhraseEnd ? 760 : 880 },
+                ];
+      for (let i = 0; i < slots.length; i++) {
+        const slot = slots[i];
+        const pitch =
+          i === 0
+            ? barRoot
+            : pickClosestFromList(prevPitch, chordTones);
+        prevPitch = nearestScalePitch(pitch, scalePcs, bandMin, bandMax);
+        notes.push({
+          pitch: prevPitch,
+          velocity: clampVelocity(baseVel - 4 + rng.nextInt(-4, 4)),
           startTick: barStart + slot.off,
           durationTicks: slot.dur,
           channel: TRACK_CHANNELS.vocal,
@@ -386,17 +739,20 @@ export function generateVocalNotes(input: EngineInput): MidiNote[] {
       continue;
     }
 
+    // 5. melody_alt_minor: Low-centered minor pentatonic strictly inside Key/Scale
     if (preset === 'melody_alt_minor') {
       const grid = pentGrid.length > 0 ? pentGrid : scaleNotes;
       const offs =
-        style === 'B'
-          ? [0, 480, 720, 960, 1440]
-          : style === 'C'
-            ? [0, 240, 480, 720, 960, 1200, 1440]
-            : [0, 240, 720, 960, 1440];
+        vocalDensity >= 4
+          ? [0, 120, 240, 480, 720, 840, 960, 1200, 1440, 1560]
+          : style === 'B'
+            ? [0, 480, 720, 960, 1440]
+            : style === 'C'
+              ? [0, 240, 480, 720, 960, 1200, 1440]
+              : [0, 240, 720, 960, 1440];
       for (let i = 0; i < offs.length; i++) {
         const off = offs[i];
-        if (isPhraseEnd && off >= 1440) continue;
+        if (vocalDensity <= 3 && isPhraseEnd && off >= 1440) continue;
         const nearestIdx = grid.reduce(
           (bestIdx, p, idx) =>
             Math.abs(p - prevPitch) < Math.abs(grid[bestIdx] - prevPitch)
@@ -406,7 +762,7 @@ export function generateVocalNotes(input: EngineInput): MidiNote[] {
         );
         const delta =
           i === 0
-            ? rng.pick([0, 1, 2])
+            ? rng.pick([0, 1])
             : isPhraseEnd && i === offs.length - 2
               ? -1
               : rng.pick([-1, 0, 1, 2]);
@@ -414,58 +770,98 @@ export function generateVocalNotes(input: EngineInput): MidiNote[] {
           grid.length - 1,
           Math.max(0, nearestIdx + delta)
         );
-        const pitch = grid[nextIdx] ?? prevPitch;
+        const pitch = nearestScalePitch(
+          grid[nextIdx] ?? prevPitch,
+          scalePcs,
+          bandMin,
+          bandMax
+        );
         prevPitch = pitch;
         notes.push({
           pitch,
-          velocity: clampVelocity(baseVel + (off % 960 === 0 ? 5 : -4) + rng.nextInt(-4, 4)),
+          velocity: clampVelocity(
+            baseVel + (off % 960 === 0 ? 5 : -4) + rng.nextInt(-4, 4)
+          ),
           startTick: barStart + off,
-          durationTicks: isPhraseEnd && i === offs.length - 2 ? 420 : 220,
+          durationTicks:
+            vocalDensity >= 4
+              ? 110
+              : isPhraseEnd && i === offs.length - 2
+                ? 420
+                : 220,
           channel: TRACK_CHANNELS.vocal,
         });
       }
       continue;
     }
 
-    // melody_pop or auto (Mid / High)
-    const eighths =
-      style === 'B'
-        ? [0, 480, 720, 960, 1200, 1440]
-        : style === 'C'
-          ? [0, 240, 480, 720, 960, 1200, 1440, 1680]
-          : [0, 240, 480, 960, 1200, 1440];
-
-    for (let i = 0; i < eighths.length; i++) {
-      const off = eighths[i];
-      if (isPhraseEnd && off >= 1440) continue;
-      if (i > 0 && rng.chance(0.15)) continue;
-
-      let pitch: number;
-      if (off === 0) {
-        pitch = fitPitchClassToRange(
-          rng.chance(0.5) ? chord.rootSemitone : chordFifth,
-          minMelPitch,
-          maxMelPitch - 2
+    // 6. melody_syncopated_hook: Anticipating beats with syncopated 8th/16th hooks
+    if (preset === 'melody_syncopated_hook') {
+      const syncSteps =
+        vocalDensity >= 4
+          ? [0, 120, 360, 600, 840, 960, 1200, 1320, 1560, 1800]
+          : style === 'B'
+            ? [0, 360, 840, 1320, 1560]
+            : style === 'C'
+              ? [0, 240, 360, 720, 840, 1200, 1560, 1800]
+              : [0, 360, 720, 1200, 1560];
+      for (let i = 0; i < syncSteps.length; i++) {
+        const off = syncSteps[i];
+        if (vocalDensity <= 3 && isPhraseEnd && off >= 1680) continue;
+        const pitch = chooseMelodyPitch(
+          off === 0 || off === 360 || off === 840,
+          i === syncSteps.length - 1
         );
-      } else {
-        const step = rng.pick([-2, -1, 1, 2, 3]);
-        pitch = nearestScalePitch(
-          prevPitch + step,
-          scalePcs,
-          minMelPitch,
-          maxMelPitch
-        );
+        prevPitch = pitch;
+        notes.push({
+          pitch,
+          velocity: clampVelocity(
+            baseVel + (off % 480 === 360 ? 7 : 0) + rng.nextInt(-3, 4)
+          ),
+          startTick: barStart + off,
+          durationTicks: vocalDensity >= 4 ? 110 : 210,
+          channel: TRACK_CHANNELS.vocal,
+        });
       }
+      continue;
+    }
+
+    // 7. Default melody_pop / auto / melody_soar_long bars 0 & 2 / melody_call_response call bars
+    const baseSteps =
+      vocalDensity === 4
+        ? [0, 240, 360, 480, 720, 960, 1080, 1200, 1440, 1680]
+        : vocalDensity === 5
+          ? [0, 120, 240, 360, 480, 600, 720, 840, 960, 1200, 1320, 1440, 1680]
+          : style === 'B'
+            ? [0, 480, 720, 960, 1200, 1440]
+            : style === 'C'
+              ? [0, 240, 480, 720, 960, 1200, 1440, 1680]
+              : [0, 240, 480, 960, 1200, 1440];
+
+    for (let i = 0; i < baseSteps.length; i++) {
+      const off = baseSteps[i];
+      if (vocalDensity <= 3 && isPhraseEnd && off >= 1440) continue;
+      if (vocalDensity <= 3 && i > 0 && rng.chance(0.14)) continue;
+
+      const pitch = chooseMelodyPitch(
+        off === 0 || off === 960,
+        i === baseSteps.length - 1 || (isPhraseEnd && off >= 1200)
+      );
       prevPitch = pitch;
 
+      const dur =
+        vocalDensity >= 4
+          ? 110
+          : i === baseSteps.length - 1 || (isPhraseEnd && off >= 1200)
+            ? 420
+            : 215;
       notes.push({
         pitch,
         velocity: clampVelocity(
           baseVel + (off % 960 === 0 ? 6 : -2) + rng.nextInt(-4, 4)
         ),
         startTick: barStart + off,
-        durationTicks:
-          i === eighths.length - 1 || (isPhraseEnd && off >= 1200) ? 400 : 210,
+        durationTicks: dur,
         channel: TRACK_CHANNELS.vocal,
       });
     }

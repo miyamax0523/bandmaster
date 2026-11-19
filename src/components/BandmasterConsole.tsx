@@ -29,6 +29,10 @@ interface BandmasterConsoleProps {
     sectionId: string,
     patch: { hatDensity?: DensityLevel; kickDensity?: DensityLevel }
   ) => void;
+  onChangeSectionVocalDensity: (
+    sectionId: string,
+    vocalDensity: DensityLevel
+  ) => void;
   onChangePatternPreset: (inst: InstrumentType, preset: string) => void;
   onToggleSectionPart: (sectionId: string, inst: InstrumentType) => void;
   onOpenVocalModal: (sectionId: string) => void;
@@ -65,6 +69,7 @@ export function BandmasterConsole({
   onChangeSectionDrumLoop,
   onClearSectionDrumLoop,
   onChangeSectionDrumDensity,
+  onChangeSectionVocalDensity,
   onChangePatternPreset,
   onToggleSectionPart,
   onOpenVocalModal,
@@ -389,6 +394,32 @@ export function BandmasterConsole({
                               onChangeSectionDrumDensity(section.id, {
                                 kickDensity: lvl,
                               })
+                            }
+                          >
+                            {lvl}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {key === 'vocal' && (
+                <div className="density-controls">
+                  <div className="density-row">
+                    <span className="density-label">音数</span>
+                    <div className="density-segments" role="group" aria-label="Vocal 音数">
+                      {DENSITY_LEVELS.map((lvl) => {
+                        const active = (section.vocalDensity ?? 3) === lvl;
+                        return (
+                          <button
+                            key={lvl}
+                            type="button"
+                            className={`density-btn ${active ? 'active' : ''}`}
+                            disabled={cell.locked || !effectivelyEnabled}
+                            onClick={() =>
+                              onChangeSectionVocalDensity(section.id, lvl)
                             }
                           >
                             {lvl}

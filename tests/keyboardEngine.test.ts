@@ -132,5 +132,27 @@ describe('keyboardEngine', () => {
     const darkLow = runPreset('dark_low_riff');
     expect(darkLow.length).toBeGreaterThan(0);
     expect(darkLow.every((n) => n.pitch >= 48 && n.pitch <= 67)).toBe(true);
+
+    const rockRiff = runPreset('rock_power_riff');
+    expect(rockRiff.length).toBeGreaterThan(0);
+    expect(rockRiff.every((n) => n.pitch >= 48 && n.pitch <= 67)).toBe(true);
+
+    const emoArp = runPreset('emo_arp_cascade');
+    expect(emoArp.length).toBe(16);
+
+    const funkClav = runPreset('funk_16th_clav');
+    expect(funkClav.length).toBeGreaterThan(0);
+    expect(funkClav.every((n) => n.durationTicks <= 85)).toBe(true);
+
+    const counterMel = runPreset('counter_melody');
+    expect(counterMel.length).toBe(10);
+    expect(counterMel.every((n) => n.pitch >= 67 && n.pitch <= 86)).toBe(true);
+
+    const synthPluck = runPreset('synth_pluck_arp');
+    expect(synthPluck.length).toBe(32);
+    expect(synthPluck.every((n) => n.durationTicks <= 70)).toBe(true);
+
+    const gospelComp = runPreset('gospel_rich_comp');
+    expect(gospelComp.some((n) => n.startTick % 1920 === 1680)).toBe(true);
   });
 });

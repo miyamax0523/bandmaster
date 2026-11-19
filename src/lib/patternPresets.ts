@@ -96,6 +96,17 @@ export const PATTERN_PRESET_GROUPS: Record<
         { value: 'arp_down_up', label: '往復アルペジオ・繊細' },
         { value: 'arp_16th', label: '16分シーケンス・アルペジオ' },
         { value: 'broken_chord', label: 'バラード風・分散和音' },
+        { value: 'emo_arp_cascade', label: 'エモ／ポストロック風アルペジオ（9th/M7）' },
+        { value: 'synth_pluck_arp', label: 'エレクトロ・シンセプラック（16分短ゲート）' },
+      ],
+    },
+    {
+      category: 'ロック・ファンク・歌モノ拡張',
+      options: [
+        { value: 'rock_power_riff', label: 'ロック・パワーコード刻みリフ' },
+        { value: 'funk_16th_clav', label: '16分ファンキー・スタッカートカッティング' },
+        { value: 'counter_melody', label: '高音カウンターメロディ（オブリガート）' },
+        { value: 'gospel_rich_comp', label: 'リッチ・テンションコンピング（経過和音）' },
       ],
     },
     {
@@ -113,8 +124,11 @@ export const PATTERN_PRESET_GROUPS: Record<
       options: [
         { value: 'auto', label: 'おまかせ（Auto Tacet連動）' },
         { value: 'warm_whole', label: '王道ウォーム・白玉持続' },
+        { value: 'analog_warm_drift', label: 'アナログ・ウォーム持続（中低域）' },
         { value: 'high_shimmer', label: '高音域キラキラ・シマー広がり' },
         { value: 'dark_cinematic', label: '低〜中域ダーク・シネマティック' },
+        { value: 'strings_ensemble', label: 'ストリングス・アンサンブル（厚め重奏）' },
+        { value: 'choir_open_voicing', label: 'クワイア風オープンボイシング（透明感）' },
       ],
     },
     {
@@ -124,6 +138,8 @@ export const PATTERN_PRESET_GROUPS: Record<
         { value: 'fifth_drone', label: '5度・オクターブのドローン持続' },
         { value: 'swell_half', label: '2分音符ごとのコードスウェル' },
         { value: 'octave_layer', label: 'オクターブ重ね・厚め' },
+        { value: 'sidechain_pulse', label: 'サイドチェイン風パルス（うねり）' },
+        { value: 'shimmer_arp_pad', label: 'シマー・アルペジオパッド（持続＋高音分散）' },
       ],
     },
   ],
@@ -135,6 +151,9 @@ export const PATTERN_PRESET_GROUPS: Record<
         { value: 'rap_triplet_trap', label: '3連トラップ・フロウ・休符混じり' },
         { value: 'rap_nu_metal', label: 'ミクスチャー／ニューメタル風・シンコペーション刻み' },
         { value: 'rap_monotone_chant', label: 'モノトーン・チャント・ルート中心' },
+        { value: 'rap_laidback_groove', label: 'レイドバック・後ろノリ（裏拍タメ）' },
+        { value: 'rap_double_time', label: '高速ダブルタイム（16分連打＆コントラスト）' },
+        { value: 'rap_hook_chant', label: 'アンセム・掛け声フック（2小節モチーフ反復）' },
       ],
     },
     {
@@ -142,8 +161,12 @@ export const PATTERN_PRESET_GROUPS: Record<
       options: [
         { value: 'auto', label: 'おまかせ（Energy連動）' },
         { value: 'melody_pop', label: 'キャッチー8分メロディ' },
+        { value: 'melody_soar_long', label: 'エモ・伸び重視（ロングトーン）' },
+        { value: 'melody_staccato_rock', label: 'スタッカート・ロック（歯切れ重視）' },
+        { value: 'melody_call_response', label: 'コール＆レスポンス（2小節歌＋余韻）' },
+        { value: 'melody_syncopated_hook', label: 'シンコペーション・フック（拍頭食い）' },
         { value: 'melody_ballad', label: 'バラード・ロングトーン中心' },
-        { value: 'melody_alt_minor', label: 'オルタナ／ダーク・ペンタトニック主体' },
+        { value: 'melody_alt_minor', label: 'オルタナ・ダーク（マイナーペンタ主体）' },
       ],
     },
   ],

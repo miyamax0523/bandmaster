@@ -44,6 +44,7 @@ export function App() {
     toggleSectionRiff808Octave,
     toggleSectionPart,
     changeSectionVocalMelody,
+    changeSectionVocalDensity,
     transposeSectionChords,
   } = useBandGenerator();
 
@@ -197,6 +198,7 @@ export function App() {
               onChangeSectionDrumLoop={changeSectionDrumLoop}
               onClearSectionDrumLoop={(id) => changeSectionDrumLoop(id, undefined)}
               onChangeSectionDrumDensity={changeSectionDrumDensity}
+              onChangeSectionVocalDensity={changeSectionVocalDensity}
               onChangePatternPreset={(inst, preset) =>
                 updateMember(inst, { patternPreset: preset })
               }

@@ -35,7 +35,7 @@ export function generatePadNotes(input: EngineInput): MidiNote[] {
     const minP =
       padPreset === 'high_shimmer'
         ? 64
-        : padPreset === 'dark_cinematic'
+        : padPreset === 'dark_cinematic' || padPreset === 'analog_warm_drift'
           ? 43
           : params.voicingMin;
     const maxP =
@@ -43,11 +43,16 @@ export function generatePadNotes(input: EngineInput): MidiNote[] {
         ? 88
         : padPreset === 'dark_cinematic'
           ? 64
-          : padPreset === 'octave_layer'
-            ? 84
-            : playStyle === 'Dark Ambient' && padPreset === 'auto'
-              ? Math.min(67, params.voicingMax)
-              : params.voicingMax;
+          : padPreset === 'analog_warm_drift'
+            ? 67
+            : padPreset === 'octave_layer' ||
+                padPreset === 'strings_ensemble' ||
+                padPreset === 'choir_open_voicing' ||
+                padPreset === 'shimmer_arp_pad'
+              ? 84
+              : playStyle === 'Dark Ambient' && padPreset === 'auto'
+                ? Math.min(67, params.voicingMax)
+                : params.voicingMax;
     const rootMidi = fitPitchClassToRange(
       chord.rootSemitone,
       minP,
@@ -62,9 +67,37 @@ export function generatePadNotes(input: EngineInput): MidiNote[] {
       chord.intervals[2] === 7;
 
     if (padPreset !== 'auto') {
-      if (padPreset === 'warm_whole' || padPreset === 'swell_half') {
+      if (
+        padPreset === 'warm_whole' ||
+        padPreset === 'swell_half' ||
+        padPreset === 'sidechain_pulse'
+      ) {
         for (const iv of chord.intervals) intervalSet.add(iv);
         if (chord.quality !== 'power') intervalSet.add(12);
+      } else if (padPreset === 'analog_warm_drift') {
+        for (const iv of chord.intervals) intervalSet.add(iv);
+        intervalSet.add(10);
+      } else if (padPreset === 'strings_ensemble') {
+        for (const iv of chord.intervals) {
+          intervalSet.add(iv);
+          intervalSet.add(iv + 12);
+        }
+        intervalSet.add(7);
+        intervalSet.add(19);
+        intervalSet.add(24);
+      } else if (padPreset === 'choir_open_voicing') {
+        // Wide spread open voicing: low root, 5th + 12, 3rd + 24 (transparent wide spacing)
+        const third = chord.intervals.includes(3)
+          ? 3
+          : chord.intervals.includes(4)
+            ? 4
+            : 2;
+        intervalSet.add(0);
+        intervalSet.add(19); // 5th an octave+fifth above root
+        intervalSet.add(third + 24); // 3rd two octaves above root
+      } else if (padPreset === 'shimmer_arp_pad') {
+        for (const iv of chord.intervals) intervalSet.add(iv);
+        intervalSet.add(12);
       } else if (padPreset === 'high_shimmer') {
         for (const iv of chord.intervals) intervalSet.add(iv);
         intervalSet.add(12);
@@ -146,8 +179,18 @@ export function generatePadNotes(input: EngineInput): MidiNote[] {
       )
     ).sort((a, b) => a - b);
 
-    const hitOffsets = padPreset === 'swell_half' ? [0, 960] : [0];
-    const hitSpan = padPreset === 'swell_half' ? 940 : TICKS_PER_BAR - 20;
+    const hitOffsets =
+      padPreset === 'swell_half'
+        ? [0, 960]
+        : padPreset === 'sidechain_pulse'
+          ? [120, 600, 1080, 1560]
+          : [0];
+    const hitSpan =
+      padPreset === 'swell_half'
+        ? 940
+        : padPreset === 'sidechain_pulse'
+          ? 340
+          : TICKS_PER_BAR - 20;
 
     for (const off of hitOffsets) {
       const startTick = barStart + off;
@@ -169,6 +212,30 @@ export function generatePadNotes(input: EngineInput): MidiNote[] {
           durationTicks: dur,
           channel: 2,
         });
+      }
+    }
+
+    // Extra sparse high shimmer arpeggio notes layered over sustained pad
+    if (padPreset === 'shimmer_arp_pad') {
+      const highShimmerPool = [
+        rootMidi + 24,
+        rootMidi + 19,
+        rootMidi + (chord.intervals.includes(3) ? 27 : 28),
+        rootMidi + 26,
+      ].filter((p) => p >= 64 && p <= 88);
+      if (highShimmerPool.length > 0) {
+        for (let step = 0; step < 4; step++) {
+          const startTick = barStart + step * 480 + 240;
+          if (startTick >= sectionEnd) continue;
+          const p = highShimmerPool[step % highShimmerPool.length];
+          notes.push({
+            pitch: p,
+            velocity: clampVelocity(baseVel - 16),
+            startTick,
+            durationTicks: Math.max(1, Math.min(440, sectionEnd - startTick)),
+            channel: 2,
+          });
+        }
       }
     }
   }

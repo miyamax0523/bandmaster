@@ -4,7 +4,7 @@ import {
   VOCAL_MAX_PITCH,
   VOCAL_MIN_PITCH,
 } from '../src/engines/vocalEngine';
-import { createDefaultSongConfig } from '../src/lib/bandState';
+import { createDefaultSongConfig, generateAllSections } from '../src/lib/bandState';
 import { getScalePitchClasses, snapPitchToScale } from '../src/lib/chordUtils';
 import { resolveInstrumentParams } from '../src/lib/keywordParser';
 import { PATTERN_PRESET_GROUPS } from '../src/lib/patternPresets';
@@ -192,5 +192,167 @@ describe('vocalEngine', () => {
         (n) => n.pitch >= 48 && n.pitch <= 76 && scalePcs.has(n.pitch % 12)
       )
     ).toBe(true);
+  });
+
+  it('keeps 100% of generated notes strictly inside Key/Scale across all presets and scales', () => {
+    const allPresetIds = PATTERN_PRESET_GROUPS.vocal.flatMap((g) =>
+      g.options.map((o) => o.value)
+    );
+    const keyScales: Array<{ key: 'C' | 'E' | 'F#'; scale: 'Major' | 'Minor' }> = [
+      { key: 'C', scale: 'Major' },
+      { key: 'E', scale: 'Minor' },
+      { key: 'F#', scale: 'Minor' },
+    ];
+
+    for (const { key, scale } of keyScales) {
+      const allowedPcs = new Set(getScalePitchClasses(key, scale));
+      const song = createDefaultSongConfig('rockBand');
+      song.key = key;
+      song.scale = scale;
+      const section = createSection({ bars: 4, chords: [] });
+
+      for (const preset of allPresetIds) {
+        song.members.vocal.patternPreset = preset;
+        const notes = generateVocalNotes({
+          song,
+          section,
+          sectionIndex: 0,
+          style: 'A',
+          seed: 314,
+          params: resolveInstrumentParams(song, section, 'vocal', 'A'),
+        });
+        expect(notes.length).toBeGreaterThan(0);
+        for (const n of notes) {
+          expect(allowedPcs.has(n.pitch % 12)).toBe(true);
+        }
+      }
+    }
+  });
+
+  it('prevents octave-leap jumps when transitioning from low/rap section to High Energy melody', () => {
+    const song = createDefaultSongConfig('rockBand');
+    song.members.vocal.patternPreset = 'rap_16th_push';
+    song.sections = [
+      createSection({ id: 'sec-rap', type: 'Verse', bars: 2, energy: 'Mid' }),
+      createSection({ id: 'sec-chorus', type: 'Chorus', bars: 2, energy: 'High' }),
+    ];
+
+    // Generate Rap in section 0, then transition into Chorus Melody with prevVocalAvgPitch
+    const rapState = generateAllSections(song, undefined, 777, false);
+    const rapNotes = rapState.cellsBySection['sec-rap'].vocal.takes.A;
+    const rapAvg =
+      rapNotes.reduce((sum, n) => sum + n.pitch, 0) / Math.max(1, rapNotes.length);
+
+    song.members.vocal.patternPreset = 'melody_soar_long';
+    const chorusSection = song.sections[1];
+    const chorusNotes = generateVocalNotes({
+      song,
+      section: chorusSection,
+      sectionIndex: 1,
+      style: 'A',
+      seed: 888,
+      prevVocalAvgPitch: rapAvg,
+      params: resolveInstrumentParams(song, chorusSection, 'vocal', 'A'),
+    });
+    const chorusAvg =
+      chorusNotes.reduce((sum, n) => sum + n.pitch, 0) /
+      Math.max(1, chorusNotes.length);
+
+    // Center pitch moves up smoothly without jumping +12
+    expect(chorusAvg - rapAvg).toBeLessThanOrEqual(7.5);
+    expect(chorusAvg).toBeGreaterThanOrEqual(rapAvg - 2);
+  });
+
+  it('scales note count and sustain length clearly between vocalDensity 1 and 5', () => {
+    const song = createDefaultSongConfig('rockBand');
+    song.members.vocal.patternPreset = 'melody_pop';
+
+    const secLow = createSection({ bars: 4, vocalDensity: 1 });
+    const secHigh = createSection({ bars: 4, vocalDensity: 5 });
+
+    const lowNotes = generateVocalNotes({
+      song,
+      section: secLow,
+      sectionIndex: 0,
+      style: 'A',
+      seed: 55,
+      params: resolveInstrumentParams(song, secLow, 'vocal', 'A'),
+    });
+    const highNotes = generateVocalNotes({
+      song,
+      section: secHigh,
+      sectionIndex: 0,
+      style: 'A',
+      seed: 55,
+      params: resolveInstrumentParams(song, secHigh, 'vocal', 'A'),
+    });
+
+    const avgDur = (arr: typeof lowNotes) =>
+      arr.reduce((s, n) => s + n.durationTicks, 0) / Math.max(1, arr.length);
+
+    expect(highNotes.length).toBeGreaterThan(lowNotes.length * 2);
+    expect(avgDur(lowNotes)).toBeGreaterThan(avgDur(highNotes) * 2);
+  });
+
+  it('differentiates gate times and phrasing across soar_long, staccato_rock, call_response, and new rap presets', () => {
+    const run = (preset: string, bars = 4) => {
+      const song = createDefaultSongConfig('rockBand');
+      song.members.vocal.patternPreset = preset;
+      const section = createSection({ bars, chords: ['Em', 'C', 'G', 'D'] });
+      return generateVocalNotes({
+        song,
+        section,
+        sectionIndex: 0,
+        style: 'A',
+        seed: 42,
+        params: resolveInstrumentParams(song, section, 'vocal', 'A'),
+      });
+    };
+
+    const soar = run('melody_soar_long', 4);
+    const staccato = run('melody_staccato_rock', 4);
+    // Bar 2 (index 1) of soar has sustained >= 1400 tick note (~95%+ of bar)
+    const bar2SoarMax = Math.max(
+      ...soar
+        .filter((n) => n.startTick >= TICKS_PER_BAR && n.startTick < 2 * TICKS_PER_BAR)
+        .map((n) => n.durationTicks)
+    );
+    expect(bar2SoarMax).toBeGreaterThanOrEqual(1400);
+
+    // Staccato rock stays short (<= 240 ticks, 40..55% gate)
+    const staccatoAvg =
+      staccato.reduce((s, n) => s + n.durationTicks, 0) / staccato.length;
+    expect(staccatoAvg).toBeLessThanOrEqual(230);
+    expect(Math.max(...staccato.map((n) => n.durationTicks))).toBeLessThanOrEqual(240);
+
+    // Call & response: bars 0..1 active vs bars 2..3 mostly rest
+    const callResp = run('melody_call_response', 4);
+    const callCount = callResp.filter((n) => n.startTick < 2 * TICKS_PER_BAR).length;
+    const respCount = callResp.filter((n) => n.startTick >= 2 * TICKS_PER_BAR).length;
+    expect(callCount).toBeGreaterThan(respCount * 2);
+
+    // Syncopated hook hits offbeat anticipations (e.g., 360 / 1200 / 1560)
+    const syncHook = run('melody_syncopated_hook', 2);
+    expect(syncHook.some((n) => n.startTick % 480 === 360 || n.startTick % 480 === 120)).toBe(
+      true
+    );
+
+    // New rap presets produce distinct phrasing (hook_chant repeats 2-bar motif)
+    const laidback = run('rap_laidback_groove', 2);
+    expect(laidback.some((n) => n.startTick % 480 === 240)).toBe(true);
+
+    const doubleTime = run('rap_double_time', 2);
+    expect(doubleTime.filter((n) => n.durationTicks <= 120).length).toBeGreaterThanOrEqual(
+      12
+    );
+
+    const hookChant = run('rap_hook_chant', 4);
+    const cycle1Local = hookChant
+      .filter((n) => n.startTick < 2 * TICKS_PER_BAR)
+      .map((n) => n.startTick);
+    const cycle2Local = hookChant
+      .filter((n) => n.startTick >= 2 * TICKS_PER_BAR)
+      .map((n) => n.startTick - 2 * TICKS_PER_BAR);
+    expect(cycle2Local).toEqual(cycle1Local);
   });
 });

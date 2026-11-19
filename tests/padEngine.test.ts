@@ -124,5 +124,31 @@ describe('padEngine', () => {
       fifth.filter((n) => n.startTick === 0).map((n) => n.pitch % 12)
     );
     expect([...bar0PitchClasses].sort((a, b) => a - b)).toEqual([4, 11]);
+
+    const sidechain = runPreset('sidechain_pulse');
+    const scStarts = Array.from(
+      new Set(sidechain.filter((n) => n.startTick < 1920).map((n) => n.startTick))
+    ).sort((a, b) => a - b);
+    expect(scStarts).toEqual([120, 600, 1080, 1560]);
+
+    const strings = runPreset('strings_ensemble');
+    const bar0Strings = strings.filter((n) => n.startTick === 0);
+    expect(bar0Strings.length).toBeGreaterThanOrEqual(5);
+
+    const choir = runPreset('choir_open_voicing');
+    const bar0Choir = choir
+      .filter((n) => n.startTick === 0)
+      .map((n) => n.pitch)
+      .sort((a, b) => a - b);
+    expect(bar0Choir.length).toBeGreaterThanOrEqual(3);
+    expect(bar0Choir[1] - bar0Choir[0]).toBeGreaterThanOrEqual(5);
+
+    const shimmerArp = runPreset('shimmer_arp_pad');
+    expect(shimmerArp.some((n) => n.startTick === 0)).toBe(true);
+    expect(shimmerArp.some((n) => n.startTick === 240 && n.pitch >= 64)).toBe(true);
+
+    const warmDrift = runPreset('analog_warm_drift');
+    expect(warmDrift.length).toBeGreaterThan(0);
+    expect(warmDrift.every((n) => n.pitch >= 43 && n.pitch <= 67)).toBe(true);
   });
 });

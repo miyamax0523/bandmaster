@@ -1,5 +1,9 @@
 import { TICKS_PER_BAR, type MidiNote } from '../types/song';
-import { fitPitchClassToRange, resolveChordForBar } from '../lib/chordUtils';
+import {
+  fitPitchClassToRange,
+  getScalePitchClasses,
+  resolveChordForBar,
+} from '../lib/chordUtils';
 import { createSeededRng } from '../lib/random';
 import type { EngineInput, ResolvedInstrumentParams } from './types';
 
@@ -78,9 +82,15 @@ export function generateKeyboardNotes(input: EngineInput): MidiNote[] {
       params,
       kbPreset === 'dark_low_riff'
         ? { minPitch: 48, maxPitch: 67 }
-        : kbPreset === 'floating_tension'
-          ? { forceFloating: true }
-          : undefined
+        : kbPreset === 'rock_power_riff'
+          ? { minPitch: 48, maxPitch: 67 }
+          : kbPreset === 'floating_tension' ||
+              kbPreset === 'emo_arp_cascade' ||
+              kbPreset === 'gospel_rich_comp'
+            ? { forceFloating: true }
+            : kbPreset === 'counter_melody'
+              ? { minPitch: 67, maxPitch: 86 }
+              : undefined
     );
 
     const pushChordHit = (
@@ -194,6 +204,80 @@ export function generateKeyboardNotes(input: EngineInput): MidiNote[] {
         const riffSteps = [0, 360, 720, 1200, 1440];
         for (let i = 0; i < riffSteps.length; i++) {
           pushSingleNote(barStart + riffSteps[i], voicing[i % voicing.length], 240, 2);
+        }
+      } else if (kbPreset === 'rock_power_riff') {
+        const rootLow = fitPitchClassToRange(chord.rootSemitone, 48, 59);
+        const powerPair = [rootLow, rootLow + 7];
+        const riffSteps = [0, 240, 480, 840, 960, 1200, 1440, 1680];
+        for (let i = 0; i < riffSteps.length; i++) {
+          const t = barStart + riffSteps[i];
+          const dur = riffSteps[i] === 480 || riffSteps[i] === 1440 ? 200 : 140;
+          for (const p of powerPair) {
+            pushSingleNote(t, p, dur, riffSteps[i] % 480 === 0 ? 6 : -4);
+          }
+        }
+      } else if (kbPreset === 'emo_arp_cascade') {
+        const cascadeOrder =
+          voicing.length > 2
+            ? [...voicing, ...voicing.slice(0, -1).reverse()]
+            : voicing;
+        for (let s = 0; s < 8; s++) {
+          pushSingleNote(
+            barStart + s * 240,
+            cascadeOrder[s % cascadeOrder.length],
+            220,
+            s % 2 === 0 ? 2 : -5
+          );
+        }
+      } else if (kbPreset === 'funk_16th_clav') {
+        const clavSteps = [0, 120, 360, 480, 720, 840, 1080, 1200, 1440, 1680];
+        for (let i = 0; i < clavSteps.length; i++) {
+          pushChordHit(
+            barStart + clavSteps[i],
+            75,
+            clavSteps[i] % 480 === 0 ? 6 : -6
+          );
+        }
+      } else if (kbPreset === 'counter_melody') {
+        const scalePcs = new Set(getScalePitchClasses(song.key, song.scale));
+        const highChordTones = voicing.filter((p) => p >= 67 && p <= 86);
+        const melodicSteps = [0, 480, 720, 960, 1440];
+        for (let i = 0; i < melodicSteps.length; i++) {
+          const base =
+            highChordTones[i % Math.max(1, highChordTones.length)] ?? 72;
+          let target = base + (i % 2 === 1 ? 2 : 0);
+          while (!scalePcs.has(target % 12) && target > 67) target--;
+          pushSingleNote(
+            barStart + melodicSteps[i],
+            Math.min(86, Math.max(67, target)),
+            i === melodicSteps.length - 1 ? 380 : 210,
+            4
+          );
+        }
+      } else if (kbPreset === 'synth_pluck_arp') {
+        for (let s = 0; s < 16; s++) {
+          const p = voicing[(s * 2) % voicing.length];
+          pushSingleNote(barStart + s * 120, p, 65, s % 4 === 0 ? 6 : -6);
+        }
+      } else if (kbPreset === 'gospel_rich_comp') {
+        for (const h of [0, 360, 960, 1320]) {
+          pushChordHit(barStart + h, 260, h === 0 ? 4 : -2);
+        }
+        // Passing chord chromatic/diatonic anticipation on beat 4
+        const nextChord = resolveChordForBar(
+          section.chords,
+          bar + 1,
+          song.key,
+          song.scale
+        );
+        const approachVoicing = buildKeyboardVoicing(
+          nextChord.rootSemitone + 11,
+          [0, 3, 7, 10],
+          params,
+          { forceFloating: true }
+        );
+        for (const p of approachVoicing) {
+          pushSingleNote(barStart + 1680, p, 200, -4);
         }
       }
       continue;

@@ -144,6 +144,7 @@ export interface Section {
   kickMode: KickMode;
   hatDensity?: DensityLevel; // 1..5 (default 3)
   kickDensity?: DensityLevel; // 1..5 (default 3)
+  vocalDensity?: DensityLevel; // 1..5 (default 3)
   chords: string[];
   enabledParts?: Record<InstrumentType, boolean>;
   uploadedDrumLoop?: DrumLoopData;

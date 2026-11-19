@@ -149,7 +149,8 @@ export function generateCellTakes(
   sectionIndex: number,
   instrument: InstrumentType,
   seeds: Record<TakeStyle, number>,
-  drumNotesForBass: MidiNote[] = []
+  drumNotesForBass: MidiNote[] = [],
+  prevVocalAvgPitch?: number
 ): Record<TakeStyle, MidiNote[]> {
   const takes = {} as Record<TakeStyle, MidiNote[]>;
   for (const style of TAKES) {
@@ -162,6 +163,7 @@ export function generateCellTakes(
       seed: seeds[style],
       params,
       drumNotes: instrument === 'bass' ? drumNotesForBass : undefined,
+      prevVocalAvgPitch: instrument === 'vocal' ? prevVocalAvgPitch : undefined,
     };
     if (instrument === 'drums') {
       takes[style] = generateDrumNotes(input);
@@ -187,9 +189,19 @@ export function getSelectedDrumNotes(
   return drumCell.takes[drumCell.selectedTake] ?? [];
 }
 
+export function getAverageVocalPitch(cells?: SectionBandCells): number | undefined {
+  const vocalCell = cells?.vocal;
+  if (!vocalCell) return undefined;
+  const take = vocalCell.selectedTake === 'OFF' ? 'A' : vocalCell.selectedTake;
+  const notes = vocalCell.takes[take];
+  if (!notes || notes.length === 0) return undefined;
+  const sum = notes.reduce((acc, n) => acc + n.pitch, 0);
+  return sum / notes.length;
+}
+
 /**
  * Generates or regenerates a single section's cells in strict order:
- * drums -> bass -> keyboard -> pad
+ * drums -> bass -> keyboard -> pad -> vocal
  */
 export function generateSectionCells(
   song: SongConfig,
@@ -197,7 +209,11 @@ export function generateSectionCells(
   sectionIndex: number,
   existing?: SectionBandCells,
   baseSeed = 1000 + sectionIndex * 97,
-  options?: { newSeeds?: boolean; instruments?: InstrumentType[] }
+  options?: {
+    newSeeds?: boolean;
+    instruments?: InstrumentType[];
+    prevVocalAvgPitch?: number;
+  }
 ): SectionBandCells {
   const targets = new Set(options?.instruments ?? GENERATION_ORDER);
   const newSeeds = options?.newSeeds ?? false;
@@ -259,7 +275,8 @@ export function generateSectionCells(
       sectionIndex,
       inst,
       result[inst].seeds,
-      drumNotes
+      drumNotes,
+      inst === 'vocal' ? options?.prevVocalAvgPitch : undefined
     );
     result[inst].engineVersion = CURRENT_ENGINE_VERSION;
   }
@@ -276,13 +293,17 @@ export function generateAllSections(
   const cellsBySection: Record<string, SectionBandCells> = {};
   for (let i = 0; i < song.sections.length; i++) {
     const sec = song.sections[i];
+    const prevVocalAvgPitch =
+      i > 0
+        ? getAverageVocalPitch(cellsBySection[song.sections[i - 1].id])
+        : undefined;
     cellsBySection[sec.id] = generateSectionCells(
       song,
       sec,
       i,
       existingState?.cellsBySection[sec.id],
       baseSeed + i * 131,
-      { newSeeds }
+      { newSeeds, prevVocalAvgPitch }
     );
   }
   return { cellsBySection };
@@ -315,13 +336,18 @@ export function regenerateInstrumentCell(
     targets.push('bass');
   }
 
+  const prevVocalAvgPitch =
+    secIdx > 0
+      ? getAverageVocalPitch(nextState.cellsBySection[song.sections[secIdx - 1].id])
+      : undefined;
+
   nextState.cellsBySection[sectionId] = generateSectionCells(
     song,
     section,
     secIdx,
     existingSec,
     seed,
-    { newSeeds: true, instruments: targets }
+    { newSeeds: true, instruments: targets, prevVocalAvgPitch }
   );
   return nextState;
 }
@@ -521,6 +547,42 @@ export function updateSectionDrumDensity(
       existingSec,
       6000 + secIdx,
       { newSeeds: false, instruments: targets }
+    );
+  }
+
+  return { song: nextSong, bandState: nextState };
+}
+
+export function updateSectionVocalDensity(
+  song: SongConfig,
+  bandState: BandState,
+  sectionId: string,
+  vocalDensity: DensityLevel
+): { song: SongConfig; bandState: BandState } {
+  const nextSong = cloneSongConfig(song);
+  const secIdx = nextSong.sections.findIndex((s) => s.id === sectionId);
+  if (secIdx === -1) return { song, bandState };
+
+  const sec = nextSong.sections[secIdx];
+  sec.vocalDensity = vocalDensity;
+
+  const nextState = cloneBandState(bandState);
+  const existingSec = nextState.cellsBySection[sectionId];
+
+  if (existingSec && !existingSec.vocal?.locked) {
+    const prevVocalAvgPitch =
+      secIdx > 0
+        ? getAverageVocalPitch(
+            nextState.cellsBySection[nextSong.sections[secIdx - 1].id]
+          )
+        : undefined;
+    nextState.cellsBySection[sectionId] = generateSectionCells(
+      nextSong,
+      sec,
+      secIdx,
+      existingSec,
+      6500 + secIdx,
+      { newSeeds: false, instruments: ['vocal'], prevVocalAvgPitch }
     );
   }
 
@@ -866,6 +928,7 @@ export function createDefaultSongConfig(
         kickMode: 'acoustic',
         hatDensity: 3,
         kickDensity: 3,
+        vocalDensity: 3,
         enabledParts: createDefaultEnabledParts(),
         chords: [...defaultChords],
       },
@@ -878,6 +941,7 @@ export function createDefaultSongConfig(
         kickMode: 'acoustic',
         hatDensity: 3,
         kickDensity: 3,
+        vocalDensity: 3,
         enabledParts: createDefaultEnabledParts(),
         chords: [...defaultChords],
       },
@@ -890,6 +954,7 @@ export function createDefaultSongConfig(
         kickMode: 'acoustic',
         hatDensity: 3,
         kickDensity: 3,
+        vocalDensity: 3,
         enabledParts: createDefaultEnabledParts(),
         chords: ['Am', 'G', 'C', 'D'],
       },
@@ -902,6 +967,7 @@ export function createDefaultSongConfig(
         kickMode: 'acoustic',
         hatDensity: 3,
         kickDensity: 3,
+        vocalDensity: 3,
         enabledParts: createDefaultEnabledParts(),
         chords: ['C', 'D', 'Em', 'G'],
       },
@@ -1103,6 +1169,7 @@ export function applyArrangementPresetToSong(
     ...s,
     hatDensity: s.hatDensity ?? 3,
     kickDensity: s.kickDensity ?? 3,
+    vocalDensity: s.vocalDensity ?? 3,
     enabledParts: s.enabledParts ?? createDefaultEnabledParts(),
   }));
 

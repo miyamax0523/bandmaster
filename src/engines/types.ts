@@ -46,4 +46,5 @@ export interface EngineInput {
   seed: number;
   params: ResolvedInstrumentParams;
   drumNotes?: MidiNote[];
+  prevVocalAvgPitch?: number;
 }
