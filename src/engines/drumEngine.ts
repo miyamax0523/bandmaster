@@ -273,6 +273,7 @@ export function generateDrumNotes(input: EngineInput): MidiNote[] {
     let buildUpMode = false;
     let softChill = false;
     let anticipationMode = false;
+    let discoBoogieMode = false;
 
     switch (drumPreset) {
       case 'straight_8':
@@ -351,6 +352,11 @@ export function generateDrumNotes(input: EngineInput): MidiNote[] {
         effKickPattern = 'standard';
         effSnareHalfTime = false;
         anticipationMode = true;
+        break;
+      case 'disco_boogie_bounce':
+        effKickPattern = 'fourOnFloor';
+        effSnareHalfTime = false;
+        discoBoogieMode = true;
         break;
       case 'auto':
       default:
@@ -441,6 +447,70 @@ export function generateDrumNotes(input: EngineInput): MidiNote[] {
             durationTicks: 90,
             channel: 9,
           });
+        }
+        continue;
+      }
+
+      if (discoBoogieMode) {
+        // Cheryl Lynn / Disco-Boogie bounce:
+        // Strong 4-on-the-floor kick, tight beats 2/4 snare, offbeat Open HH (46), bouncy 16th Closed HH
+        const discoKicks =
+          kickDensity >= 4
+            ? [0, 480, 960, 1440, 1680]
+            : [0, 480, 960, 1440];
+        for (const off of discoKicks) {
+          notes.push({
+            pitch: GM_DRUM.KICK,
+            velocity: off % 480 === 0 ? rng.nextInt(108, 116) : rng.nextInt(92, 102),
+            startTick: barStart + off,
+            durationTicks: 120,
+            channel: 9,
+            noTimingJitter: off % 480 === 0,
+          });
+        }
+
+        for (const off of [480, 1440]) {
+          notes.push({
+            pitch: GM_DRUM.SNARE,
+            velocity: rng.nextInt(106, 118),
+            startTick: barStart + off,
+            durationTicks: 120,
+            channel: 9,
+            noTimingJitter: true,
+          });
+        }
+
+        // Open Hi-Hat (46) on every 8th offbeat (240, 720, 1200, 1680)
+        for (const off of [240, 720, 1200, 1680]) {
+          notes.push({
+            pitch: GM_DRUM.OPEN_HH,
+            velocity: rng.nextInt(94, 106),
+            startTick: barStart + off,
+            durationTicks: 150,
+            channel: 9,
+            isAnchor: bar < section.bars - 1, // protect bounce open hats on body bars
+            noTimingJitter: true,
+          });
+        }
+
+        // Remaining 16th closed hi-hats with subtle +16 tick bounce on 16th upbeats
+        if (hatDensity >= 2) {
+          const closedSteps =
+            hatDensity >= 3
+              ? [0, 120, 360, 480, 600, 840, 960, 1080, 1320, 1440, 1560, 1800]
+              : [0, 480, 960, 1440];
+          for (const off of closedSteps) {
+            const is16thOffbeat = off % 240 === 120;
+            const bouncedTick = barStart + off + (is16thOffbeat ? 16 : 0);
+            notes.push({
+              pitch: GM_DRUM.CLOSED_HH,
+              velocity: off % 480 === 0 ? rng.nextInt(82, 92) : rng.nextInt(60, 74),
+              startTick: bouncedTick,
+              durationTicks: 70,
+              channel: 9,
+              noTimingJitter: true,
+            });
+          }
         }
         continue;
       }

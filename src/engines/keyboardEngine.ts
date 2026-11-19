@@ -579,6 +579,34 @@ export function generateKeyboardNotes(input: EngineInput): MidiNote[] {
             i % motif.length === 0 ? 6 : -4
           );
         }
+      } else if (kbPreset === 'disco_boogie_bounce') {
+        // Call-and-response funky chord chops ("Chaka-Cha!") in C4..E5 (60..76)
+        // with 7th/9th/13th voicing, leaving beats 1 (0) & 3 (960) clear for Bass low root!
+        const funkyVoicing = buildKeyboardVoicing(
+          chord.rootSemitone,
+          [...chord.intervals, 10, 14, 21],
+          params,
+          { minPitch: 60, maxPitch: 76, forceFloating: true }
+        );
+        const chopPool = funkyVoicing.length > 0 ? funkyVoicing : voicing;
+        // Beats 2 & 4 pocket response chops (never on 0 or 960), scaled by keyboardDensity 1..7
+        const chopSteps =
+          keyboardDensity <= 2
+            ? [480, 1440]
+            : keyboardDensity === 3
+              ? [480, 600, 1440, 1560]
+              : keyboardDensity === 4
+                ? [480, 600, 720, 1320, 1440]
+                : keyboardDensity === 5
+                  ? [360, 480, 600, 840, 1320, 1440, 1680]
+                  : [240, 360, 480, 600, 840, 1200, 1320, 1440, 1560, 1680];
+        const chopGate = 50; // ~42% of 120-tick 16th step (short crisp staccato cutting)
+        for (const off of chopSteps) {
+          const velOff = off === 480 || off === 1440 ? 8 : -2;
+          for (const p of chopPool) {
+            pushSingleNote(barStart + off, p, chopGate, velOff);
+          }
+        }
       } else if (kbPreset === 'jrock_anticipation') {
         // Current bar chord hits (omitting beat 1 on bar > 0 to let the 1680 anticipation ring across)
         const bodyHits =

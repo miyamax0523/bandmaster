@@ -40,6 +40,7 @@ export const PATTERN_PRESET_GROUPS: Record<
         { value: 'trap_active', label: 'アグレッシブTrap（16分＋32分ロール）' },
         { value: 'four_on_floor', label: '4つ打ちダンス／エレクトロ' },
         { value: 'bounce_shuffle', label: '跳ね系バウンス・シャッフル' },
+        { value: 'disco_boogie_bounce', label: '【跳ねるディスコ】ブギー・オクターブ＆呼応ファンク' },
       ],
     },
     {
@@ -68,6 +69,7 @@ export const PATTERN_PRESET_GROUPS: Record<
         { value: 'melodic_walk', label: '5度・経過音アプローチ多め' },
         { value: 'syncopated_groove', label: '16分シンコペーション・うねり' },
         { value: 'slap_funk', label: 'ファンキー・スラップ風オクターブ' },
+        { value: 'disco_boogie_bounce', label: '【跳ねるディスコ】ブギー・オクターブ＆呼応ファンク' },
       ],
     },
     {
@@ -109,6 +111,7 @@ export const PATTERN_PRESET_GROUPS: Record<
         { value: 'funk_16th_clav', label: '【裏ノリ・歯切れ】16分ファンキー・カッティング' },
         { value: 'counter_melody', label: '【サビ裏メロ】高音オブリガート・カウンター' },
         { value: 'gospel_rich_comp', label: '【おしゃれ・厚】テンション・経過和音コンピング' },
+        { value: 'disco_boogie_bounce', label: '【跳ねるディスコ】ブギー・オクターブ＆呼応ファンク' },
       ],
     },
     {

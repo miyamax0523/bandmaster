@@ -332,6 +332,45 @@ export function generateBassNotes(input: EngineInput): MidiNote[] {
         }
         // Anticipate next bar's root at 1680 and tie across barEnd (duration 460 -> 2140)
         pushBassNote(1680, nextRoot, 460, 10);
+      } else if (bassPreset === 'disco_boogie_bounce') {
+        // Got To Be Real style boogie octave riff:
+        // Low root -> +12 octave leaps, short staccato (45-60% gate), 16th syncopations,
+        // leaving beats 2 & 4 pocket open for Keyboard response, + b7 -> root bar-end turnaround
+        const b7Pitch =
+          barHeadPitch - 2 >= params.rangeMin
+            ? barHeadPitch - 2
+            : barHeadPitch + 10 <= params.rangeMax
+              ? barHeadPitch + 10
+              : fitPitchClassToRange(
+                  (chord.rootSemitone + 10) % 12,
+                  params.rangeMin,
+                  params.rangeMax
+                );
+        const boogieRiff: Array<[number, number, number, number]> =
+          style === 'B'
+            ? [
+                [0, barHeadPitch, 120, 10],
+                [240, octPitch, 110, 4],
+                [720, octPitch, 110, 4],
+                [960, barHeadPitch, 120, 8],
+                [1200, octPitch, 110, 4],
+                [1560, b7Pitch, 110, 0],
+                [1680, barHeadPitch, 110, 4],
+              ]
+            : [
+                [0, barHeadPitch, 120, 10],
+                [240, octPitch, 110, 4],
+                [600, octPitch, 105, 2], // 16th bounce anticipation leaving beat 2 chop open
+                [840, barHeadPitch, 70, -2], // crisp 16th ghost pickup
+                [960, barHeadPitch, 120, 8],
+                [1200, octPitch, 110, 4],
+                [1560, b7Pitch, 105, 0], // b7 -> root approach
+                [1680, octPitch, 105, 4],
+                [1800, fifthPitch, 68, -2], // 16th turnaround into next bar root
+              ];
+        for (const [off, p, dur, velOff] of boogieRiff) {
+          pushBassNote(off, p, dur, velOff);
+        }
       }
       continue;
     }
