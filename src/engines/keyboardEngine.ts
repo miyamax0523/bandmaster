@@ -385,6 +385,44 @@ export function generateKeyboardNotes(input: EngineInput): MidiNote[] {
         for (const p of approachVoicing) {
           pushSingleNote(barStart + 1680, p, 200, -4);
         }
+      } else if (kbPreset === 'jrock_anticipation') {
+        // Current bar chord hits (omitting beat 1 on bar > 0 to let the 1680 anticipation ring across)
+        const bodyHits =
+          bar === 0
+            ? keyboardDensity <= 2
+              ? [0, 960]
+              : keyboardDensity >= 4
+                ? [0, 240, 480, 720, 960, 1200, 1440]
+                : [0, 480, 960, 1440]
+            : keyboardDensity <= 2
+              ? [960]
+              : keyboardDensity >= 4
+                ? [240, 480, 720, 960, 1200, 1440]
+                : [480, 960, 1440];
+        const bodyDur = keyboardDensity <= 2 ? 620 : keyboardDensity >= 4 ? 200 : 380;
+        for (const h of bodyHits) {
+          pushChordHit(barStart + h, bodyDur, h === 0 ? 4 : 0);
+        }
+
+        // Beat 4-and (1680): strike next bar's chord voicing without jitter and sustain past barline
+        const nextChord = resolveChordForBar(
+          section.chords,
+          bar + 1,
+          song.key,
+          song.scale
+        );
+        const nextVoicing = buildKeyboardVoicing(
+          nextChord.rootSemitone,
+          nextChord.intervals,
+          params
+        );
+        const antTick = barStart + 1680;
+        if (antTick < sectionEnd) {
+          const antDur = Math.max(1, Math.min(680, sectionEnd - antTick));
+          for (const p of nextVoicing) {
+            pushSingleNote(antTick, p, antDur, 8);
+          }
+        }
       }
       continue;
     }

@@ -179,6 +179,65 @@ export function generatePadNotes(input: EngineInput): MidiNote[] {
       )
     ).sort((a, b) => a - b);
 
+    if (padPreset === 'jrock_anticipation') {
+      const buildPadPitchesForChord = (targetChord: typeof chord): number[] => {
+        const targetRoot = fitPitchClassToRange(
+          targetChord.rootSemitone,
+          minP,
+          Math.min(minP + 11, maxP)
+        );
+        const set = new Set<number>(targetChord.intervals);
+        if (targetChord.quality !== 'power') set.add(12);
+        return Array.from(
+          new Set(
+            Array.from(set)
+              .map((iv) => targetRoot + iv)
+              .filter((p) => p >= minP && p <= maxP)
+          )
+        ).sort((a, b) => a - b);
+      };
+
+      // Bar 0 starts chord[0] cleanly and releases right before beat 4-and (1680) to avoid chord clash
+      if (bar === 0) {
+        const bar0Pitches = buildPadPitchesForChord(chord);
+        const bar0Dur = Math.max(1, Math.min(1660, sectionEnd));
+        for (const p of bar0Pitches) {
+          notes.push({
+            pitch: p,
+            velocity: clampVelocity(Math.min(params.velocityCap, baseVel + params.velocityBoost)),
+            startTick: 0,
+            durationTicks: bar0Dur,
+            channel: 2,
+          });
+        }
+      }
+
+      // At tick 1680 of each bar, anticipate next bar's chord and sustain straight across barline (1900 ticks -> ends at +1660 of next bar)
+      const antTick = barStart + 1680;
+      if (antTick < sectionEnd) {
+        const nextChord = resolveChordForBar(
+          section.chords,
+          bar + 1,
+          song.key,
+          song.scale
+        );
+        const nextPitches = buildPadPitchesForChord(nextChord);
+        const antDur = Math.max(1, Math.min(1900, sectionEnd - antTick));
+        for (const p of nextPitches) {
+          notes.push({
+            pitch: p,
+            velocity: clampVelocity(
+              Math.min(params.velocityCap, baseVel + 4 + params.velocityBoost)
+            ),
+            startTick: antTick,
+            durationTicks: antDur,
+            channel: 2,
+          });
+        }
+      }
+      continue;
+    }
+
     const hitOffsets =
       padPreset === 'swell_half'
         ? [0, 960]

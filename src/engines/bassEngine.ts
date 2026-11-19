@@ -315,6 +315,23 @@ export function generateBassNotes(input: EngineInput): MidiNote[] {
           const nextOff = i + 1 < uniqueSubs.length ? uniqueSubs[i + 1] : TICKS_PER_BAR;
           pushBassNote(off, barHeadPitch, Math.max(240, nextOff - off - 20), 10);
         }
+      } else if (bassPreset === 'jrock_anticipation') {
+        // Driving 8th root/octave groove that anticipates nextChord root on beat 4-and (1680)
+        // and ties across the barline (omitting re-attack at beat 1 of bars > 0)
+        const bodySteps =
+          bar === 0
+            ? [0, 240, 480, 720, 960, 1200, 1440]
+            : [240, 480, 720, 960, 1200, 1440];
+        for (let i = 0; i < bodySteps.length; i++) {
+          const off = bodySteps[i];
+          const p =
+            style !== 'B' && off % 480 === 240 && off !== 1440
+              ? octPitch
+              : barHeadPitch;
+          pushBassNote(off, p, 210, off % 480 === 0 ? 8 : 0);
+        }
+        // Anticipate next bar's root at 1680 and tie across barEnd (duration 460 -> 2140)
+        pushBassNote(1680, nextRoot, 460, 10);
       }
       continue;
     }

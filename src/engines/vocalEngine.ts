@@ -609,6 +609,57 @@ export function generateVocalNotes(input: EngineInput): MidiNote[] {
       return nearestScalePitch(prevPitch + step, scalePcs, bandMin, bandMax);
     };
 
+    // 0. jrock_anticipation: beat 4-and (1680) anticipation into next chord & tie across barline
+    if (preset === 'jrock_anticipation') {
+      const bodyOffsets =
+        bar === 0
+          ? vocalDensity <= 2
+            ? [0, 960]
+            : vocalDensity >= 4
+              ? [0, 240, 480, 720, 960, 1200]
+              : [0, 480, 960]
+          : vocalDensity <= 2
+            ? [720, 1200]
+            : vocalDensity >= 4
+              ? [480, 720, 960, 1200, 1440]
+              : [480, 960, 1200];
+
+      for (let i = 0; i < bodyOffsets.length; i++) {
+        const off = bodyOffsets[i];
+        const pitch = chooseMelodyPitch(off % 480 === 0, false);
+        prevPitch = pitch;
+        notes.push({
+          pitch,
+          velocity: clampVelocity(baseVel + (off === 0 ? 6 : 0) + rng.nextInt(-3, 3)),
+          startTick: barStart + off,
+          durationTicks: vocalDensity >= 4 ? 200 : 380,
+          channel: TRACK_CHANNELS.vocal,
+        });
+      }
+
+      // Anticipate next chord's chord tone (strictly inside Key/Scale) at barStart + 1680 and tie across barline
+      const antTick = barStart + 1680;
+      if (antTick < sectionEnd) {
+        const nextChord = resolveChordForBar(
+          section.chords,
+          bar + 1,
+          song.key,
+          song.scale
+        );
+        const nextChordTones = getScaleChordTones(nextChord, scalePcs, bandMin, bandMax);
+        const antPitch = pickClosestFromList(prevPitch + 2, nextChordTones);
+        prevPitch = antPitch;
+        notes.push({
+          pitch: antPitch,
+          velocity: clampVelocity(baseVel + 8),
+          startTick: antTick,
+          durationTicks: 700,
+          channel: TRACK_CHANNELS.vocal,
+        });
+      }
+      continue;
+    }
+
     // 1. melody_call_response: 4-bar cycle -> bars 0..1 sing, bars 2..3 sparse/rest
     if (preset === 'melody_call_response') {
       const cyclePos = bar % 4;

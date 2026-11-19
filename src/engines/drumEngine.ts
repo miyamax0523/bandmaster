@@ -272,6 +272,7 @@ export function generateDrumNotes(input: EngineInput): MidiNote[] {
     let bounceTriplet = false;
     let buildUpMode = false;
     let softChill = false;
+    let anticipationMode = false;
 
     switch (drumPreset) {
       case 'straight_8':
@@ -346,6 +347,11 @@ export function generateDrumNotes(input: EngineInput): MidiNote[] {
         snarePitch = GM_DRUM.RIMSHOT;
         softChill = true;
         break;
+      case 'jrock_anticipation':
+        effKickPattern = 'standard';
+        effSnareHalfTime = false;
+        anticipationMode = true;
+        break;
       case 'auto':
       default:
         break;
@@ -360,6 +366,84 @@ export function generateDrumNotes(input: EngineInput): MidiNote[] {
 
     for (let bar = 0; bar < section.bars; bar++) {
       const barStart = bar * TICKS_PER_BAR;
+
+      if (anticipationMode) {
+        // J-Rock bar-crossing anticipation: push on beat 4-and (1680) with Kick+Crash+OpenHH,
+        // and omit the next bar's downbeat Kick (tick 0 on bar > 0) for forward drive.
+        const bodyKicks =
+          bar === 0
+            ? kickDensity <= 2
+              ? [0, 720]
+              : [0, 720, 1200]
+            : kickDensity <= 2
+              ? [720]
+              : [720, 1200];
+        for (const off of bodyKicks) {
+          notes.push({
+            pitch: GM_DRUM.KICK,
+            velocity: off === 0 ? 112 : rng.nextInt(98, 108),
+            startTick: barStart + off,
+            durationTicks: 120,
+            channel: 9,
+            noTimingJitter: off === 0,
+          });
+        }
+
+        // Beat 4-and (1680) band-unison anticipation accent
+        notes.push({
+          pitch: GM_DRUM.KICK,
+          velocity: 114,
+          startTick: barStart + 1680,
+          durationTicks: 120,
+          channel: 9,
+          isAnchor: true,
+          noTimingJitter: true,
+        });
+        notes.push({
+          pitch: GM_DRUM.CRASH,
+          velocity: 108,
+          startTick: barStart + 1680,
+          durationTicks: 440,
+          channel: 9,
+          isAnchor: true,
+          noTimingJitter: true,
+        });
+        notes.push({
+          pitch: GM_DRUM.OPEN_HH,
+          velocity: 96,
+          startTick: barStart + 1680,
+          durationTicks: 220,
+          channel: 9,
+          isAnchor: true,
+          noTimingJitter: true,
+        });
+
+        // Heavy beats 2 & 4 snare
+        for (const off of [480, 1440]) {
+          notes.push({
+            pitch: GM_DRUM.SNARE,
+            velocity: rng.nextInt(106, 118),
+            startTick: barStart + off,
+            durationTicks: 120,
+            channel: 9,
+          });
+        }
+
+        // Tight 8th hi-hats (skipping beat-4-and 1680 crash hit and bar>0 beat-1 tie)
+        const hatStep = hatDensity >= 5 ? 120 : 240;
+        for (let off = 0; off < TICKS_PER_BAR; off += hatStep) {
+          if (off === 1680 || (bar > 0 && off === 0)) continue;
+          if (hatDensity === 1 && off % 480 !== 0) continue;
+          notes.push({
+            pitch: hatPitch,
+            velocity: off % 480 === 0 ? rng.nextInt(86, 98) : rng.nextInt(70, 82),
+            startTick: barStart + off,
+            durationTicks: 90,
+            channel: 9,
+          });
+        }
+        continue;
+      }
 
       if (buildUpMode) {
         // Progressive crescendo buildup across bars
@@ -875,8 +959,12 @@ export function generateDrumNotes(input: EngineInput): MidiNote[] {
       applyFillInRange(bar3Start + 1440, bar3Start + 1920, 4);
     }
 
-    // Final bar fill when section.type !== 'Outro' && section.bars >= 2
-    if (section.type !== 'Outro' && section.bars >= 2) {
+    // Final bar fill when section.type !== 'Outro' && section.bars >= 2 (skip in anticipation mode to preserve bar-crossing syncopation)
+    if (
+      section.type !== 'Outro' &&
+      section.bars >= 2 &&
+      drumPreset !== 'jrock_anticipation'
+    ) {
       const finalBarStart = (section.bars - 1) * TICKS_PER_BAR;
       const fillOffset = style === 'A' ? 960 : style === 'B' ? 1440 : 480;
       const fillCount = rng.nextInt(
