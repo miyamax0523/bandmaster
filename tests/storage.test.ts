@@ -159,6 +159,7 @@ describe('storage', () => {
       const vCell = loaded!.bandState.cellsBySection[sec.id].vocal;
       expect(vCell).toBeDefined();
       expect(vCell.takes.A.length).toBeGreaterThan(0);
+      expect(sec.keyboardDensity).toBe(3);
       expect(sec.vocalDensity).toBe(3);
     }
   });

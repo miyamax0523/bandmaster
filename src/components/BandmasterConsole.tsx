@@ -29,6 +29,10 @@ interface BandmasterConsoleProps {
     sectionId: string,
     patch: { hatDensity?: DensityLevel; kickDensity?: DensityLevel }
   ) => void;
+  onChangeSectionKeyboardDensity: (
+    sectionId: string,
+    keyboardDensity: DensityLevel
+  ) => void;
   onChangeSectionVocalDensity: (
     sectionId: string,
     vocalDensity: DensityLevel
@@ -69,6 +73,7 @@ export function BandmasterConsole({
   onChangeSectionDrumLoop,
   onClearSectionDrumLoop,
   onChangeSectionDrumDensity,
+  onChangeSectionKeyboardDensity,
   onChangeSectionVocalDensity,
   onChangePatternPreset,
   onToggleSectionPart,
@@ -394,6 +399,32 @@ export function BandmasterConsole({
                               onChangeSectionDrumDensity(section.id, {
                                 kickDensity: lvl,
                               })
+                            }
+                          >
+                            {lvl}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {key === 'keyboard' && (
+                <div className="density-controls">
+                  <div className="density-row">
+                    <span className="density-label">音数</span>
+                    <div className="density-segments" role="group" aria-label="Keyboard 音数">
+                      {DENSITY_LEVELS.map((lvl) => {
+                        const active = (section.keyboardDensity ?? 3) === lvl;
+                        return (
+                          <button
+                            key={lvl}
+                            type="button"
+                            className={`density-btn ${active ? 'active' : ''}`}
+                            disabled={cell.locked || !effectivelyEnabled}
+                            onClick={() =>
+                              onChangeSectionKeyboardDensity(section.id, lvl)
                             }
                           >
                             {lvl}

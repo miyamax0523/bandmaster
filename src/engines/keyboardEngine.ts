@@ -64,6 +64,7 @@ export function generateKeyboardNotes(input: EngineInput): MidiNote[] {
   const sectionEnd = section.bars * TICKS_PER_BAR;
   const playStyle = song.members.keyboard.keyboardStyle ?? 'Rhythm Backing';
   const kbPreset = song.members.keyboard.patternPreset ?? 'auto';
+  const keyboardDensity = input.keyboardDensity ?? section.keyboardDensity ?? 3;
   const baseVel = section.energy === 'High' ? 92 : section.energy === 'Low' ? 68 : 82;
 
   const notes: MidiNote[] = [];
@@ -149,51 +150,136 @@ export function generateKeyboardNotes(input: EngineInput): MidiNote[] {
     };
 
     if (kbPreset !== 'auto' && voicing.length > 0) {
+      const isArpPreset =
+        kbPreset === 'arp_up' ||
+        kbPreset === 'arp_down_up' ||
+        kbPreset === 'arp_16th' ||
+        kbPreset === 'broken_chord' ||
+        kbPreset === 'emo_arp_cascade' ||
+        kbPreset === 'synth_pluck_arp';
+
+      if (isArpPreset) {
+        let arpOrder: number[] = voicing;
+        if (kbPreset === 'arp_down_up' && voicing.length > 1) {
+          arpOrder = [...voicing, ...voicing.slice(1, -1).reverse()];
+        } else if (kbPreset === 'broken_chord') {
+          arpOrder = [
+            voicing[0],
+            voicing[Math.min(voicing.length - 1, 2)],
+            voicing[Math.min(voicing.length - 1, 1)],
+            voicing[voicing.length - 1],
+          ];
+        } else if (kbPreset === 'emo_arp_cascade' && voicing.length > 2) {
+          arpOrder = [...voicing, ...voicing.slice(0, -1).reverse()];
+        } else if (kbPreset === 'synth_pluck_arp') {
+          arpOrder = voicing.map((_, i) => voicing[(i * 2) % voicing.length]);
+        }
+
+        // Level 4 & 5 expand arpeggio pattern up an octave for brighter spread
+        if (keyboardDensity >= 4) {
+          const upper = voicing
+            .map((p) => p + 12)
+            .filter((p) => p <= 96);
+          if (upper.length > 0) {
+            arpOrder = [...arpOrder, ...upper.slice(0, 2)];
+          }
+        }
+
+        const isPluck = kbPreset === 'synth_pluck_arp';
+        const stepOffsets =
+          keyboardDensity === 1
+            ? [0, 960] // 2 notes/bar (half notes, long sustain)
+            : keyboardDensity === 2
+              ? [0, 480, 960, 1440] // 4 notes/bar (quarter notes)
+              : keyboardDensity === 3
+                ? [0, 240, 480, 720, 960, 1200, 1440, 1680] // 8 notes/bar (8th notes)
+                : keyboardDensity === 4
+                  ? [0, 240, 360, 480, 720, 840, 960, 1200, 1320, 1440, 1680, 1800] // 12 notes/bar (8th + 16th syncopations)
+                  : Array.from({ length: 16 }, (_, s) => s * 120); // 16 notes/bar (16th sequence)
+
+        const arpDur =
+          keyboardDensity === 1
+            ? 900
+            : keyboardDensity === 2
+              ? isPluck
+                ? 180
+                : 440
+              : keyboardDensity === 3
+                ? isPluck
+                  ? 65
+                  : 220
+                : keyboardDensity === 4
+                  ? isPluck
+                    ? 65
+                    : 150
+                  : isPluck
+                    ? 65
+                    : 105;
+
+        for (let i = 0; i < stepOffsets.length; i++) {
+          const off = stepOffsets[i];
+          const pitch = arpOrder[i % arpOrder.length];
+          pushSingleNote(
+            barStart + off,
+            pitch,
+            arpDur,
+            off % 480 === 0 ? 4 : -6
+          );
+        }
+        continue;
+      }
+
       if (kbPreset === 'chord_quarter') {
-        for (const h of [0, 480, 960, 1440]) {
-          pushChordHit(barStart + h, 220, h === 0 ? 4 : -4);
+        const hits =
+          keyboardDensity === 1
+            ? [0]
+            : keyboardDensity === 2
+              ? [0, 960]
+              : keyboardDensity >= 4
+                ? [0, 240, 480, 720, 960, 1200, 1440, 1680]
+                : [0, 480, 960, 1440];
+        for (const h of hits) {
+          pushChordHit(
+            barStart + h,
+            keyboardDensity === 1 ? 1860 : keyboardDensity === 2 ? 900 : 220,
+            h === 0 ? 4 : -4
+          );
         }
       } else if (kbPreset === 'chord_eighth') {
-        for (let h = 0; h < TICKS_PER_BAR; h += 240) {
-          pushChordHit(barStart + h, 140, h % 480 === 0 ? 2 : -6);
+        const hits =
+          keyboardDensity === 1
+            ? [0]
+            : keyboardDensity === 2
+              ? [0, 480, 960, 1440]
+              : keyboardDensity >= 4
+                ? [0, 120, 240, 480, 720, 840, 960, 1200, 1320, 1440, 1680, 1800]
+                : [0, 240, 480, 720, 960, 1200, 1440, 1680];
+        for (const h of hits) {
+          pushChordHit(
+            barStart + h,
+            keyboardDensity === 1 ? 1860 : keyboardDensity === 2 ? 420 : keyboardDensity >= 4 ? 95 : 140,
+            h % 480 === 0 ? 2 : -6
+          );
         }
       } else if (kbPreset === 'syncopated_comp') {
-        for (const h of [0, 360, 720, 1200, 1560]) {
-          pushChordHit(barStart + h, 200, h === 0 ? 4 : -2);
+        const hits =
+          keyboardDensity <= 2
+            ? [0, 960]
+            : keyboardDensity >= 4
+              ? [0, 240, 360, 720, 840, 1200, 1440, 1560]
+              : [0, 360, 720, 1200, 1560];
+        for (const h of hits) {
+          pushChordHit(barStart + h, keyboardDensity <= 2 ? 440 : 200, h === 0 ? 4 : -2);
         }
       } else if (kbPreset === 'offbeat_ska') {
-        for (const h of [240, 720, 1200, 1680]) {
+        const hits =
+          keyboardDensity === 1
+            ? [480, 1440]
+            : keyboardDensity >= 4
+              ? [240, 360, 720, 1200, 1320, 1680]
+              : [240, 720, 1200, 1680];
+        for (const h of hits) {
           pushChordHit(barStart + h, 110, 4);
-        }
-      } else if (kbPreset === 'arp_up') {
-        for (let s = 0; s < 8; s++) {
-          pushSingleNote(barStart + s * 240, voicing[s % voicing.length], 220, s % 2 === 0 ? 0 : -6);
-        }
-      } else if (kbPreset === 'arp_down_up') {
-        const pingPong =
-          voicing.length > 1
-            ? [...voicing, ...voicing.slice(1, -1).reverse()]
-            : voicing;
-        for (let s = 0; s < 8; s++) {
-          pushSingleNote(barStart + s * 240, pingPong[s % pingPong.length], 220, s % 2 === 0 ? 0 : -6);
-        }
-      } else if (kbPreset === 'arp_16th') {
-        for (let s = 0; s < 16; s++) {
-          pushSingleNote(barStart + s * 120, voicing[s % voicing.length], 100, s % 4 === 0 ? 4 : -6);
-        }
-      } else if (kbPreset === 'broken_chord') {
-        const seq = [
-          0,
-          Math.min(voicing.length - 1, 2),
-          Math.min(voicing.length - 1, 1),
-          voicing.length - 1,
-          Math.min(voicing.length - 1, 1),
-          Math.min(voicing.length - 1, 2),
-          0,
-          Math.min(voicing.length - 1, 1),
-        ];
-        for (let s = 0; s < 8; s++) {
-          pushSingleNote(barStart + s * 240, voicing[seq[s]], 220, -4);
         }
       } else if (kbPreset === 'whole_sustain') {
         pushChordHit(barStart, TICKS_PER_BAR - 20, -4);
@@ -201,47 +287,66 @@ export function generateKeyboardNotes(input: EngineInput): MidiNote[] {
         pushChordHit(barStart, 940, -6);
         pushChordHit(barStart + 960, 940, -10);
       } else if (kbPreset === 'dark_low_riff') {
-        const riffSteps = [0, 360, 720, 1200, 1440];
+        const riffSteps =
+          keyboardDensity <= 2
+            ? [0, 960]
+            : keyboardDensity >= 4
+              ? [0, 240, 360, 720, 960, 1200, 1440, 1680]
+              : [0, 360, 720, 1200, 1440];
         for (let i = 0; i < riffSteps.length; i++) {
           pushSingleNote(barStart + riffSteps[i], voicing[i % voicing.length], 240, 2);
         }
       } else if (kbPreset === 'rock_power_riff') {
         const rootLow = fitPitchClassToRange(chord.rootSemitone, 48, 59);
-        const powerPair = [rootLow, rootLow + 7];
-        const riffSteps = [0, 240, 480, 840, 960, 1200, 1440, 1680];
+        const powerPair =
+          keyboardDensity >= 4
+            ? [rootLow, rootLow + 7, rootLow + 12]
+            : [rootLow, rootLow + 7];
+        const riffSteps =
+          keyboardDensity === 1
+            ? [0]
+            : keyboardDensity === 2
+              ? [0, 480, 960, 1440]
+              : keyboardDensity >= 4
+                ? [0, 120, 240, 360, 480, 720, 840, 960, 1200, 1320, 1440, 1680]
+                : [0, 240, 480, 840, 960, 1200, 1440, 1680];
         for (let i = 0; i < riffSteps.length; i++) {
           const t = barStart + riffSteps[i];
-          const dur = riffSteps[i] === 480 || riffSteps[i] === 1440 ? 200 : 140;
+          const dur =
+            keyboardDensity === 1
+              ? 1820
+              : keyboardDensity === 2
+                ? 400
+                : riffSteps[i] === 480 || riffSteps[i] === 1440
+                  ? 200
+                  : 120;
           for (const p of powerPair) {
             pushSingleNote(t, p, dur, riffSteps[i] % 480 === 0 ? 6 : -4);
           }
         }
-      } else if (kbPreset === 'emo_arp_cascade') {
-        const cascadeOrder =
-          voicing.length > 2
-            ? [...voicing, ...voicing.slice(0, -1).reverse()]
-            : voicing;
-        for (let s = 0; s < 8; s++) {
-          pushSingleNote(
-            barStart + s * 240,
-            cascadeOrder[s % cascadeOrder.length],
-            220,
-            s % 2 === 0 ? 2 : -5
-          );
-        }
       } else if (kbPreset === 'funk_16th_clav') {
-        const clavSteps = [0, 120, 360, 480, 720, 840, 1080, 1200, 1440, 1680];
+        const clavSteps =
+          keyboardDensity <= 2
+            ? [0, 480, 960, 1440]
+            : keyboardDensity >= 4
+              ? [0, 120, 240, 360, 480, 600, 720, 840, 1080, 1200, 1320, 1440, 1680, 1800]
+              : [0, 120, 360, 480, 720, 840, 1080, 1200, 1440, 1680];
         for (let i = 0; i < clavSteps.length; i++) {
           pushChordHit(
             barStart + clavSteps[i],
-            75,
+            keyboardDensity <= 2 ? 160 : 75,
             clavSteps[i] % 480 === 0 ? 6 : -6
           );
         }
       } else if (kbPreset === 'counter_melody') {
         const scalePcs = new Set(getScalePitchClasses(song.key, song.scale));
         const highChordTones = voicing.filter((p) => p >= 67 && p <= 86);
-        const melodicSteps = [0, 480, 720, 960, 1440];
+        const melodicSteps =
+          keyboardDensity <= 2
+            ? [0, 960]
+            : keyboardDensity >= 4
+              ? [0, 240, 480, 720, 960, 1200, 1440, 1680]
+              : [0, 480, 720, 960, 1440];
         for (let i = 0; i < melodicSteps.length; i++) {
           const base =
             highChordTones[i % Math.max(1, highChordTones.length)] ?? 72;
@@ -254,14 +359,15 @@ export function generateKeyboardNotes(input: EngineInput): MidiNote[] {
             4
           );
         }
-      } else if (kbPreset === 'synth_pluck_arp') {
-        for (let s = 0; s < 16; s++) {
-          const p = voicing[(s * 2) % voicing.length];
-          pushSingleNote(barStart + s * 120, p, 65, s % 4 === 0 ? 6 : -6);
-        }
       } else if (kbPreset === 'gospel_rich_comp') {
-        for (const h of [0, 360, 960, 1320]) {
-          pushChordHit(barStart + h, 260, h === 0 ? 4 : -2);
+        const hits =
+          keyboardDensity <= 2
+            ? [0, 960]
+            : keyboardDensity >= 4
+              ? [0, 240, 360, 720, 960, 1320, 1560]
+              : [0, 360, 960, 1320];
+        for (const h of hits) {
+          pushChordHit(barStart + h, keyboardDensity <= 2 ? 440 : 240, h === 0 ? 4 : -2);
         }
         // Passing chord chromatic/diatonic anticipation on beat 4
         const nextChord = resolveChordForBar(

@@ -19,6 +19,7 @@ import {
   updateSectionBars,
   updateSectionDrumDensity,
   updateSectionDrumLoop,
+  updateSectionKeyboardDensity,
   updateSectionKickMode,
   updateSectionVocalDensity,
   type ArrangementPresetId,
@@ -210,6 +211,7 @@ export function useBandGenerator() {
       kickMode: 'acoustic',
       hatDensity: 3,
       kickDensity: 3,
+      keyboardDensity: 3,
       vocalDensity: 3,
       enabledParts: createDefaultEnabledParts(),
       chords: ['Em', 'C', 'G', 'D'],
@@ -407,6 +409,19 @@ export function useBandGenerator() {
     [song, bandState, commitChange]
   );
 
+  const changeSectionKeyboardDensity = useCallback(
+    (sectionId: string, keyboardDensity: DensityLevel) => {
+      const res = updateSectionKeyboardDensity(
+        song,
+        bandState,
+        sectionId,
+        keyboardDensity
+      );
+      commitChange(res.song, res.bandState, true);
+    },
+    [song, bandState, commitChange]
+  );
+
   const transposeSectionChords = useCallback(
     (sectionId: string, semitones: number) => {
       const sec = song.sections.find((s) => s.id === sectionId);
@@ -464,6 +479,7 @@ export function useBandGenerator() {
     toggleSectionPart,
     changeSectionVocalMelody,
     changeSectionVocalDensity,
+    changeSectionKeyboardDensity,
     transposeSectionChords,
   };
 }

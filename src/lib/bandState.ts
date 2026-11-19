@@ -163,6 +163,8 @@ export function generateCellTakes(
       seed: seeds[style],
       params,
       drumNotes: instrument === 'bass' ? drumNotesForBass : undefined,
+      keyboardDensity:
+        instrument === 'keyboard' ? (section.keyboardDensity ?? 3) : undefined,
       prevVocalAvgPitch: instrument === 'vocal' ? prevVocalAvgPitch : undefined,
     };
     if (instrument === 'drums') {
@@ -589,6 +591,36 @@ export function updateSectionVocalDensity(
   return { song: nextSong, bandState: nextState };
 }
 
+export function updateSectionKeyboardDensity(
+  song: SongConfig,
+  bandState: BandState,
+  sectionId: string,
+  keyboardDensity: DensityLevel
+): { song: SongConfig; bandState: BandState } {
+  const nextSong = cloneSongConfig(song);
+  const secIdx = nextSong.sections.findIndex((s) => s.id === sectionId);
+  if (secIdx === -1) return { song, bandState };
+
+  const sec = nextSong.sections[secIdx];
+  sec.keyboardDensity = keyboardDensity;
+
+  const nextState = cloneBandState(bandState);
+  const existingSec = nextState.cellsBySection[sectionId];
+
+  if (existingSec && !existingSec.keyboard?.locked) {
+    nextState.cellsBySection[sectionId] = generateSectionCells(
+      nextSong,
+      sec,
+      secIdx,
+      existingSec,
+      6300 + secIdx,
+      { newSeeds: false, instruments: ['keyboard'] }
+    );
+  }
+
+  return { song: nextSong, bandState: nextState };
+}
+
 export function updateSectionDrumLoop(
   song: SongConfig,
   bandState: BandState,
@@ -928,6 +960,7 @@ export function createDefaultSongConfig(
         kickMode: 'acoustic',
         hatDensity: 3,
         kickDensity: 3,
+        keyboardDensity: 3,
         vocalDensity: 3,
         enabledParts: createDefaultEnabledParts(),
         chords: [...defaultChords],
@@ -941,6 +974,7 @@ export function createDefaultSongConfig(
         kickMode: 'acoustic',
         hatDensity: 3,
         kickDensity: 3,
+        keyboardDensity: 3,
         vocalDensity: 3,
         enabledParts: createDefaultEnabledParts(),
         chords: [...defaultChords],
@@ -954,6 +988,7 @@ export function createDefaultSongConfig(
         kickMode: 'acoustic',
         hatDensity: 3,
         kickDensity: 3,
+        keyboardDensity: 3,
         vocalDensity: 3,
         enabledParts: createDefaultEnabledParts(),
         chords: ['Am', 'G', 'C', 'D'],
@@ -967,6 +1002,7 @@ export function createDefaultSongConfig(
         kickMode: 'acoustic',
         hatDensity: 3,
         kickDensity: 3,
+        keyboardDensity: 3,
         vocalDensity: 3,
         enabledParts: createDefaultEnabledParts(),
         chords: ['C', 'D', 'Em', 'G'],
@@ -1169,6 +1205,7 @@ export function applyArrangementPresetToSong(
     ...s,
     hatDensity: s.hatDensity ?? 3,
     kickDensity: s.kickDensity ?? 3,
+    keyboardDensity: s.keyboardDensity ?? 3,
     vocalDensity: s.vocalDensity ?? 3,
     enabledParts: s.enabledParts ?? createDefaultEnabledParts(),
   }));

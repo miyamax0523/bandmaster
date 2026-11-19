@@ -206,6 +206,7 @@ export function hydrateProject(stored: StoredBandProject): {
       ...rawSec,
       hatDensity: rawSec.hatDensity ?? 3,
       kickDensity: rawSec.kickDensity ?? 3,
+      keyboardDensity: rawSec.keyboardDensity ?? 3,
       vocalDensity: rawSec.vocalDensity ?? 3,
       enabledParts: {
         ...createDefaultEnabledParts(),

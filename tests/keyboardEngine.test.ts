@@ -96,16 +96,18 @@ describe('keyboardEngine', () => {
   });
 
   it('applies patternPreset deterministically across keyboard presets', () => {
-    const runPreset = (preset: string) => {
+    const runPreset = (preset: string, density?: 1 | 2 | 3 | 4 | 5) => {
       const song = createSong();
       song.members.keyboard.patternPreset = preset;
+      const targetSec = density ? { ...section, keyboardDensity: density } : section;
       return generateKeyboardNotes({
         song,
-        section,
+        section: targetSec,
         sectionIndex: 0,
         style: 'A',
         seed: 1,
-        params: resolveInstrumentParams(song, section, 'keyboard', 'A'),
+        keyboardDensity: density,
+        params: resolveInstrumentParams(song, targetSec, 'keyboard', 'A'),
       });
     };
 
@@ -113,7 +115,7 @@ describe('keyboardEngine', () => {
     const sustainStarts = new Set(sustain.map((n) => n.startTick));
     expect([...sustainStarts].sort((a, b) => a - b)).toEqual([0, 1920]);
 
-    const arp16 = runPreset('arp_16th');
+    const arp16 = runPreset('arp_16th', 5);
     expect(arp16.length).toBe(32);
 
     const ska = runPreset('offbeat_ska');
@@ -148,11 +150,48 @@ describe('keyboardEngine', () => {
     expect(counterMel.length).toBe(10);
     expect(counterMel.every((n) => n.pitch >= 67 && n.pitch <= 86)).toBe(true);
 
-    const synthPluck = runPreset('synth_pluck_arp');
+    const synthPluck = runPreset('synth_pluck_arp', 5);
     expect(synthPluck.length).toBe(32);
     expect(synthPluck.every((n) => n.durationTicks <= 70)).toBe(true);
 
     const gospelComp = runPreset('gospel_rich_comp');
     expect(gospelComp.some((n) => n.startTick % 1920 === 1680)).toBe(true);
+  });
+
+  it('scales arpeggio and backing density across keyboardDensity 1..5', () => {
+    const runArp = (preset: string, density: 1 | 2 | 3 | 4 | 5) => {
+      const song = createSong();
+      song.members.keyboard.patternPreset = preset;
+      const targetSec = { ...section, keyboardDensity: density };
+      return generateKeyboardNotes({
+        song,
+        section: targetSec,
+        sectionIndex: 0,
+        style: 'A',
+        seed: 7,
+        keyboardDensity: density,
+        params: resolveInstrumentParams(song, targetSec, 'keyboard', 'A'),
+      });
+    };
+
+    const d1 = runArp('arp_up', 1);
+    const d2 = runArp('arp_up', 2);
+    const d3 = runArp('arp_up', 3);
+    const d4 = runArp('arp_up', 4);
+    const d5 = runArp('arp_up', 5);
+
+    expect(d1.length).toBe(4); // 2/bar * 2 bars
+    expect(d2.length).toBe(8); // 4/bar * 2 bars
+    expect(d3.length).toBe(16); // 8/bar * 2 bars
+    expect(d4.length).toBe(24); // 12/bar * 2 bars
+    expect(d5.length).toBe(32); // 16/bar * 2 bars
+    expect(d1[0].durationTicks).toBeGreaterThan(d5[0].durationTicks);
+    expect(Math.max(...d4.map((n) => n.pitch))).toBeGreaterThanOrEqual(
+      Math.max(...d3.map((n) => n.pitch))
+    );
+
+    const riffLow = runArp('rock_power_riff', 1);
+    const riffHigh = runArp('rock_power_riff', 5);
+    expect(riffHigh.length).toBeGreaterThan(riffLow.length * 4);
   });
 });
