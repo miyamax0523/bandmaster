@@ -117,12 +117,36 @@ export function selectSongTracks(
     const sectionEnd = section.bars * TICKS_PER_BAR;
     const cells = bandState.cellsBySection[section.id];
 
-    // Step 1: resolveSongTracks (respects global enabled, section enabledParts, OFF, Auto Tacet)
+    // Step 1: resolveSongTracks (respects global enabled, section enabledParts, global keyboard sequence, OFF, Auto Tacet)
     const resolveInstrumentNotes = (inst: InstrumentType): MidiNote[] => {
-      if (!cells) return [];
       const member = song.members[inst];
       if (!member?.enabled) return [];
       if (!isSectionPartEnabled(section, inst)) return [];
+
+      // If Keyboard "一曲通し固定" mode is enabled, loop baseNotes across this section's bars
+      if (inst === 'keyboard' && song.keyboardGlobalSequence?.enabled) {
+        const { baseNotes, baseBars } = song.keyboardGlobalSequence;
+        if (!baseNotes || baseNotes.length === 0) return [];
+        const periodTicks = Math.max(1, Math.round(baseBars)) * TICKS_PER_BAR;
+        const expanded: MidiNote[] = [];
+        for (let base = 0; base < sectionEnd; base += periodTicks) {
+          for (const n of baseNotes) {
+            const absStart = base + n.startTick;
+            if (absStart < 0 || absStart >= sectionEnd) continue;
+            expanded.push({
+              ...n,
+              startTick: absStart,
+              durationTicks: Math.max(
+                1,
+                Math.min(n.durationTicks, sectionEnd - absStart)
+              ),
+            });
+          }
+        }
+        return expanded;
+      }
+
+      if (!cells) return [];
       const cell = cells[inst];
       if (!cell || cell.selectedTake === 'OFF') return [];
       if (isAutoTacet(song, section, inst)) return [];

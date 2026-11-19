@@ -1,4 +1,10 @@
-import type { DensityLevel, MidiNote, Section, SongConfig, TakeStyle } from '../types/song';
+import type {
+  KeyboardDensityLevel,
+  MidiNote,
+  Section,
+  SongConfig,
+  TakeStyle,
+} from '../types/song';
 
 export interface ResolvedInstrumentParams {
   // Common
@@ -46,6 +52,6 @@ export interface EngineInput {
   seed: number;
   params: ResolvedInstrumentParams;
   drumNotes?: MidiNote[];
-  keyboardDensity?: DensityLevel;
+  keyboardDensity?: KeyboardDensityLevel;
   prevVocalAvgPitch?: number;
 }

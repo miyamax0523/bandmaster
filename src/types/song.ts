@@ -21,6 +21,7 @@ export type ScaleType = 'Minor' | 'Major';
 export type BeatFeel = 'Straight' | 'Half-Time' | 'Bounce' | 'Driving';
 export type EnergyLevel = 'Low' | 'Mid' | 'High';
 export type DensityLevel = 1 | 2 | 3 | 4 | 5;
+export type KeyboardDensityLevel = 1 | 2 | 3 | 4 | 5 | 6 | 7;
 export type KickMode = 'acoustic' | '808';
 export type Bass808Behavior = 'octaveUp' | 'tacet' | 'normal';
 export type TakeStyle = 'A' | 'B' | 'C';
@@ -144,7 +145,7 @@ export interface Section {
   kickMode: KickMode;
   hatDensity?: DensityLevel; // 1..5 (default 3)
   kickDensity?: DensityLevel; // 1..5 (default 3)
-  keyboardDensity?: DensityLevel; // 1..5 (default 3)
+  keyboardDensity?: KeyboardDensityLevel; // 1..7 (default 4)
   vocalDensity?: DensityLevel; // 1..5 (default 3)
   chords: string[];
   enabledParts?: Record<InstrumentType, boolean>;
@@ -154,6 +155,13 @@ export interface Section {
 }
 
 export type SectionConfig = Section;
+
+export interface KeyboardGlobalSequence {
+  enabled: boolean;
+  baseNotes: MidiNoteEvent[];
+  baseBars: number;
+  sourceSectionId?: string;
+}
 
 export interface SongConfig {
   title: string;
@@ -167,6 +175,7 @@ export interface SongConfig {
   exportOnlyActiveTracks: boolean;
   split808KickTrack: boolean;
   uploadedDrumLoop?: DrumLoopData;
+  keyboardGlobalSequence?: KeyboardGlobalSequence;
   members: Record<InstrumentType, MemberConfig>;
   sections: Section[];
 }

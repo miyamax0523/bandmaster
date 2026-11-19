@@ -828,6 +828,13 @@ input[type='range'] {
   font-size: 0.8rem;
 }
 
+.global-seq-btn.is-active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+  font-weight: 700;
+}
+
 .badge-row,
 .chip-list,
 .warning-stack,
@@ -940,6 +947,10 @@ input[type='range'] {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 4px;
+}
+
+.density-segments--7 {
+  grid-template-columns: repeat(7, minmax(0, 1fr));
 }
 
 .density-btn {

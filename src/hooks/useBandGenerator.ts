@@ -13,7 +13,9 @@ import {
   selectInstrumentTake,
   setSectionUnisonRiff,
   setSectionVocalMelody,
+  syncKeyboardGlobalSequence,
   toggleCellLock,
+  toggleKeyboardGlobalSequence,
   toggleSectionPartEnabled,
   toggleSectionRiffOctaveUpOn808,
   updateSectionBars,
@@ -36,6 +38,7 @@ import {
   type DensityLevel,
   type DrumLoopData,
   type InstrumentType,
+  type KeyboardDensityLevel,
   type KickMode,
   type MemberConfig,
   type Section,
@@ -148,7 +151,11 @@ export function useBandGenerator() {
         Date.now() & 0xffff,
         false
       );
-      commitChange(nextSong, nextState, true);
+      const syncedSong =
+        instrument === 'keyboard' && nextSong.keyboardGlobalSequence?.enabled
+          ? syncKeyboardGlobalSequence(nextSong, nextState)
+          : nextSong;
+      commitChange(syncedSong, nextState, true);
     },
     [song, bandState, commitChange]
   );
@@ -160,7 +167,10 @@ export function useBandGenerator() {
       (Date.now() & 0x7fffff) + 1,
       true
     );
-    commitChange(song, nextState, true);
+    const syncedSong = song.keyboardGlobalSequence?.enabled
+      ? syncKeyboardGlobalSequence(song, nextState)
+      : song;
+    commitChange(syncedSong, nextState, true);
   }, [song, bandState, commitChange]);
 
   const regenerateCell = useCallback(
@@ -172,7 +182,11 @@ export function useBandGenerator() {
         instrument,
         (Date.now() & 0x7fffff) + 7
       );
-      commitChange(song, nextState, true);
+      const syncedSong =
+        instrument === 'keyboard' && song.keyboardGlobalSequence?.enabled
+          ? syncKeyboardGlobalSequence(song, nextState, sectionId)
+          : song;
+      commitChange(syncedSong, nextState, true);
     },
     [song, bandState, commitChange]
   );
@@ -186,7 +200,11 @@ export function useBandGenerator() {
         instrument,
         take
       );
-      commitChange(song, nextState, true);
+      const syncedSong =
+        instrument === 'keyboard' && song.keyboardGlobalSequence?.enabled
+          ? syncKeyboardGlobalSequence(song, nextState, sectionId)
+          : song;
+      commitChange(syncedSong, nextState, true);
     },
     [song, bandState, commitChange]
   );
@@ -211,7 +229,7 @@ export function useBandGenerator() {
       kickMode: 'acoustic',
       hatDensity: 3,
       kickDensity: 3,
-      keyboardDensity: 3,
+      keyboardDensity: 4,
       vocalDensity: 3,
       enabledParts: createDefaultEnabledParts(),
       chords: ['Em', 'C', 'G', 'D'],
@@ -410,7 +428,7 @@ export function useBandGenerator() {
   );
 
   const changeSectionKeyboardDensity = useCallback(
-    (sectionId: string, keyboardDensity: DensityLevel) => {
+    (sectionId: string, keyboardDensity: KeyboardDensityLevel) => {
       const res = updateSectionKeyboardDensity(
         song,
         bandState,
@@ -418,6 +436,18 @@ export function useBandGenerator() {
         keyboardDensity
       );
       commitChange(res.song, res.bandState, true);
+    },
+    [song, bandState, commitChange]
+  );
+
+  const toggleGlobalKeyboardSequence = useCallback(
+    (sourceSectionId: string) => {
+      const nextSong = toggleKeyboardGlobalSequence(
+        song,
+        bandState,
+        sourceSectionId
+      );
+      commitChange(nextSong, bandState, true);
     },
     [song, bandState, commitChange]
   );
@@ -480,6 +510,7 @@ export function useBandGenerator() {
     changeSectionVocalMelody,
     changeSectionVocalDensity,
     changeSectionKeyboardDensity,
+    toggleGlobalKeyboardSequence,
     transposeSectionChords,
   };
 }

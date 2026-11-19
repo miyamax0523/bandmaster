@@ -8,6 +8,7 @@ import type {
   DensityLevel,
   DrumLoopData,
   InstrumentType,
+  KeyboardDensityLevel,
   SongConfig,
   TakeStyle,
 } from '../types/song';
@@ -31,8 +32,9 @@ interface BandmasterConsoleProps {
   ) => void;
   onChangeSectionKeyboardDensity: (
     sectionId: string,
-    keyboardDensity: DensityLevel
+    keyboardDensity: KeyboardDensityLevel
   ) => void;
+  onToggleKeyboardGlobalSequence: (sourceSectionId: string) => void;
   onChangeSectionVocalDensity: (
     sectionId: string,
     vocalDensity: DensityLevel
@@ -61,6 +63,9 @@ const INSTRUMENTS: Array<{ key: InstrumentType; label: string; icon: string }> =
 ];
 
 const DENSITY_LEVELS: readonly DensityLevel[] = [1, 2, 3, 4, 5];
+const KEYBOARD_DENSITY_LEVELS: readonly KeyboardDensityLevel[] = [
+  1, 2, 3, 4, 5, 6, 7,
+];
 
 export function BandmasterConsole({
   song,
@@ -74,6 +79,7 @@ export function BandmasterConsole({
   onClearSectionDrumLoop,
   onChangeSectionDrumDensity,
   onChangeSectionKeyboardDensity,
+  onToggleKeyboardGlobalSequence,
   onChangeSectionVocalDensity,
   onChangePatternPreset,
   onToggleSectionPart,
@@ -288,6 +294,30 @@ export function BandmasterConsole({
                 </>
               )}
 
+              {key === 'keyboard' && (
+                <>
+                  <div className="drum-midi-actions">
+                    <button
+                      type="button"
+                      className={`btn drum-midi-btn global-seq-btn ${
+                        song.keyboardGlobalSequence?.enabled ? 'is-active' : 'btn-secondary'
+                      }`}
+                      aria-pressed={Boolean(song.keyboardGlobalSequence?.enabled)}
+                      disabled={!effectivelyEnabled}
+                      onClick={() => onToggleKeyboardGlobalSequence(section.id)}
+                    >
+                      🔁 一曲通し固定
+                      {song.keyboardGlobalSequence?.enabled ? ' (ON)' : ''}
+                    </button>
+                  </div>
+                  {song.keyboardGlobalSequence?.enabled && (
+                    <div className="source-line">
+                      全セクション固定再生中（{song.keyboardGlobalSequence.baseBars}小節ループ）
+                    </div>
+                  )}
+                </>
+              )}
+
               {key === 'vocal' && (
                 <>
                   <div className="source-line">
@@ -414,9 +444,13 @@ export function BandmasterConsole({
                 <div className="density-controls">
                   <div className="density-row">
                     <span className="density-label">音数</span>
-                    <div className="density-segments" role="group" aria-label="Keyboard 音数">
-                      {DENSITY_LEVELS.map((lvl) => {
-                        const active = (section.keyboardDensity ?? 3) === lvl;
+                    <div
+                      className="density-segments density-segments--7"
+                      role="group"
+                      aria-label="Keyboard 音数"
+                    >
+                      {KEYBOARD_DENSITY_LEVELS.map((lvl) => {
+                        const active = (section.keyboardDensity ?? 4) === lvl;
                         return (
                           <button
                             key={lvl}

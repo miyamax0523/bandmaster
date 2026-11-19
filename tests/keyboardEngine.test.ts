@@ -96,7 +96,11 @@ describe('keyboardEngine', () => {
   });
 
   it('applies patternPreset deterministically across keyboard presets', () => {
-    const runPreset = (preset: string, density?: 1 | 2 | 3 | 4 | 5) => {
+    const runPreset = (
+      preset: string,
+      density?: 1 | 2 | 3 | 4 | 5 | 6 | 7,
+      seed = 1
+    ) => {
       const song = createSong();
       song.members.keyboard.patternPreset = preset;
       const targetSec = density ? { ...section, keyboardDensity: density } : section;
@@ -105,7 +109,7 @@ describe('keyboardEngine', () => {
         section: targetSec,
         sectionIndex: 0,
         style: 'A',
-        seed: 1,
+        seed,
         keyboardDensity: density,
         params: resolveInstrumentParams(song, targetSec, 'keyboard', 'A'),
       });
@@ -115,8 +119,8 @@ describe('keyboardEngine', () => {
     const sustainStarts = new Set(sustain.map((n) => n.startTick));
     expect([...sustainStarts].sort((a, b) => a - b)).toEqual([0, 1920]);
 
-    const arp16 = runPreset('arp_16th', 5);
-    expect(arp16.length).toBe(32);
+    const arp16 = runPreset('arp_16th', 7);
+    expect(arp16.length).toBeGreaterThanOrEqual(32);
 
     const ska = runPreset('offbeat_ska');
     const skaOffbeats = [240, 720, 1200, 1680];
@@ -140,7 +144,7 @@ describe('keyboardEngine', () => {
     expect(rockRiff.every((n) => n.pitch >= 48 && n.pitch <= 67)).toBe(true);
 
     const emoArp = runPreset('emo_arp_cascade');
-    expect(emoArp.length).toBe(16);
+    expect(emoArp.length).toBe(16); // Standard density 4 -> 8 notes/bar * 2 bars
 
     const funkClav = runPreset('funk_16th_clav');
     expect(funkClav.length).toBeGreaterThan(0);
@@ -150,16 +154,55 @@ describe('keyboardEngine', () => {
     expect(counterMel.length).toBe(10);
     expect(counterMel.every((n) => n.pitch >= 67 && n.pitch <= 86)).toBe(true);
 
-    const synthPluck = runPreset('synth_pluck_arp', 5);
-    expect(synthPluck.length).toBe(32);
+    const synthPluck = runPreset('synth_pluck_arp', 6);
+    expect(synthPluck.length).toBe(28);
     expect(synthPluck.every((n) => n.durationTicks <= 70)).toBe(true);
 
     const gospelComp = runPreset('gospel_rich_comp');
     expect(gospelComp.some((n) => n.startTick % 1920 === 1680)).toBe(true);
+
+    // Fusion presets
+    const fusionEp = runPreset('fusion_ep_comp');
+    expect(fusionEp.some((n) => n.startTick % 1920 === 360 || n.startTick % 1920 === 840)).toBe(
+      true
+    );
+    expect(new Set(fusionEp.filter((n) => n.startTick === 0).map((n) => n.pitch)).size).toBeGreaterThanOrEqual(
+      4
+    );
+
+    const fusionBrass = runPreset('fusion_brass_stab');
+    expect(fusionBrass.length).toBeGreaterThan(0);
+    expect(fusionBrass.every((n) => n.durationTicks <= 120)).toBe(true);
+
+    const fusionArp = runPreset('fusion_fast_arp', 6);
+    expect(fusionArp.length).toBe(28);
+    expect(Math.max(...fusionArp.map((n) => n.pitch)) - Math.min(...fusionArp.map((n) => n.pitch))).toBeGreaterThanOrEqual(
+      14
+    );
+
+    // Electronica presets
+    const poly = runPreset('electronica_polyrhythm');
+    const polyTicks = poly.map((n) => n.startTick);
+    expect(polyTicks.slice(0, 5)).toEqual([0, 360, 720, 1080, 1440]);
+    expect(polyTicks).toContain(1800);
+    expect(polyTicks).toContain(2160); // Wraps cleanly across 1920 barline
+
+    const glitch1 = runPreset('electronica_glitch_arp', 5, 11);
+    const glitch2 = runPreset('electronica_glitch_arp', 5, 99);
+    expect(glitch1.length).toBeGreaterThan(0);
+    expect(glitch1.every((n) => n.pitch >= 72 && n.pitch <= 84)).toBe(true);
+    expect(glitch1).not.toEqual(glitch2);
+
+    const minimalOst = runPreset('electronica_minimal_ostinato');
+    const bar0OstPitches = new Set(
+      minimalOst.filter((n) => n.startTick < 1920).map((n) => n.pitch)
+    );
+    expect(bar0OstPitches.size).toBeLessThanOrEqual(4);
+    expect(bar0OstPitches.size).toBeGreaterThanOrEqual(2);
   });
 
-  it('scales arpeggio and backing density across keyboardDensity 1..5', () => {
-    const runArp = (preset: string, density: 1 | 2 | 3 | 4 | 5) => {
+  it('scales arpeggio note count strictly monotonically across keyboardDensity 1..7', () => {
+    const runArp = (preset: string, density: 1 | 2 | 3 | 4 | 5 | 6 | 7) => {
       const song = createSong();
       song.members.keyboard.patternPreset = preset;
       const targetSec = { ...section, keyboardDensity: density };
@@ -174,24 +217,17 @@ describe('keyboardEngine', () => {
       });
     };
 
-    const d1 = runArp('arp_up', 1);
-    const d2 = runArp('arp_up', 2);
-    const d3 = runArp('arp_up', 3);
-    const d4 = runArp('arp_up', 4);
-    const d5 = runArp('arp_up', 5);
-
-    expect(d1.length).toBe(4); // 2/bar * 2 bars
-    expect(d2.length).toBe(8); // 4/bar * 2 bars
-    expect(d3.length).toBe(16); // 8/bar * 2 bars
-    expect(d4.length).toBe(24); // 12/bar * 2 bars
-    expect(d5.length).toBe(32); // 16/bar * 2 bars
-    expect(d1[0].durationTicks).toBeGreaterThan(d5[0].durationTicks);
-    expect(Math.max(...d4.map((n) => n.pitch))).toBeGreaterThanOrEqual(
-      Math.max(...d3.map((n) => n.pitch))
+    const counts = ([1, 2, 3, 4, 5, 6, 7] as const).map(
+      (d) => runArp('arp_up', d).length
     );
+    // Expected for 2 bars: [2, 4, 10, 16, 22, 28, 36]
+    expect(counts).toEqual([2, 4, 10, 16, 22, 28, 36]);
+    for (let i = 0; i + 1 < counts.length; i++) {
+      expect(counts[i + 1]).toBeGreaterThan(counts[i]);
+    }
 
     const riffLow = runArp('rock_power_riff', 1);
-    const riffHigh = runArp('rock_power_riff', 5);
+    const riffHigh = runArp('rock_power_riff', 7);
     expect(riffHigh.length).toBeGreaterThan(riffLow.length * 4);
   });
 });

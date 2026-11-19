@@ -122,6 +122,8 @@ describe('storage', () => {
       delete sec.enabledParts;
       delete sec.hatDensity;
       delete sec.kickDensity;
+      delete sec.keyboardDensity;
+      delete sec.vocalDensity;
     }
     const legacyCells: Record<string, Record<string, unknown>> = {};
     for (const sec of legacySong.sections) {
@@ -159,7 +161,7 @@ describe('storage', () => {
       const vCell = loaded!.bandState.cellsBySection[sec.id].vocal;
       expect(vCell).toBeDefined();
       expect(vCell.takes.A.length).toBeGreaterThan(0);
-      expect(sec.keyboardDensity).toBe(3);
+      expect(sec.keyboardDensity).toBe(4);
       expect(sec.vocalDensity).toBe(3);
     }
   });

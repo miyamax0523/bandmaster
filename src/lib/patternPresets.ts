@@ -120,6 +120,22 @@ export const PATTERN_PRESET_GROUPS: Record<
         { value: 'jrock_anticipation', label: '【小節またぎ食い】バンド一斉シンコペーション' },
       ],
     },
+    {
+      category: 'フュージョン風',
+      options: [
+        { value: 'fusion_ep_comp', label: '【フュージョン】エレピ9th/13thシンコペーション刻み' },
+        { value: 'fusion_brass_stab', label: '【フュージョン】キメ重視シンセ・スタブ' },
+        { value: 'fusion_fast_arp', label: '【フュージョン】テンション駆け上がり分散和音' },
+      ],
+    },
+    {
+      category: 'エレクトロニカ風',
+      options: [
+        { value: 'electronica_polyrhythm', label: '【エレクトロニカ】付点8分ポリリズム・シーケンス' },
+        { value: 'electronica_glitch_arp', label: '【エレクトロニカ】不規則休符＆クリスタル分散' },
+        { value: 'electronica_minimal_ostinato', label: '【エレクトロニカ】ミニマル反復オスティナート' },
+      ],
+    },
   ],
   pad: [
     {

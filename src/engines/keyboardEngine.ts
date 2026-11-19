@@ -64,10 +64,60 @@ export function generateKeyboardNotes(input: EngineInput): MidiNote[] {
   const sectionEnd = section.bars * TICKS_PER_BAR;
   const playStyle = song.members.keyboard.keyboardStyle ?? 'Rhythm Backing';
   const kbPreset = song.members.keyboard.patternPreset ?? 'auto';
-  const keyboardDensity = input.keyboardDensity ?? section.keyboardDensity ?? 3;
+  const keyboardDensity = input.keyboardDensity ?? section.keyboardDensity ?? 4;
   const baseVel = section.energy === 'High' ? 92 : section.energy === 'Low' ? 68 : 82;
 
   const notes: MidiNote[] = [];
+
+  // Special cross-bar polyrhythm preset: continuous dotted-8th (360-tick) cycle across entire section
+  if (kbPreset === 'electronica_polyrhythm') {
+    const stepTicks =
+      keyboardDensity <= 1 ? 1440 : keyboardDensity === 2 ? 720 : 360;
+    const motif = [0, 7, 14, 12]; // Root, 5th, 9th, Octave
+    let stepIdx = 0;
+    for (let t = 0; t < sectionEnd; t += stepTicks) {
+      const barIdx = Math.floor(t / TICKS_PER_BAR);
+      const chord = resolveChordForBar(
+        section.chords,
+        barIdx,
+        song.key,
+        song.scale
+      );
+      const rootMidi = fitPitchClassToRange(chord.rootSemitone, 60, 71);
+      const pitch = Math.min(88, rootMidi + motif[stepIdx % motif.length]);
+      const dur = Math.max(1, Math.min(stepTicks >= 720 ? 320 : 180, sectionEnd - t));
+      notes.push({
+        pitch,
+        velocity: clampVelocity(
+          baseVel + (stepIdx % 3 === 0 ? 8 : -6) + rng.nextInt(-4, 4)
+        ),
+        startTick: t,
+        durationTicks: dur,
+        channel: 1,
+      });
+      if (keyboardDensity >= 6 && stepIdx % 2 === 1 && t + 180 < sectionEnd) {
+        notes.push({
+          pitch: Math.min(92, pitch + 12),
+          velocity: clampVelocity(baseVel - 10),
+          startTick: t + 180,
+          durationTicks: Math.max(1, Math.min(120, sectionEnd - (t + 180))),
+          channel: 1,
+        });
+      }
+      if (keyboardDensity === 7 && stepIdx % 2 === 0 && t + 120 < sectionEnd) {
+        notes.push({
+          pitch: Math.min(96, pitch + 7),
+          velocity: clampVelocity(baseVel - 14),
+          startTick: t + 120,
+          durationTicks: Math.max(1, Math.min(90, sectionEnd - (t + 120))),
+          channel: 1,
+        });
+      }
+      stepIdx++;
+    }
+    notes.sort((a, b) => a.startTick - b.startTick || a.pitch - b.pitch);
+    return notes;
+  }
 
   for (let bar = 0; bar < section.bars; bar++) {
     const barStart = bar * TICKS_PER_BAR;
@@ -156,7 +206,8 @@ export function generateKeyboardNotes(input: EngineInput): MidiNote[] {
         kbPreset === 'arp_16th' ||
         kbPreset === 'broken_chord' ||
         kbPreset === 'emo_arp_cascade' ||
-        kbPreset === 'synth_pluck_arp';
+        kbPreset === 'synth_pluck_arp' ||
+        kbPreset === 'fusion_fast_arp';
 
       if (isArpPreset) {
         let arpOrder: number[] = voicing;
@@ -173,10 +224,25 @@ export function generateKeyboardNotes(input: EngineInput): MidiNote[] {
           arpOrder = [...voicing, ...voicing.slice(0, -1).reverse()];
         } else if (kbPreset === 'synth_pluck_arp') {
           arpOrder = voicing.map((_, i) => voicing[(i * 2) % voicing.length]);
+        } else if (kbPreset === 'fusion_fast_arp') {
+          const fusionPool = buildKeyboardVoicing(
+            chord.rootSemitone,
+            [...chord.intervals, 11, 14, 21],
+            params,
+            { minPitch: 60, maxPitch: 88, forceFloating: true }
+          );
+          const upOct = fusionPool.map((p) => p + 12).filter((p) => p <= 91);
+          const twoOctave = Array.from(new Set([...fusionPool, ...upOct])).sort(
+            (a, b) => a - b
+          );
+          arpOrder =
+            twoOctave.length > 2
+              ? [...twoOctave, ...twoOctave.slice(1, -1).reverse()]
+              : twoOctave;
         }
 
-        // Level 4 & 5 expand arpeggio pattern up an octave for brighter spread
-        if (keyboardDensity >= 4) {
+        // Level 6 & 7 expand arpeggio pattern up an octave for brighter spread
+        if (keyboardDensity >= 6 && kbPreset !== 'fusion_fast_arp') {
           const upper = voicing
             .map((p) => p + 12)
             .filter((p) => p <= 96);
@@ -186,35 +252,51 @@ export function generateKeyboardNotes(input: EngineInput): MidiNote[] {
         }
 
         const isPluck = kbPreset === 'synth_pluck_arp';
+        // 7-stage density steps per bar:
+        // 1: 1 note (whole sustain), 2: 2 notes (half), 3: 5 notes (quarter + offbeat),
+        // 4: 8 notes (8th standard), 5: 11 notes (8th+16th sync), 6: 14 notes (16th + octave),
+        // 7: 16 full 16ths + 2 high octave sparkle notes (18 notes/bar)
         const stepOffsets =
           keyboardDensity === 1
-            ? [0, 960] // 2 notes/bar (half notes, long sustain)
+            ? [0]
             : keyboardDensity === 2
-              ? [0, 480, 960, 1440] // 4 notes/bar (quarter notes)
+              ? [0, 960]
               : keyboardDensity === 3
-                ? [0, 240, 480, 720, 960, 1200, 1440, 1680] // 8 notes/bar (8th notes)
+                ? [0, 480, 720, 960, 1440]
                 : keyboardDensity === 4
-                  ? [0, 240, 360, 480, 720, 840, 960, 1200, 1320, 1440, 1680, 1800] // 12 notes/bar (8th + 16th syncopations)
-                  : Array.from({ length: 16 }, (_, s) => s * 120); // 16 notes/bar (16th sequence)
+                  ? [0, 240, 480, 720, 960, 1200, 1440, 1680]
+                  : keyboardDensity === 5
+                    ? [0, 240, 360, 480, 720, 840, 960, 1200, 1320, 1440, 1680]
+                    : keyboardDensity === 6
+                      ? [0, 120, 240, 360, 480, 720, 840, 960, 1080, 1200, 1320, 1440, 1680, 1800]
+                      : Array.from({ length: 16 }, (_, s) => s * 120);
 
         const arpDur =
           keyboardDensity === 1
-            ? 900
+            ? 1820
             : keyboardDensity === 2
               ? isPluck
-                ? 180
-                : 440
+                ? 220
+                : 900
               : keyboardDensity === 3
                 ? isPluck
-                  ? 65
-                  : 220
+                  ? 110
+                  : 360
                 : keyboardDensity === 4
                   ? isPluck
                     ? 65
-                    : 150
-                  : isPluck
-                    ? 65
-                    : 105;
+                    : 220
+                  : keyboardDensity === 5
+                    ? isPluck
+                      ? 65
+                      : 160
+                    : keyboardDensity === 6
+                      ? isPluck
+                        ? 65
+                        : 115
+                      : isPluck
+                        ? 65
+                        : 100;
 
         for (let i = 0; i < stepOffsets.length; i++) {
           const off = stepOffsets[i];
@@ -226,6 +308,14 @@ export function generateKeyboardNotes(input: EngineInput): MidiNote[] {
             off % 480 === 0 ? 4 : -6
           );
         }
+
+        // Level 7 sparkle: high octave jumps on beats 1 & 3 (18 notes/bar)
+        if (keyboardDensity === 7) {
+          for (const sparkleOff of [0, 960]) {
+            const top = Math.min(96, arpOrder[arpOrder.length - 1] + 12);
+            pushSingleNote(barStart + sparkleOff, top, 140, 6);
+          }
+        }
         continue;
       }
 
@@ -235,9 +325,11 @@ export function generateKeyboardNotes(input: EngineInput): MidiNote[] {
             ? [0]
             : keyboardDensity === 2
               ? [0, 960]
-              : keyboardDensity >= 4
-                ? [0, 240, 480, 720, 960, 1200, 1440, 1680]
-                : [0, 480, 960, 1440];
+              : keyboardDensity === 3
+                ? [0, 480, 1440]
+                : keyboardDensity <= 5
+                  ? [0, 480, 960, 1440]
+                  : [0, 240, 480, 720, 960, 1200, 1440, 1680];
         for (const h of hits) {
           pushChordHit(
             barStart + h,
@@ -250,14 +342,16 @@ export function generateKeyboardNotes(input: EngineInput): MidiNote[] {
           keyboardDensity === 1
             ? [0]
             : keyboardDensity === 2
-              ? [0, 480, 960, 1440]
-              : keyboardDensity >= 4
-                ? [0, 120, 240, 480, 720, 840, 960, 1200, 1320, 1440, 1680, 1800]
-                : [0, 240, 480, 720, 960, 1200, 1440, 1680];
+              ? [0, 960]
+              : keyboardDensity === 3
+                ? [0, 480, 960, 1440]
+                : keyboardDensity === 4
+                  ? [0, 240, 480, 720, 960, 1200, 1440, 1680]
+                  : [0, 120, 240, 480, 720, 840, 960, 1200, 1320, 1440, 1680, 1800];
         for (const h of hits) {
           pushChordHit(
             barStart + h,
-            keyboardDensity === 1 ? 1860 : keyboardDensity === 2 ? 420 : keyboardDensity >= 4 ? 95 : 140,
+            keyboardDensity === 1 ? 1860 : keyboardDensity === 2 ? 880 : keyboardDensity === 3 ? 400 : keyboardDensity >= 6 ? 95 : 140,
             h % 480 === 0 ? 2 : -6
           );
         }
@@ -265,19 +359,21 @@ export function generateKeyboardNotes(input: EngineInput): MidiNote[] {
         const hits =
           keyboardDensity <= 2
             ? [0, 960]
-            : keyboardDensity >= 4
-              ? [0, 240, 360, 720, 840, 1200, 1440, 1560]
-              : [0, 360, 720, 1200, 1560];
+            : keyboardDensity === 3
+              ? [0, 720, 1440]
+              : keyboardDensity <= 5
+                ? [0, 360, 720, 1200, 1560]
+                : [0, 240, 360, 720, 840, 1200, 1440, 1560];
         for (const h of hits) {
           pushChordHit(barStart + h, keyboardDensity <= 2 ? 440 : 200, h === 0 ? 4 : -2);
         }
       } else if (kbPreset === 'offbeat_ska') {
         const hits =
-          keyboardDensity === 1
+          keyboardDensity <= 2
             ? [480, 1440]
-            : keyboardDensity >= 4
-              ? [240, 360, 720, 1200, 1320, 1680]
-              : [240, 720, 1200, 1680];
+            : keyboardDensity <= 5
+              ? [240, 720, 1200, 1680]
+              : [240, 360, 720, 1200, 1320, 1680];
         for (const h of hits) {
           pushChordHit(barStart + h, 110, 4);
         }
@@ -290,32 +386,38 @@ export function generateKeyboardNotes(input: EngineInput): MidiNote[] {
         const riffSteps =
           keyboardDensity <= 2
             ? [0, 960]
-            : keyboardDensity >= 4
-              ? [0, 240, 360, 720, 960, 1200, 1440, 1680]
-              : [0, 360, 720, 1200, 1440];
+            : keyboardDensity === 3
+              ? [0, 480, 960, 1440]
+              : keyboardDensity <= 5
+                ? [0, 360, 720, 1200, 1440]
+                : [0, 240, 360, 720, 960, 1200, 1440, 1680];
         for (let i = 0; i < riffSteps.length; i++) {
           pushSingleNote(barStart + riffSteps[i], voicing[i % voicing.length], 240, 2);
         }
       } else if (kbPreset === 'rock_power_riff') {
         const rootLow = fitPitchClassToRange(chord.rootSemitone, 48, 59);
         const powerPair =
-          keyboardDensity >= 4
+          keyboardDensity >= 6
             ? [rootLow, rootLow + 7, rootLow + 12]
             : [rootLow, rootLow + 7];
         const riffSteps =
           keyboardDensity === 1
             ? [0]
             : keyboardDensity === 2
-              ? [0, 480, 960, 1440]
-              : keyboardDensity >= 4
-                ? [0, 120, 240, 360, 480, 720, 840, 960, 1200, 1320, 1440, 1680]
-                : [0, 240, 480, 840, 960, 1200, 1440, 1680];
+              ? [0, 960]
+              : keyboardDensity === 3
+                ? [0, 480, 960, 1440]
+                : keyboardDensity === 4
+                  ? [0, 240, 480, 840, 960, 1200, 1440, 1680]
+                  : keyboardDensity === 5
+                    ? [0, 240, 360, 480, 720, 960, 1200, 1440, 1560, 1680]
+                    : [0, 120, 240, 360, 480, 720, 840, 960, 1200, 1320, 1440, 1680];
         for (let i = 0; i < riffSteps.length; i++) {
           const t = barStart + riffSteps[i];
           const dur =
             keyboardDensity === 1
               ? 1820
-              : keyboardDensity === 2
+              : keyboardDensity <= 3
                 ? 400
                 : riffSteps[i] === 480 || riffSteps[i] === 1440
                   ? 200
@@ -327,14 +429,16 @@ export function generateKeyboardNotes(input: EngineInput): MidiNote[] {
       } else if (kbPreset === 'funk_16th_clav') {
         const clavSteps =
           keyboardDensity <= 2
-            ? [0, 480, 960, 1440]
-            : keyboardDensity >= 4
-              ? [0, 120, 240, 360, 480, 600, 720, 840, 1080, 1200, 1320, 1440, 1680, 1800]
-              : [0, 120, 360, 480, 720, 840, 1080, 1200, 1440, 1680];
+            ? [0, 960]
+            : keyboardDensity === 3
+              ? [0, 480, 960, 1440]
+              : keyboardDensity <= 5
+                ? [0, 120, 360, 480, 720, 840, 1080, 1200, 1440, 1680]
+                : [0, 120, 240, 360, 480, 600, 720, 840, 1080, 1200, 1320, 1440, 1680, 1800];
         for (let i = 0; i < clavSteps.length; i++) {
           pushChordHit(
             barStart + clavSteps[i],
-            keyboardDensity <= 2 ? 160 : 75,
+            keyboardDensity <= 3 ? 160 : 75,
             clavSteps[i] % 480 === 0 ? 6 : -6
           );
         }
@@ -344,9 +448,11 @@ export function generateKeyboardNotes(input: EngineInput): MidiNote[] {
         const melodicSteps =
           keyboardDensity <= 2
             ? [0, 960]
-            : keyboardDensity >= 4
-              ? [0, 240, 480, 720, 960, 1200, 1440, 1680]
-              : [0, 480, 720, 960, 1440];
+            : keyboardDensity === 3
+              ? [0, 480, 960, 1440]
+              : keyboardDensity <= 5
+                ? [0, 480, 720, 960, 1440]
+                : [0, 240, 480, 720, 960, 1200, 1440, 1680];
         for (let i = 0; i < melodicSteps.length; i++) {
           const base =
             highChordTones[i % Math.max(1, highChordTones.length)] ?? 72;
@@ -363,9 +469,9 @@ export function generateKeyboardNotes(input: EngineInput): MidiNote[] {
         const hits =
           keyboardDensity <= 2
             ? [0, 960]
-            : keyboardDensity >= 4
-              ? [0, 240, 360, 720, 960, 1320, 1560]
-              : [0, 360, 960, 1320];
+            : keyboardDensity <= 5
+              ? [0, 360, 960, 1320]
+              : [0, 240, 360, 720, 960, 1320, 1560];
         for (const h of hits) {
           pushChordHit(barStart + h, keyboardDensity <= 2 ? 440 : 240, h === 0 ? 4 : -2);
         }
@@ -384,6 +490,94 @@ export function generateKeyboardNotes(input: EngineInput): MidiNote[] {
         );
         for (const p of approachVoicing) {
           pushSingleNote(barStart + 1680, p, 200, -4);
+        }
+      } else if (kbPreset === 'fusion_ep_comp') {
+        // Rich 9th/11th/13th electric piano comping hitting 16th syncopations
+        const epVoicing = buildKeyboardVoicing(
+          chord.rootSemitone,
+          [...chord.intervals, 10, 14, 17, 21],
+          params,
+          { minPitch: 58, maxPitch: 84, forceFloating: true }
+        );
+        const epSteps =
+          keyboardDensity <= 2
+            ? [0, 960]
+            : keyboardDensity === 3
+              ? [0, 360, 960, 1320]
+              : keyboardDensity <= 5
+                ? [0, 360, 600, 840, 1200, 1320, 1560]
+                : [0, 120, 360, 600, 840, 960, 1200, 1320, 1560, 1800];
+        for (const off of epSteps) {
+          const velOff = off === 360 || off === 840 || off === 1320 ? 6 : -4;
+          for (const p of epVoicing) {
+            pushSingleNote(barStart + off, p, keyboardDensity <= 2 ? 420 : 145, velOff);
+          }
+        }
+      } else if (kbPreset === 'fusion_brass_stab') {
+        // Sharp horn-section stabs: short 35-45% beat gate (95..140 ticks) + punchy rests
+        const stabSteps =
+          keyboardDensity <= 2
+            ? [0, 960]
+            : keyboardDensity === 3
+              ? [0, 480, 960, 1440]
+              : keyboardDensity <= 5
+                ? [0, 360, 720, 1200]
+                : [0, 240, 360, 720, 1080, 1200, 1560];
+        const stabDur = keyboardDensity <= 2 ? 180 : 105; // ~44% of 240 ticks
+        for (const off of stabSteps) {
+          pushChordHit(barStart + off, stabDur, 10);
+        }
+      } else if (kbPreset === 'electronica_glitch_arp') {
+        // C5..C6 (72..84) crystal arpeggio with seeded irregular dropouts and 16th double triggers
+        const crystal = buildKeyboardVoicing(
+          chord.rootSemitone,
+          [...chord.intervals, 12, 14],
+          params,
+          { minPitch: 72, maxPitch: 84, forceFloating: true }
+        );
+        const pool = crystal.length > 0 ? crystal : [72, 76, 79, 84];
+        const gridTicks =
+          keyboardDensity <= 2 ? [0, 960] : keyboardDensity === 3 ? [0, 480, 960, 1440] : Array.from({ length: 8 }, (_, s) => s * 240);
+        for (let i = 0; i < gridTicks.length; i++) {
+          const off = gridTicks[i];
+          if (keyboardDensity >= 3 && i > 0 && rng.chance(0.25)) continue; // Glitch rest dropout
+          const p = pool[(i + rng.nextInt(0, pool.length - 1)) % pool.length];
+          pushSingleNote(barStart + off, p, 110, 2);
+          // Irregular 16th double-trigger burst
+          if (keyboardDensity >= 4 && rng.chance(keyboardDensity >= 6 ? 0.65 : 0.4)) {
+            const subOff = off + 120;
+            if (subOff < TICKS_PER_BAR) {
+              pushSingleNote(barStart + subOff, pool[(i + 1) % pool.length], 85, -6);
+            }
+          }
+        }
+      } else if (kbPreset === 'electronica_minimal_ostinato') {
+        // Tight 3-4 pitch minimal motif repeating relentlessly
+        const ostPool = buildKeyboardVoicing(
+          chord.rootSemitone,
+          [0, chord.intervals[1] ?? 3, 7],
+          params,
+          { minPitch: 60, maxPitch: 79 }
+        ).slice(0, 4);
+        const motif = ostPool.length > 0 ? ostPool : [60, 63, 67];
+        const stepCount =
+          keyboardDensity === 1
+            ? 2
+            : keyboardDensity === 2
+              ? 4
+              : keyboardDensity === 3
+                ? 6
+                : keyboardDensity <= 5
+                  ? 8
+                  : 16;
+        const stepSize = Math.floor(TICKS_PER_BAR / stepCount);
+        for (let i = 0; i < stepCount; i++) {
+          pushSingleNote(
+            barStart + i * stepSize,
+            motif[i % motif.length],
+            Math.max(70, stepSize - 35),
+            i % motif.length === 0 ? 6 : -4
+          );
         }
       } else if (kbPreset === 'jrock_anticipation') {
         // Current bar chord hits (omitting beat 1 on bar > 0 to let the 1680 anticipation ring across)

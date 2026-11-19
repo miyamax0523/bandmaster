@@ -46,6 +46,7 @@ export function App() {
     changeSectionVocalMelody,
     changeSectionVocalDensity,
     changeSectionKeyboardDensity,
+    toggleGlobalKeyboardSequence,
     transposeSectionChords,
   } = useBandGenerator();
 
@@ -200,6 +201,7 @@ export function App() {
               onClearSectionDrumLoop={(id) => changeSectionDrumLoop(id, undefined)}
               onChangeSectionDrumDensity={changeSectionDrumDensity}
               onChangeSectionKeyboardDensity={changeSectionKeyboardDensity}
+              onToggleKeyboardGlobalSequence={toggleGlobalKeyboardSequence}
               onChangeSectionVocalDensity={changeSectionVocalDensity}
               onChangePatternPreset={(inst, preset) =>
                 updateMember(inst, { patternPreset: preset })

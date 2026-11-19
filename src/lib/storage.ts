@@ -198,6 +198,18 @@ export function hydrateProject(stored: StoredBandProject): {
       };
     }
   }
+    // Normalize keyboardGlobalSequence if present
+    if (song.keyboardGlobalSequence) {
+      song.keyboardGlobalSequence = {
+        ...song.keyboardGlobalSequence,
+        enabled: Boolean(song.keyboardGlobalSequence.enabled),
+        baseBars: Math.max(1, song.keyboardGlobalSequence.baseBars || 1),
+        baseNotes: (song.keyboardGlobalSequence.baseNotes ?? []).map((n) => ({
+          ...n,
+        })),
+      };
+    }
+
   const cellsBySection: Record<string, SectionBandCells> = {};
 
   for (let secIdx = 0; secIdx < song.sections.length; secIdx++) {
@@ -206,7 +218,7 @@ export function hydrateProject(stored: StoredBandProject): {
       ...rawSec,
       hatDensity: rawSec.hatDensity ?? 3,
       kickDensity: rawSec.kickDensity ?? 3,
-      keyboardDensity: rawSec.keyboardDensity ?? 3,
+      keyboardDensity: rawSec.keyboardDensity ?? 4,
       vocalDensity: rawSec.vocalDensity ?? 3,
       enabledParts: {
         ...createDefaultEnabledParts(),
