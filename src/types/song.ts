@@ -22,6 +22,7 @@ export type BeatFeel = 'Straight' | 'Half-Time' | 'Bounce' | 'Driving';
 export type EnergyLevel = 'Low' | 'Mid' | 'High';
 export type DensityLevel = 1 | 2 | 3 | 4 | 5;
 export type KeyboardDensityLevel = 1 | 2 | 3 | 4 | 5 | 6 | 7;
+export type VocalHarmonyMode = 'off' | 'upper_3rd' | 'lower_3rd' | 'octave_up';
 export type KickMode = 'acoustic' | '808';
 export type Bass808Behavior = 'octaveUp' | 'tacet' | 'normal';
 export type TakeStyle = 'A' | 'B' | 'C';
@@ -33,7 +34,8 @@ export type LogicalTrackType =
   | 'bass'
   | 'keyboard'
   | 'pad'
-  | 'vocal';
+  | 'vocal'
+  | 'vocalHarmony';
 export type SwingTarget = '8th' | '16th';
 export type QuantizeGrid = 'straight16' | 'triplet8';
 export type AnalysisMethod = 'basic-pitch' | 'simple-fallback' | 'manual';
@@ -74,6 +76,7 @@ export const TRACK_CHANNELS: Record<LogicalTrackType, number> = {
   keyboard: 1,
   pad: 2,
   vocal: 4,
+  vocalHarmony: 5,
 };
 
 export interface MidiNote {
@@ -136,6 +139,17 @@ export interface VocalMelodyData {
   snappedToScale?: boolean;
 }
 
+export interface CopiedPartPhrase {
+  part: PartId;
+  sourceSectionId: string;
+  sourceSectionName: string;
+  notes: MidiNoteEvent[];
+  sourceBars: number;
+  patternPreset: string;
+  unisonRiff?: UnisonRiffData;
+  vocalMelody?: VocalMelodyData;
+}
+
 export interface Section {
   id: string;
   type: SectionType;
@@ -147,6 +161,7 @@ export interface Section {
   kickDensity?: DensityLevel; // 1..5 (default 3)
   keyboardDensity?: KeyboardDensityLevel; // 1..7 (default 4)
   vocalDensity?: DensityLevel; // 1..5 (default 3)
+  vocalHarmony?: VocalHarmonyMode; // default 'off'
   chords: string[];
   enabledParts?: Record<InstrumentType, boolean>;
   uploadedDrumLoop?: DrumLoopData;
@@ -155,13 +170,6 @@ export interface Section {
 }
 
 export type SectionConfig = Section;
-
-export interface KeyboardGlobalSequence {
-  enabled: boolean;
-  baseNotes: MidiNoteEvent[];
-  baseBars: number;
-  sourceSectionId?: string;
-}
 
 export interface SongConfig {
   title: string;
@@ -175,7 +183,6 @@ export interface SongConfig {
   exportOnlyActiveTracks: boolean;
   split808KickTrack: boolean;
   uploadedDrumLoop?: DrumLoopData;
-  keyboardGlobalSequence?: KeyboardGlobalSequence;
   members: Record<InstrumentType, MemberConfig>;
   sections: Section[];
 }

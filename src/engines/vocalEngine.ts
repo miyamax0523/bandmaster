@@ -1,7 +1,10 @@
 import {
   TICKS_PER_BAR,
   TRACK_CHANNELS,
+  type KeyName,
   type MidiNote,
+  type ScaleType,
+  type VocalHarmonyMode,
 } from '../types/song';
 import {
   fitPitchClassToRange,
@@ -524,6 +527,150 @@ export function generateVocalNotes(input: EngineInput): MidiNote[] {
             channel: TRACK_CHANNELS.vocal,
           });
         }
+      } else if (preset === 'rap_jhiphop_bounce') {
+        const bounceSteps =
+          vocalDensity === 1
+            ? [0, 960]
+            : vocalDensity === 2
+              ? [0, 480, 960, 1440]
+              : vocalDensity === 3
+                ? [0, 240, 480, 720, 960, 1200, 1440]
+                : vocalDensity === 4
+                  ? [0, 240, 360, 480, 720, 960, 1080, 1200, 1440, 1680]
+                  : [0, 120, 240, 360, 480, 720, 840, 960, 1080, 1200, 1440, 1560, 1680];
+        for (let i = 0; i < bounceSteps.length; i++) {
+          const off = bounceSteps[i];
+          const isTail = i === bounceSteps.length - 1;
+          const pitch = isTail
+            ? isPhraseEndBar
+              ? rapThird
+              : rapBelow
+            : off % 480 === 240
+              ? rapSecond
+              : rapAnchor;
+          notes.push({
+            pitch,
+            velocity: clampVelocity(
+              baseVel + (isTail ? 10 : off % 480 === 240 ? 4 : 0) + rng.nextInt(-3, 3)
+            ),
+            startTick: barStart + off,
+            durationTicks: vocalDensity <= 2 ? 240 : isTail ? 260 : 150,
+            channel: TRACK_CHANNELS.vocal,
+          });
+        }
+      } else if (preset === 'rap_mixture_melodic') {
+        const mixSteps =
+          vocalDensity === 1
+            ? [0, 960]
+            : vocalDensity === 2
+              ? [0, 360, 960, 1440]
+              : vocalDensity === 3
+                ? [0, 360, 480, 840, 960, 1200, 1440]
+                : vocalDensity === 4
+                  ? [0, 120, 360, 480, 720, 840, 960, 1200, 1440, 1680]
+                  : [0, 120, 240, 360, 480, 600, 840, 960, 1080, 1200, 1320, 1440, 1680];
+        const riseBar = bar === section.bars - 1 || isPhraseEndBar;
+        for (let i = 0; i < mixSteps.length; i++) {
+          const off = mixSteps[i];
+          let pitch = rapAnchor;
+          if (riseBar && i >= Math.max(1, mixSteps.length - 3)) {
+            const stepPos = i - Math.max(1, mixSteps.length - 3);
+            pitch = stepPos === 0 ? rapSecond : stepPos === 1 ? rapThird : rapFifth;
+          } else if (off === 360 || off === 840) {
+            pitch = rapThird;
+          } else if (off % 480 === 0 && rng.chance(0.25)) {
+            pitch = rapBelow;
+          }
+          notes.push({
+            pitch,
+            velocity: clampVelocity(
+              baseVel + (riseBar && i === mixSteps.length - 1 ? 12 : 4) + rng.nextInt(-3, 3)
+            ),
+            startTick: barStart + off,
+            durationTicks: vocalDensity <= 2 ? 250 : riseBar && i === mixSteps.length - 1 ? 300 : 140,
+            channel: TRACK_CHANNELS.vocal,
+          });
+        }
+      } else if (preset === 'rap_hybrid_soar') {
+        const frontSteps =
+          vocalDensity === 1
+            ? [0]
+            : vocalDensity === 2
+              ? [0, 240, 480]
+              : vocalDensity === 3
+                ? [0, 120, 240, 360, 480, 720]
+                : [0, 120, 240, 360, 480, 600, 720, 840];
+        for (let i = 0; i < frontSteps.length; i++) {
+          const off = frontSteps[i];
+          notes.push({
+            pitch: i % 3 === 2 ? rapSecond : rapAnchor,
+            velocity: clampVelocity(baseVel + (off === 0 ? 6 : 0) + rng.nextInt(-3, 3)),
+            startTick: barStart + off,
+            durationTicks: vocalDensity <= 2 ? 200 : 100,
+            channel: TRACK_CHANNELS.vocal,
+          });
+        }
+        // Sustained melodic sing tail starting at beat 3
+        notes.push({
+          pitch: bar % 2 === 1 ? rapFifth : rapThird,
+          velocity: clampVelocity(baseVel + 8),
+          startTick: barStart + 960,
+          durationTicks: isPhraseEndBar ? 840 : 760,
+          channel: TRACK_CHANNELS.vocal,
+        });
+      } else if (preset === 'rap_cinematic_burst') {
+        // Dramatic beat 1-3 burst followed by beat 4 dramatic silence
+        const burstSteps =
+          vocalDensity === 1
+            ? [0, 480]
+            : vocalDensity === 2
+              ? [0, 240, 480, 960]
+              : vocalDensity === 3
+                ? [0, 120, 240, 480, 600, 720, 960, 1200]
+                : [0, 120, 240, 360, 480, 600, 720, 840, 960, 1080, 1200, 1320];
+        for (let i = 0; i < burstSteps.length; i++) {
+          const off = burstSteps[i];
+          const pitch =
+            i === burstSteps.length - 1
+              ? rapFifth
+              : off >= 960
+                ? rapThird
+                : i % 4 === 2
+                  ? rapSecond
+                  : rapAnchor;
+          notes.push({
+            pitch,
+            velocity: clampVelocity(
+              baseVel + (off >= 960 ? 10 : off % 480 === 0 ? 6 : -2)
+            ),
+            startTick: barStart + off,
+            durationTicks: vocalDensity <= 2 ? 220 : 105,
+            channel: TRACK_CHANNELS.vocal,
+          });
+        }
+      } else if (preset === 'rap_emo_sparse') {
+        const emoSteps =
+          vocalDensity === 1
+            ? [0, 960]
+            : vocalDensity === 2
+              ? [0, 480, 960]
+              : vocalDensity === 3
+                ? [0, 360, 960, 1320]
+                : vocalDensity === 4
+                  ? [0, 240, 360, 720, 960, 1200, 1560]
+                  : [0, 120, 360, 480, 720, 960, 1200, 1320, 1560];
+        for (let i = 0; i < emoSteps.length; i++) {
+          const off = emoSteps[i];
+          const pitch =
+            i === 0 ? rapBelow : i % 2 === 1 ? rapTwoBelow : rapAnchor;
+          notes.push({
+            pitch,
+            velocity: clampVelocity(baseVel - 12 + (off % 960 === 0 ? 6 : 0)),
+            startTick: barStart + off,
+            durationTicks: vocalDensity <= 2 ? 360 : 210,
+            channel: TRACK_CHANNELS.vocal,
+          });
+        }
       } else {
         // rap_monotone_chant
         const chantSteps =
@@ -748,6 +895,226 @@ export function generateVocalNotes(input: EngineInput): MidiNote[] {
       continue;
     }
 
+    if (preset === 'melody_alt_soar') {
+      const highOctRoot = nearestScalePitch(
+        barRoot + 12,
+        scalePcs,
+        bandMin,
+        Math.min(VOCAL_MAX_PITCH, Math.max(bandMax, bandMin + 12))
+      );
+      const soarSteps =
+        vocalDensity === 1
+          ? [
+              { off: 0, dur: 900, high: false },
+              { off: 960, dur: 880, high: true },
+            ]
+          : vocalDensity === 2
+            ? [
+                { off: 0, dur: 440, high: false },
+                { off: 480, dur: 440, high: false },
+                { off: 960, dur: 880, high: true },
+              ]
+            : vocalDensity === 3
+              ? [
+                  { off: 0, dur: 420, high: false },
+                  { off: 480, dur: 220, high: false },
+                  { off: 720, dur: 220, high: true },
+                  { off: 960, dur: 840, high: true },
+                ]
+              : [
+                  { off: 0, dur: 220, high: false },
+                  { off: 240, dur: 220, high: false },
+                  { off: 480, dur: 220, high: true },
+                  { off: 720, dur: 220, high: true },
+                  { off: 960, dur: 420, high: true },
+                  { off: 1440, dur: 400, high: true },
+                ];
+      for (const slot of soarSteps) {
+        const pitch = slot.high
+          ? pickClosestFromList(highOctRoot, chordTones.length > 0 ? [...chordTones, highOctRoot] : [highOctRoot])
+          : barRoot;
+        const safePitch = nearestScalePitch(pitch, scalePcs, VOCAL_MIN_PITCH, VOCAL_MAX_PITCH);
+        prevPitch = nearestScalePitch(safePitch, scalePcs, bandMin, bandMax);
+        notes.push({
+          pitch: safePitch,
+          velocity: clampVelocity(baseVel + (slot.high ? 10 : -2) + rng.nextInt(-3, 3)),
+          startTick: barStart + slot.off,
+          durationTicks: slot.dur,
+          channel: TRACK_CHANNELS.vocal,
+        });
+      }
+      continue;
+    }
+
+    if (preset === 'melody_grunge_drag') {
+      const dragOffsets =
+        vocalDensity === 1
+          ? [0, 990]
+          : vocalDensity === 2
+            ? [0, 510, 990]
+            : vocalDensity === 3
+              ? [0, 270, 510, 990, 1470]
+              : [0, 270, 510, 750, 990, 1230, 1470];
+      let walkPitch = nearestScalePitch(
+        barRoot + 5,
+        scalePcs,
+        bandMin,
+        bandMax
+      );
+      for (let i = 0; i < dragOffsets.length; i++) {
+        const off = dragOffsets[i];
+        const idx = scaleNotes.indexOf(nearestScalePitch(walkPitch, scalePcs, 52, 72));
+        const descIdx = Math.max(0, (idx >= 0 ? idx : 4) - (i === 0 ? 0 : 1));
+        walkPitch = nearestScalePitch(scaleNotes[descIdx] ?? barRoot, scalePcs, bandMin, bandMax);
+        prevPitch = walkPitch;
+        const nextOff = i + 1 < dragOffsets.length ? dragOffsets[i + 1] : TICKS_PER_BAR;
+        const dur = Math.max(120, Math.min(460, nextOff - off - 20));
+        notes.push({
+          pitch: walkPitch,
+          velocity: clampVelocity(baseVel - 4 + (off === 0 ? 6 : 0) + rng.nextInt(-4, 3)),
+          startTick: barStart + off,
+          durationTicks: dur,
+          channel: TRACK_CHANNELS.vocal,
+        });
+      }
+      continue;
+    }
+
+    if (preset === 'melody_britpop_catchy') {
+      const grid = pentGrid.length > 0 ? pentGrid : scaleNotes;
+      const hookOffsets =
+        vocalDensity === 1
+          ? [0, 960]
+          : vocalDensity === 2
+            ? [0, 480, 960, 1440]
+            : vocalDensity === 3
+              ? [0, 240, 480, 720, 960, 1200, 1440]
+              : vocalDensity === 4
+                ? [0, 240, 480, 720, 960, 1080, 1200, 1440, 1680]
+                : [0, 120, 240, 480, 600, 720, 960, 1080, 1200, 1440, 1680];
+      const baseIdx = Math.max(
+        0,
+        grid.reduce(
+          (bestIdx, p, idx) =>
+            Math.abs(p - barRoot) < Math.abs(grid[bestIdx] - barRoot) ? idx : bestIdx,
+          0
+        )
+      );
+      const contour = [0, 2, 1, 3, 2, 1, 0, 2, 4, 2, 0];
+      for (let i = 0; i < hookOffsets.length; i++) {
+        const off = hookOffsets[i];
+        const stepOffset = contour[i % contour.length];
+        const targetIdx = Math.min(grid.length - 1, baseIdx + stepOffset);
+        const pitch = grid[targetIdx] ?? barRoot;
+        prevPitch = pitch;
+        notes.push({
+          pitch,
+          velocity: clampVelocity(baseVel + (off % 480 === 0 ? 6 : 0) + rng.nextInt(-3, 3)),
+          startTick: barStart + off,
+          durationTicks: vocalDensity <= 2 ? 380 : 200,
+          channel: TRACK_CHANNELS.vocal,
+        });
+      }
+      continue;
+    }
+
+    if (preset === 'melody_metalcore_chorus') {
+      const chorusSlots =
+        vocalDensity === 1
+          ? [
+              { off: 0, dur: 900, high: false },
+              { off: 960, dur: 880, high: true },
+            ]
+          : vocalDensity === 2
+            ? [
+                { off: 0, dur: 680, high: false },
+                { off: 720, dur: 220, high: true },
+                { off: 960, dur: 880, high: true },
+              ]
+            : vocalDensity === 3
+              ? [
+                  { off: 0, dur: 660, high: false },
+                  { off: 720, dur: 220, high: false },
+                  { off: 960, dur: 660, high: true },
+                  { off: 1680, dur: 220, high: true },
+                ]
+              : [
+                  { off: 0, dur: 420, high: false },
+                  { off: 480, dur: 220, high: false },
+                  { off: 720, dur: 220, high: true },
+                  { off: 960, dur: 420, high: true },
+                  { off: 1440, dur: 220, high: true },
+                  { off: 1680, dur: 220, high: true },
+                ];
+      const peakFloor = Math.min(bandMax, Math.max(bandMin + 4, bandMax - 3));
+      const highChordTones = chordTones.filter((p) => p >= peakFloor);
+      const topTone =
+        highChordTones[highChordTones.length - 1] ??
+        nearestScalePitch(bandMax, scalePcs, bandMin, bandMax);
+      for (let i = 0; i < chorusSlots.length; i++) {
+        const slot = chorusSlots[i];
+        const pitch = slot.high ? topTone : barRoot;
+        prevPitch = pitch;
+        notes.push({
+          pitch,
+          velocity: clampVelocity(baseVel + (slot.high ? 12 : 4)),
+          startTick: barStart + slot.off,
+          durationTicks: slot.dur,
+          channel: TRACK_CHANNELS.vocal,
+        });
+      }
+      continue;
+    }
+
+    if (preset === 'melody_emo_screamo') {
+      const isShoutBar = bar % 2 === 1;
+      if (!isShoutBar) {
+        const quietOffs =
+          vocalDensity <= 2 ? [0, 960] : [0, 480, 960, 1440];
+        for (const off of quietOffs) {
+          const pitch = nearestScalePitch(
+            Math.min(bandMin + 4, barRoot),
+            scalePcs,
+            bandMin,
+            bandMax
+          );
+          prevPitch = pitch;
+          notes.push({
+            pitch,
+            velocity: clampVelocity(baseVel - 18 + rng.nextInt(-3, 3)),
+            startTick: barStart + off,
+            durationTicks: vocalDensity <= 2 ? 760 : 380,
+            channel: TRACK_CHANNELS.vocal,
+          });
+        }
+      } else {
+        const shoutOffs =
+          vocalDensity === 1
+            ? [0, 960]
+            : vocalDensity === 2
+              ? [0, 480, 960, 1440]
+              : vocalDensity === 3
+                ? [0, 240, 480, 720, 960, 1200, 1440]
+                : [0, 120, 240, 360, 480, 720, 840, 960, 1200, 1440, 1680];
+        const highCeil = Math.min(VOCAL_MAX_PITCH, bandMax + 2);
+        const shoutPitchA = nearestScalePitch(highCeil - 2, scalePcs, bandMin, highCeil);
+        const shoutPitchB = nearestScalePitch(highCeil, scalePcs, bandMin, highCeil);
+        for (let i = 0; i < shoutOffs.length; i++) {
+          const off = shoutOffs[i];
+          const pitch = i % 3 === 1 ? shoutPitchB : shoutPitchA;
+          prevPitch = nearestScalePitch(pitch, scalePcs, bandMin, bandMax);
+          notes.push({
+            pitch,
+            velocity: clampVelocity(baseVel + 16 + rng.nextInt(-2, 4)),
+            startTick: barStart + off,
+            durationTicks: vocalDensity <= 2 ? 380 : 170,
+            channel: TRACK_CHANNELS.vocal,
+          });
+        }
+      }
+      continue;
+    }
+
     // 4. melody_ballad OR low density (1..2) auto/long sustained phrasing
     if (
       preset === 'melody_ballad' ||
@@ -919,4 +1286,46 @@ export function generateVocalNotes(input: EngineInput): MidiNote[] {
   }
 
   return enforceMonophonicAndClip(notes, sectionEnd);
+}
+
+/**
+ * Generates diatonic or octave harmony notes from the resolved main Vocal melody.
+ */
+export function generateVocalHarmonyNotes(
+  melodyNotes: readonly MidiNote[],
+  key: KeyName,
+  scale: ScaleType,
+  mode: VocalHarmonyMode
+): MidiNote[] {
+  if (mode === 'off' || melodyNotes.length === 0) {
+    return [];
+  }
+
+  const scalePcs = new Set(getScalePitchClasses(key, scale));
+  const scaleGrid = buildScaleGrid(scalePcs, 24, 96);
+
+  return melodyNotes.map((n) => {
+    let pitch = n.pitch;
+    if (mode === 'octave_up') {
+      pitch = Math.min(88, n.pitch + 12);
+    } else {
+      const snapped = nearestScalePitch(n.pitch, scalePcs, 24, 96);
+      const idx = scaleGrid.indexOf(snapped);
+      if (idx >= 0) {
+        const delta = mode === 'upper_3rd' ? 2 : -2;
+        const targetIdx = Math.max(0, Math.min(scaleGrid.length - 1, idx + delta));
+        pitch = scaleGrid[targetIdx];
+      } else {
+        pitch = mode === 'upper_3rd' ? n.pitch + 4 : n.pitch - 4;
+      }
+    }
+
+    return {
+      pitch: Math.max(0, Math.min(127, Math.round(pitch))),
+      velocity: Math.max(45, Math.min(127, Math.round(n.velocity * 0.82))),
+      startTick: n.startTick,
+      durationTicks: n.durationTicks,
+      channel: TRACK_CHANNELS.vocalHarmony,
+    };
+  });
 }

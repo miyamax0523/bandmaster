@@ -108,7 +108,23 @@ input[type='range'] {
 .brand-row {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
+  flex-wrap: wrap;
+}
+
+.brand-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.header-snapshot-btn {
+  min-height: 36px;
+  padding: 5px 10px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  border-radius: 10px;
 }
 
 .app-title {
@@ -828,13 +844,6 @@ input[type='range'] {
   font-size: 0.8rem;
 }
 
-.global-seq-btn.is-active {
-  background: var(--primary);
-  border-color: var(--primary);
-  color: #fff;
-  font-weight: 700;
-}
-
 .badge-row,
 .chip-list,
 .warning-stack,
@@ -951,6 +960,31 @@ input[type='range'] {
 
 .density-segments--7 {
   grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+
+.density-segments--4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.harmony-btn {
+  font-size: 0.74rem;
+  padding: 4px 2px;
+}
+
+.copy-paste-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+}
+
+.copy-paste-btn {
+  min-height: 38px;
+  padding: 6px 10px;
+  font-size: 0.78rem;
+  border-radius: 8px;
 }
 
 .density-btn {
@@ -1265,7 +1299,116 @@ input[type='range'] {
 
 .modal-footer {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
+  align-items: center;
   gap: 8px;
   margin-top: 6px;
+}
+
+/* Project Snapshots Modal */
+.snapshot-modal-panel {
+  max-width: 680px;
+}
+
+.snapshot-save-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.snapshot-name-input {
+  flex: 1;
+  min-width: 180px;
+  min-height: 40px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
+.snapshot-save-btn {
+  min-height: 40px;
+  padding: 6px 14px;
+}
+
+.snapshot-status {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(34, 197, 94, 0.14);
+  border: 1px solid rgba(34, 197, 94, 0.45);
+  color: #bbf7d0;
+  font-size: 0.82rem;
+}
+
+.snapshot-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.snapshot-empty {
+  margin: 12px 0;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.snapshot-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+
+.snapshot-info {
+  flex: 1;
+  min-width: 200px;
+}
+
+.snapshot-title {
+  font-weight: 700;
+  font-size: 0.94rem;
+  word-break: break-word;
+}
+
+.snapshot-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+  font-size: 0.76rem;
+  color: var(--text-muted);
+}
+
+.snapshot-rename-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.snapshot-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.snapshot-mini-btn {
+  min-height: 34px;
+  padding: 4px 10px;
+  font-size: 0.78rem;
+  border-radius: 8px;
+}
+
+.snapshot-count {
+  font-size: 0.8rem;
+  color: var(--text-muted);
 }

@@ -2,8 +2,15 @@ import { describe, expect, it } from 'vitest';
 import { createDefaultSongConfig, generateAllSections, toggleCellLock } from '../src/lib/bandState';
 import {
   createMemoryStorageBackend,
+  deleteProjectSnapshot,
+  listProjectSnapshots,
   loadProject,
+  loadProjectSnapshot,
+  overwriteProjectSnapshot,
+  MAX_PROJECT_SNAPSHOTS,
+  renameProjectSnapshot,
   saveProject,
+  saveProjectSnapshot,
   serializeProject,
   STORAGE_SCHEMA_VERSION,
   type StorageBackend,
@@ -163,6 +170,53 @@ describe('storage', () => {
       expect(vCell.takes.A.length).toBeGreaterThan(0);
       expect(sec.keyboardDensity).toBe(4);
       expect(sec.vocalDensity).toBe(3);
+      expect(sec.vocalHarmony).toBe('off');
     }
+  });
+
+  it('saves, deep-copies, overwrites, renames, loads, caps at 15, and deletes project snapshots', () => {
+    for (const existing of listProjectSnapshots()) {
+      deleteProjectSnapshot(existing.id);
+    }
+
+    const song = createDefaultSongConfig('rockBand');
+    song.title = 'Original Track';
+    song.bpm = 140;
+    const state = generateAllSections(song);
+
+    const snap1 = saveProjectSnapshot(song, 'A案（ロック）', state);
+    expect(snap1.name).toBe('A案（ロック）');
+    expect(snap1.song.title).toBe('A案（ロック）');
+
+    // Mutate working song after snapshot save -> snapshot must remain untouched
+    song.bpm = 175;
+    song.sections[0].name = 'Modified Section';
+    const loaded1 = loadProjectSnapshot(snap1.id);
+    expect(loaded1).not.toBeNull();
+    expect(loaded1!.bpm).toBe(140);
+    expect(loaded1!.sections[0].name).toBe('イントロ');
+    expect(loaded1!.sections[0].vocalHarmony).toBe('off');
+
+    // Overwrite snapshot updates stored content while preserving snapshot id/name
+    const overwritten = overwriteProjectSnapshot(snap1.id, song, state);
+    expect(overwritten?.song.bpm).toBe(175);
+    expect(loadProjectSnapshot(snap1.id)?.bpm).toBe(175);
+
+    // Rename syncs name & song title
+    renameProjectSnapshot(snap1.id, '本番採用版');
+    expect(loadProjectSnapshot(snap1.id)?.title).toBe('本番採用版');
+    expect(listProjectSnapshots().find((s) => s.id === snap1.id)?.name).toBe('本番採用版');
+
+    // Cap at 15 slots
+    for (let i = 0; i < MAX_PROJECT_SNAPSHOTS + 3; i++) {
+      saveProjectSnapshot(song, `Slot ${i}`, state);
+    }
+    expect(listProjectSnapshots().length).toBe(MAX_PROJECT_SNAPSHOTS);
+
+    // Delete removes slot cleanly
+    for (const s of listProjectSnapshots()) {
+      deleteProjectSnapshot(s.id);
+    }
+    expect(listProjectSnapshots()).toEqual([]);
   });
 });

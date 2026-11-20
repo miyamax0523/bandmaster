@@ -108,6 +108,35 @@ describe('multiTrackMidiExport', () => {
 
     const res = exportMultiTrackMidi(song, state);
     expect(res.totalNotes).toBe(0);
-    expect(res.ntrks).toBe(7); // Conductor + 6 empty tracks
+    expect(res.ntrks).toBe(7); // Conductor + 6 empty tracks (Vocal Harmony omitted when off)
+  });
+
+  it('adds an independent Vocal Harmony MIDI track only when at least one section enables harmony', () => {
+    const song = createDefaultSongConfig('rockBand');
+    song.exportOnlyActiveTracks = true;
+    song.members.drums.enabled = false;
+    song.members.bass.enabled = false;
+    song.members.keyboard.enabled = false;
+    song.members.pad.enabled = false;
+    song.sections = [
+      {
+        id: 's1',
+        type: 'Chorus',
+        name: 'Chorus',
+        bars: 1,
+        energy: 'High',
+        kickMode: 'acoustic',
+        vocalHarmony: 'upper_3rd',
+        chords: ['C'],
+      },
+    ];
+    const state = generateAllSections(song);
+    const res = exportMultiTrackMidi(song, state);
+    const parsed = parseMidiFile(res.bytes);
+
+    expect(res.trackNames).toEqual(['Conductor', 'Vocal', 'Vocal Harmony']);
+    expect(parsed.ntrks).toBe(3);
+    expect(parsed.tracks[2].name).toBe('Vocal Harmony');
+    expect(parsed.tracks[2].notes.length).toBe(parsed.tracks[1].notes.length);
   });
 });

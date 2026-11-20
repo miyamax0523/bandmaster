@@ -36,6 +36,7 @@ export function createDefaultMixerState(): MixerState {
     keyboard: { volume: 0.85, muted: false, solo: false },
     pad: { volume: 0.75, muted: false, solo: false },
     vocal: { volume: 0.9, muted: false, solo: false },
+    vocalHarmony: { volume: 0.85, muted: false, solo: false },
   };
 }
 
@@ -81,6 +82,7 @@ export class AudioPreviewEngine {
     keyboard: [],
     pad: [],
     vocal: [],
+    vocalHarmony: [],
   };
   private bpm = 135;
   private totalTicks = 0;
@@ -138,6 +140,7 @@ export class AudioPreviewEngine {
         keyboard: { ...this.mixer.keyboard },
         pad: { ...this.mixer.pad },
         vocal: { ...this.mixer.vocal },
+        vocalHarmony: { ...this.mixer.vocalHarmony },
       },
     };
   }
@@ -166,6 +169,7 @@ export class AudioPreviewEngine {
         'keyboard',
         'pad',
         'vocal',
+        'vocalHarmony',
       ] as LogicalTrackType[]) {
         const g = this.ctx.createGain();
         g.connect(this.headroomGain);
@@ -198,6 +202,7 @@ export class AudioPreviewEngine {
       'keyboard',
       'pad',
       'vocal',
+      'vocalHarmony',
     ] as LogicalTrackType[]) {
       const gainNode = this.trackGains[track];
       if (!gainNode) continue;
@@ -484,6 +489,7 @@ export class AudioPreviewEngine {
       'keyboard',
       'pad',
       'vocal',
+      'vocalHarmony',
     ] as LogicalTrackType[]) {
       const notes = this.tracks[track] ?? [];
       for (const note of notes) {
@@ -537,7 +543,7 @@ export class AudioPreviewEngine {
         'triangle',
         2600
       );
-    } else if (track === 'vocal') {
+    } else if (track === 'vocal' || track === 'vocalHarmony') {
       // Clear monophonic lead / formant-like vocal synth
       this.synthVocalLead(
         this.ctx,
@@ -545,7 +551,7 @@ export class AudioPreviewEngine {
         midiToFrequency(note.pitch),
         startTime,
         Math.min(1.6, durSec),
-        velGain * 0.58
+        velGain * (track === 'vocalHarmony' ? 0.52 : 0.58)
       );
     } else {
       // pad

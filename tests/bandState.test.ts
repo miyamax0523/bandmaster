@@ -6,22 +6,26 @@ import {
   generateAllSections,
   getSongDurationSummary,
   isDrumLockedUnsynced,
+  pastePartPhraseToSection,
   pushUndoSnapshot,
   reorderSectionsInSong,
   selectInstrumentTake,
   setSectionUnisonRiff,
   toggleCellLock,
-  toggleKeyboardGlobalSequence,
   toggleSectionPartEnabled,
   toggleSectionRiffOctaveUpOn808,
   updateSectionBars,
   updateSectionDrumDensity,
-  updateSectionKeyboardDensity,
   updateSectionKickMode,
+  updateSectionVocalHarmony,
 } from '../src/lib/bandState';
 import { detectHorizontalSwipe } from '../src/lib/touchSwipe';
 import { selectSongTracks } from '../src/lib/noteSelector';
-import { TICKS_PER_BAR, type UnisonRiffData } from '../src/types/song';
+import {
+  TICKS_PER_BAR,
+  type CopiedPartPhrase,
+  type UnisonRiffData,
+} from '../src/types/song';
 
 describe('bandState', () => {
   it('generates drums -> bass -> keyboard -> pad in order so bass follows drum kicks', () => {
@@ -346,70 +350,101 @@ describe('bandState', () => {
     ).toBe(true);
   });
 
-  it('loops the fixed keyboardGlobalSequence across sections with different chords while respecting section mute', () => {
+  it('pastes copied part phrases across sections with bar-length adaptation, preset sync, and auto-lock', () => {
     const song = createDefaultSongConfig('rockBand');
     song.members.keyboard.activeSectionsOnly = false;
-    song.members.keyboard.patternPreset = 'arp_up';
     song.sections = [
       {
         id: 's1',
         type: 'Verse',
         name: 'Sec1',
-        bars: 1,
+        bars: 2,
         energy: 'Mid',
         kickMode: 'acoustic',
         keyboardDensity: 4,
-        chords: ['C'],
+        chords: ['C', 'G'],
       },
       {
-        id: 's2',
+        id: 's4',
         type: 'Chorus',
-        name: 'Sec2',
-        bars: 2,
+        name: 'Sec4',
+        bars: 4,
         energy: 'High',
         kickMode: 'acoustic',
         keyboardDensity: 4,
-        chords: ['F#m', 'Bm'],
+        chords: ['F', 'G', 'Em', 'Am'],
+      },
+      {
+        id: 's8',
+        type: 'Chorus',
+        name: 'Sec8',
+        bars: 8,
+        energy: 'High',
+        kickMode: 'acoustic',
+        keyboardDensity: 4,
+        chords: ['F', 'G'],
       },
     ];
-    let state = generateAllSections(song, undefined, 100, false);
+    const state = generateAllSections(song, undefined, 100, false);
 
-    // Put distinct marker pitches inside s1 keyboard so we can verify exact cross-section sequence copy
-    state.cellsBySection.s1.keyboard.takes.A = [
-      { pitch: 72, velocity: 100, startTick: 0, durationTicks: 240 },
-      { pitch: 76, velocity: 100, startTick: 480, durationTicks: 240 },
+    const copiedKeyboard: CopiedPartPhrase = {
+      part: 'keyboard',
+      sourceSectionId: 's1',
+      sourceSectionName: 'Sec1',
+      sourceBars: 2,
+      patternPreset: 'fusion_comping',
+      notes: [
+        { pitch: 64, velocity: 95, startTick: 0, durationTicks: 240 },
+        { pitch: 67, velocity: 90, startTick: TICKS_PER_BAR + 480, durationTicks: 240 },
+      ],
+    };
+
+    // 2 bars -> 4 bars loops 2x
+    const pasted4 = pastePartPhraseToSection(song, state, 's4', copiedKeyboard);
+    expect(pasted4.song.members.keyboard.patternPreset).toBe('fusion_comping');
+    expect(pasted4.bandState.cellsBySection.s4.keyboard.locked).toBe(true);
+    expect(pasted4.bandState.cellsBySection.s4.keyboard.takes.A.map((n) => n.startTick)).toEqual([
+      0,
+      TICKS_PER_BAR + 480,
+      2 * TICKS_PER_BAR,
+      3 * TICKS_PER_BAR + 480,
+    ]);
+
+    // 2 bars -> 8 bars loops 4x
+    const pasted8 = pastePartPhraseToSection(pasted4.song, pasted4.bandState, 's8', copiedKeyboard);
+    expect(pasted8.bandState.cellsBySection.s8.keyboard.locked).toBe(true);
+    expect(pasted8.bandState.cellsBySection.s8.keyboard.takes.A.length).toBe(8);
+
+    // 2 bars -> 1 bar truncates cleanly within 1 bar
+    pasted8.song.sections[0].bars = 1;
+    const pasted1 = pastePartPhraseToSection(pasted8.song, pasted8.bandState, 's1', copiedKeyboard);
+    expect(pasted1.bandState.cellsBySection.s1.keyboard.takes.A.map((n) => n.startTick)).toEqual([0]);
+  });
+
+  it('updates section vocalHarmony mode and emits harmony track only when enabled', () => {
+    const song = createDefaultSongConfig('rockBand');
+    song.sections = [
+      {
+        id: 'v1',
+        type: 'Verse',
+        name: 'Aメロ',
+        bars: 2,
+        energy: 'Mid',
+        kickMode: 'acoustic',
+        vocalHarmony: 'off',
+        chords: ['Em', 'C'],
+      },
     ];
+    const state = generateAllSections(song, undefined, 200, false);
 
-    const enabledSong = toggleKeyboardGlobalSequence(song, state, 's1', true);
-    expect(enabledSong.keyboardGlobalSequence?.enabled).toBe(true);
-    expect(enabledSong.keyboardGlobalSequence?.baseBars).toBe(1);
+    const tracksOff = selectSongTracks(song, state);
+    expect(tracksOff.vocal.length).toBeGreaterThan(0);
+    expect(tracksOff.vocalHarmony).toEqual([]);
 
-    const tracksGlobal = selectSongTracks(enabledSong, state);
-    // s1 (0..1920): 2 notes; s2 (1920..5760, 2 bars): s1's 1-bar pattern looped twice -> 4 notes with C/E pitches
-    const s2Kb = tracksGlobal.keyboard.filter((n) => n.startTick >= TICKS_PER_BAR);
-    expect(s2Kb.map((n) => n.pitch)).toEqual([72, 76, 72, 76]);
-    expect(s2Kb.map((n) => n.startTick)).toEqual([1920, 2400, 3840, 4320]);
+    const updated = updateSectionVocalHarmony(song, state, 'v1', 'upper_3rd');
+    expect(updated.song.sections[0].vocalHarmony).toBe('upper_3rd');
 
-    // Changing source section keyboardDensity while global mode active auto-updates baseNotes
-    const densityUpdated = updateSectionKeyboardDensity(enabledSong, state, 's1', 7);
-    expect(densityUpdated.song.keyboardGlobalSequence?.baseNotes.length).toBeGreaterThan(10);
-
-    // Muting s2 keyboard via enabledParts silences s2 while keeping s1 active
-    const s2Muted = toggleSectionPartEnabled(
-      enabledSong,
-      state,
-      's2',
-      'keyboard',
-      false
-    );
-    const tracksMutedS2 = selectSongTracks(s2Muted.song, s2Muted.bandState);
-    expect(tracksMutedS2.keyboard.filter((n) => n.startTick < TICKS_PER_BAR).length).toBe(2);
-    expect(tracksMutedS2.keyboard.filter((n) => n.startTick >= TICKS_PER_BAR)).toEqual([]);
-
-    // Disabling global sequence restores s2's F#m/Bm chord notes
-    const disabledSong = toggleKeyboardGlobalSequence(enabledSong, state, 's1', false);
-    const tracksNormal = selectSongTracks(disabledSong, state);
-    const s2Normal = tracksNormal.keyboard.filter((n) => n.startTick >= TICKS_PER_BAR);
-    expect(s2Normal.some((n) => n.pitch !== 72 && n.pitch !== 76)).toBe(true);
+    const tracksOn = selectSongTracks(updated.song, updated.bandState);
+    expect(tracksOn.vocalHarmony.length).toBe(tracksOn.vocal.length);
   });
 });

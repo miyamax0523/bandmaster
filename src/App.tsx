@@ -3,13 +3,14 @@ import { ArrangementEditor } from './components/ArrangementEditor';
 import { BandmasterConsole } from './components/BandmasterConsole';
 import { MemberSettings } from './components/MemberSettings';
 import { PlaybackControls } from './components/PlaybackControls';
+import { ProjectSnapshotsModal } from './components/ProjectSnapshotsModal';
 import { RiffRecorderModal } from './components/RiffRecorderModal';
 import { SongSettings } from './components/SongSettings';
 import { TrackControls } from './components/TrackControls';
 import { useAudioPreview } from './hooks/useAudioPreview';
 import { useBandGenerator } from './hooks/useBandGenerator';
 import { getSongDurationSummary } from './lib/bandState';
-import { CURRENT_ENGINE_VERSION } from './types/song';
+import { CURRENT_ENGINE_VERSION, type CopiedPartPhrase } from './types/song';
 
 type ActiveTab = 'song' | 'arrangement' | 'members' | 'console';
 
@@ -45,8 +46,10 @@ export function App() {
     toggleSectionPart,
     changeSectionVocalMelody,
     changeSectionVocalDensity,
+    changeSectionVocalHarmony,
     changeSectionKeyboardDensity,
-    toggleGlobalKeyboardSequence,
+    pastePartPhrase,
+    loadSnapshotData,
     transposeSectionChords,
   } = useBandGenerator();
 
@@ -61,6 +64,8 @@ export function App() {
   const [vocalModalSectionId, setVocalModalSectionId] = useState<string | null>(
     null
   );
+  const [snapshotModalOpen, setSnapshotModalOpen] = useState(false);
+  const [copiedPhrase, setCopiedPhrase] = useState<CopiedPartPhrase | null>(null);
 
   const audio = useAudioPreview(song, bandState, selectedSectionId);
 
@@ -87,8 +92,17 @@ export function App() {
     <div className="app-shell">
       <header className="app-header">
         <div className="brand-row">
-          <h1 className="app-title">BANDMASTER</h1>
-          <span className="version-pill">v{CURRENT_ENGINE_VERSION}</span>
+          <div className="brand-left">
+            <h1 className="app-title">BANDMASTER</h1>
+            <span className="version-pill">v{CURRENT_ENGINE_VERSION}</span>
+          </div>
+          <button
+            type="button"
+            className="btn btn-secondary header-snapshot-btn"
+            onClick={() => setSnapshotModalOpen(true)}
+          >
+            💾 保存 / 履歴
+          </button>
         </div>
         <div className="song-summary">
           {song.title} · {song.bpm} BPM · {song.key} {song.scale} ·{' '}
@@ -201,8 +215,11 @@ export function App() {
               onClearSectionDrumLoop={(id) => changeSectionDrumLoop(id, undefined)}
               onChangeSectionDrumDensity={changeSectionDrumDensity}
               onChangeSectionKeyboardDensity={changeSectionKeyboardDensity}
-              onToggleKeyboardGlobalSequence={toggleGlobalKeyboardSequence}
               onChangeSectionVocalDensity={changeSectionVocalDensity}
+              onChangeSectionVocalHarmony={changeSectionVocalHarmony}
+              copiedPhrase={copiedPhrase}
+              onCopyPartPhrase={(phrase) => setCopiedPhrase(phrase)}
+              onPastePartPhrase={pastePartPhrase}
               onChangePatternPreset={(inst, preset) =>
                 updateMember(inst, { patternPreset: preset })
               }
@@ -270,6 +287,19 @@ export function App() {
             setVocalModalSectionId(null);
           }}
           onClose={() => setVocalModalSectionId(null)}
+        />
+      )}
+
+      {snapshotModalOpen && (
+        <ProjectSnapshotsModal
+          song={song}
+          bandState={bandState}
+          onLoadSnapshot={(loadedSong, loadedState) => {
+            audio.stop();
+            loadSnapshotData(loadedSong, loadedState);
+            setSelectedSectionId(loadedSong.sections[0]?.id ?? '');
+          }}
+          onClose={() => setSnapshotModalOpen(false)}
         />
       )}
     </div>

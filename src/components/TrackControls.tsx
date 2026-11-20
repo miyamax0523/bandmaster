@@ -15,6 +15,7 @@ const TRACK_LABELS: Array<{ key: LogicalTrackType; label: string; icon: string }
   { key: 'keyboard', label: 'Keyboard', icon: '🎹' },
   { key: 'pad', label: 'PAD', icon: '🌊' },
   { key: 'vocal', label: 'Vocal', icon: '🎤' },
+  { key: 'vocalHarmony', label: 'Vocal Harm', icon: '🎶' },
 ];
 
 export function TrackControls({

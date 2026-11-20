@@ -7,6 +7,7 @@ import {
   createDefaultEnabledParts,
   CURRENT_ENGINE_VERSION,
   TICKS_PER_BAR,
+  type CopiedPartPhrase,
   type DensityLevel,
   type DrumLoopData,
   type InstrumentType,
@@ -17,6 +18,7 @@ import {
   type SongConfig,
   type TakeStyle,
   type UnisonRiffData,
+  type VocalHarmonyMode,
   type VocalMelodyData,
 } from '../types/song';
 import type {
@@ -79,6 +81,7 @@ export function cloneVocalMelody(
 export function cloneSection(sec: Section): Section {
   return {
     ...sec,
+    vocalHarmony: sec.vocalHarmony ?? 'off',
     chords: [...sec.chords],
     enabledParts: sec.enabledParts
       ? { ...createDefaultEnabledParts(), ...sec.enabledParts }
@@ -93,12 +96,6 @@ export function cloneSongConfig(song: SongConfig): SongConfig {
   return {
     ...song,
     uploadedDrumLoop: cloneDrumLoop(song.uploadedDrumLoop),
-    keyboardGlobalSequence: song.keyboardGlobalSequence
-      ? {
-          ...song.keyboardGlobalSequence,
-          baseNotes: song.keyboardGlobalSequence.baseNotes.map((n) => ({ ...n })),
-        }
-      : undefined,
     members: {
       drums: { ...song.members.drums },
       bass: { ...song.members.bass },
@@ -598,70 +595,121 @@ export function updateSectionVocalDensity(
   return { song: nextSong, bandState: nextState };
 }
 
-export function syncKeyboardGlobalSequence(
-  song: SongConfig,
-  bandState: BandState,
-  preferredSectionId?: string
-): SongConfig {
-  if (!song.keyboardGlobalSequence?.enabled) return song;
-  const targetSectionId =
-    preferredSectionId ??
-    song.keyboardGlobalSequence.sourceSectionId ??
-    song.sections[0]?.id;
-  if (!targetSectionId) return song;
-  const srcSec = song.sections.find((s) => s.id === targetSectionId);
-  const kbCell = bandState.cellsBySection[targetSectionId]?.keyboard;
-  if (!srcSec || !kbCell) return song;
+function adaptPhraseNotesToBars(
+  notes: readonly MidiNote[],
+  sourceBars: number,
+  targetBars: number
+): MidiNote[] {
+  const safeSourceBars = Math.max(1, Math.round(sourceBars));
+  const safeTargetBars = Math.max(1, Math.round(targetBars));
+  const periodTicks = safeSourceBars * TICKS_PER_BAR;
+  const targetEndTicks = safeTargetBars * TICKS_PER_BAR;
+  if (notes.length === 0) return [];
 
-  const take = kbCell.selectedTake === 'OFF' ? 'A' : kbCell.selectedTake;
-  const srcNotes = kbCell.takes[take] ?? [];
-  const nextSong = cloneSongConfig(song);
-  nextSong.keyboardGlobalSequence = {
-    enabled: true,
-    baseNotes: srcNotes.map((n) => ({ ...n })),
-    baseBars: Math.max(1, srcSec.bars),
-    sourceSectionId: targetSectionId,
-  };
-  return nextSong;
-}
+  const inPeriod = notes.filter(
+    (n) => n.startTick >= 0 && n.startTick < periodTicks
+  );
+  const cycleNotes = inPeriod.length > 0 ? inPeriod : notes;
 
-export function toggleKeyboardGlobalSequence(
-  song: SongConfig,
-  bandState: BandState,
-  sourceSectionId: string,
-  enabled?: boolean
-): SongConfig {
-  const nextSong = cloneSongConfig(song);
-  const currEnabled = Boolean(nextSong.keyboardGlobalSequence?.enabled);
-  const nextEnabled = enabled ?? !currEnabled;
-
-  if (!nextEnabled) {
-    nextSong.keyboardGlobalSequence = {
-      enabled: false,
-      baseNotes:
-        nextSong.keyboardGlobalSequence?.baseNotes.map((n) => ({ ...n })) ?? [],
-      baseBars: nextSong.keyboardGlobalSequence?.baseBars ?? 1,
-      sourceSectionId:
-        nextSong.keyboardGlobalSequence?.sourceSectionId ?? sourceSectionId,
-    };
-    return nextSong;
+  const adapted: MidiNote[] = [];
+  for (let base = 0; base < targetEndTicks; base += periodTicks) {
+    for (const n of cycleNotes) {
+      const absStart = base + n.startTick;
+      if (absStart < 0 || absStart >= targetEndTicks) continue;
+      const maxDurInCycle = periodTicks - n.startTick;
+      const maxDurInSection = targetEndTicks - absStart;
+      adapted.push({
+        ...n,
+        startTick: absStart,
+        durationTicks: Math.max(
+          1,
+          Math.min(n.durationTicks, maxDurInCycle, maxDurInSection)
+        ),
+      });
+    }
   }
 
-  const srcSec =
-    nextSong.sections.find((s) => s.id === sourceSectionId) ??
-    nextSong.sections[0];
-  if (!srcSec) return nextSong;
-  const kbCell = bandState.cellsBySection[srcSec.id]?.keyboard;
-  const take = !kbCell || kbCell.selectedTake === 'OFF' ? 'A' : kbCell.selectedTake;
-  const srcNotes = kbCell?.takes[take] ?? [];
+  adapted.sort((a, b) => a.startTick - b.startTick || a.pitch - b.pitch);
+  return adapted;
+}
 
-  nextSong.keyboardGlobalSequence = {
-    enabled: true,
-    baseNotes: srcNotes.map((n) => ({ ...n })),
-    baseBars: Math.max(1, srcSec.bars),
-    sourceSectionId: srcSec.id,
+export function pastePartPhraseToSection(
+  song: SongConfig,
+  bandState: BandState,
+  targetSectionId: string,
+  copiedPhrase: CopiedPartPhrase
+): { song: SongConfig; bandState: BandState } {
+  const nextSong = cloneSongConfig(song);
+  const secIdx = nextSong.sections.findIndex((s) => s.id === targetSectionId);
+  if (secIdx === -1) return { song, bandState };
+
+  const targetSec = nextSong.sections[secIdx];
+  const part = copiedPhrase.part;
+
+  nextSong.members[part] = {
+    ...nextSong.members[part],
+    patternPreset: copiedPhrase.patternPreset,
   };
-  return nextSong;
+  if (part === 'bass' && copiedPhrase.unisonRiff !== undefined) {
+    targetSec.unisonRiff = cloneUnisonRiff(copiedPhrase.unisonRiff);
+  }
+  if (part === 'vocal' && copiedPhrase.vocalMelody !== undefined) {
+    targetSec.vocalMelody = cloneVocalMelody(copiedPhrase.vocalMelody);
+  }
+  targetSec.enabledParts = {
+    ...createDefaultEnabledParts(),
+    ...targetSec.enabledParts,
+    [part]: true,
+  };
+
+  const adaptedNotes = adaptPhraseNotesToBars(
+    copiedPhrase.notes,
+    copiedPhrase.sourceBars,
+    targetSec.bars
+  );
+
+  const nextState = cloneBandState(bandState);
+  const existingCells =
+    nextState.cellsBySection[targetSectionId] ??
+    generateSectionCells(nextSong, targetSec, secIdx, undefined, 5000 + secIdx);
+
+  const prevCell = existingCells[part];
+  const targetTake: TakeStyle =
+    prevCell && prevCell.selectedTake !== 'OFF' ? prevCell.selectedTake : 'A';
+
+  const nextCell: SectionInstrumentCell = {
+    selectedTake: targetTake,
+    locked: true,
+    engineVersion: prevCell?.engineVersion ?? CURRENT_ENGINE_VERSION,
+    seeds: prevCell?.seeds ? { ...prevCell.seeds } : createSeedTriple(5100 + secIdx),
+    takes: {
+      A: prevCell?.takes.A.map((n) => ({ ...n })) ?? [],
+      B: prevCell?.takes.B.map((n) => ({ ...n })) ?? [],
+      C: prevCell?.takes.C.map((n) => ({ ...n })) ?? [],
+      [targetTake]: adaptedNotes,
+    },
+  };
+
+  nextState.cellsBySection[targetSectionId] = {
+    ...existingCells,
+    [part]: nextCell,
+  };
+
+  return { song: nextSong, bandState: nextState };
+}
+
+export function updateSectionVocalHarmony(
+  song: SongConfig,
+  bandState: BandState,
+  sectionId: string,
+  vocalHarmony: VocalHarmonyMode
+): { song: SongConfig; bandState: BandState } {
+  const nextSong = cloneSongConfig(song);
+  const secIdx = nextSong.sections.findIndex((s) => s.id === sectionId);
+  if (secIdx === -1) return { song, bandState };
+
+  nextSong.sections[secIdx].vocalHarmony = vocalHarmony;
+  return { song: nextSong, bandState };
 }
 
 export function updateSectionKeyboardDensity(
@@ -691,11 +739,7 @@ export function updateSectionKeyboardDensity(
     );
   }
 
-  const syncedSong = nextSong.keyboardGlobalSequence?.enabled
-    ? syncKeyboardGlobalSequence(nextSong, nextState, sectionId)
-    : nextSong;
-
-  return { song: syncedSong, bandState: nextState };
+  return { song: nextSong, bandState: nextState };
 }
 
 export function updateSectionDrumLoop(
@@ -1039,6 +1083,7 @@ export function createDefaultSongConfig(
         kickDensity: 3,
         keyboardDensity: 4,
         vocalDensity: 3,
+        vocalHarmony: 'off',
         enabledParts: createDefaultEnabledParts(),
         chords: [...defaultChords],
       },
@@ -1053,6 +1098,7 @@ export function createDefaultSongConfig(
         kickDensity: 3,
         keyboardDensity: 4,
         vocalDensity: 3,
+        vocalHarmony: 'off',
         enabledParts: createDefaultEnabledParts(),
         chords: [...defaultChords],
       },
@@ -1067,6 +1113,7 @@ export function createDefaultSongConfig(
         kickDensity: 3,
         keyboardDensity: 4,
         vocalDensity: 3,
+        vocalHarmony: 'off',
         enabledParts: createDefaultEnabledParts(),
         chords: ['Am', 'G', 'C', 'D'],
       },
@@ -1081,6 +1128,7 @@ export function createDefaultSongConfig(
         kickDensity: 3,
         keyboardDensity: 4,
         vocalDensity: 3,
+        vocalHarmony: 'off',
         enabledParts: createDefaultEnabledParts(),
         chords: ['C', 'D', 'Em', 'G'],
       },

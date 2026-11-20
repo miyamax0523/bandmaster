@@ -188,6 +188,20 @@ export function exportMultiTrackMidi(
     })),
   });
 
+  if (tracks.vocalHarmony.length > 0) {
+    specs.push({
+      name: 'Vocal Harmony',
+      channel: TRACK_CHANNELS.vocalHarmony,
+      program: 53, // Voice Oohs
+      notes: tracks.vocalHarmony.map((n) => ({
+        pitch: n.pitch,
+        velocity: n.velocity,
+        startTick: n.startTick,
+        durationTicks: n.durationTicks,
+      })),
+    });
+  }
+
   const activeSpecs = song.exportOnlyActiveTracks
     ? specs.filter((s) => s.notes.length > 0)
     : specs;

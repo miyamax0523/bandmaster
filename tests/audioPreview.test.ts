@@ -123,6 +123,7 @@ function makeTracks(): LogicalTracks {
     keyboard: [],
     pad: [],
     vocal: [],
+    vocalHarmony: [],
   };
 }
 
@@ -252,6 +253,7 @@ describe('audioPreview', () => {
       keyboard: [],
       pad: [],
       vocal: [],
+      vocalHarmony: [],
     };
     engine.loadSongData(tracks, 120, 3840);
 
@@ -303,6 +305,7 @@ describe('audioPreview', () => {
       keyboard: [],
       pad: [],
       vocal: [],
+      vocalHarmony: [],
     };
     engine.loadSongData(tracks4, 120, 4 * 1920);
     await engine.playSection({
@@ -328,6 +331,7 @@ describe('audioPreview', () => {
       keyboard: [],
       pad: [],
       vocal: [],
+      vocalHarmony: [],
     };
     engine.loadSongData(tracks8, 120, 8 * 1920);
     engine.setSectionLoop({

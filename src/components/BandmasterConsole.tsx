@@ -5,12 +5,14 @@ import { isAutoTacet, isSectionPartEnabled } from '../lib/noteSelector';
 import { PATTERN_PRESET_GROUPS } from '../lib/patternPresets';
 import { useHorizontalSwipe } from '../lib/touchSwipe';
 import type {
+  CopiedPartPhrase,
   DensityLevel,
   DrumLoopData,
   InstrumentType,
   KeyboardDensityLevel,
   SongConfig,
   TakeStyle,
+  VocalHarmonyMode,
 } from '../types/song';
 import type { BandState } from '../types/track';
 import { MidiExportButton } from './MidiExportButton';
@@ -34,11 +36,17 @@ interface BandmasterConsoleProps {
     sectionId: string,
     keyboardDensity: KeyboardDensityLevel
   ) => void;
-  onToggleKeyboardGlobalSequence: (sourceSectionId: string) => void;
   onChangeSectionVocalDensity: (
     sectionId: string,
     vocalDensity: DensityLevel
   ) => void;
+  onChangeSectionVocalHarmony: (
+    sectionId: string,
+    mode: VocalHarmonyMode
+  ) => void;
+  copiedPhrase: CopiedPartPhrase | null;
+  onCopyPartPhrase: (phrase: CopiedPartPhrase) => void;
+  onPastePartPhrase: (targetSectionId: string, phrase: CopiedPartPhrase) => void;
   onChangePatternPreset: (inst: InstrumentType, preset: string) => void;
   onToggleSectionPart: (sectionId: string, inst: InstrumentType) => void;
   onOpenVocalModal: (sectionId: string) => void;
@@ -66,6 +74,12 @@ const DENSITY_LEVELS: readonly DensityLevel[] = [1, 2, 3, 4, 5];
 const KEYBOARD_DENSITY_LEVELS: readonly KeyboardDensityLevel[] = [
   1, 2, 3, 4, 5, 6, 7,
 ];
+const VOCAL_HARMONY_OPTIONS: Array<{ value: VocalHarmonyMode; label: string }> = [
+  { value: 'off', label: 'OFF' },
+  { value: 'upper_3rd', label: '3度上' },
+  { value: 'lower_3rd', label: '3度下' },
+  { value: 'octave_up', label: 'オクターブ' },
+];
 
 export function BandmasterConsole({
   song,
@@ -79,8 +93,11 @@ export function BandmasterConsole({
   onClearSectionDrumLoop,
   onChangeSectionDrumDensity,
   onChangeSectionKeyboardDensity,
-  onToggleKeyboardGlobalSequence,
   onChangeSectionVocalDensity,
+  onChangeSectionVocalHarmony,
+  copiedPhrase,
+  onCopyPartPhrase,
+  onPastePartPhrase,
   onChangePatternPreset,
   onToggleSectionPart,
   onOpenVocalModal,
@@ -294,30 +311,6 @@ export function BandmasterConsole({
                 </>
               )}
 
-              {key === 'keyboard' && (
-                <>
-                  <div className="drum-midi-actions">
-                    <button
-                      type="button"
-                      className={`btn drum-midi-btn global-seq-btn ${
-                        song.keyboardGlobalSequence?.enabled ? 'is-active' : 'btn-secondary'
-                      }`}
-                      aria-pressed={Boolean(song.keyboardGlobalSequence?.enabled)}
-                      disabled={!effectivelyEnabled}
-                      onClick={() => onToggleKeyboardGlobalSequence(section.id)}
-                    >
-                      🔁 一曲通し固定
-                      {song.keyboardGlobalSequence?.enabled ? ' (ON)' : ''}
-                    </button>
-                  </div>
-                  {song.keyboardGlobalSequence?.enabled && (
-                    <div className="source-line">
-                      全セクション固定再生中（{song.keyboardGlobalSequence.baseBars}小節ループ）
-                    </div>
-                  )}
-                </>
-              )}
-
               {key === 'vocal' && (
                 <>
                   <div className="source-line">
@@ -493,8 +486,82 @@ export function BandmasterConsole({
                       })}
                     </div>
                   </div>
+                  <div className="density-row">
+                    <span className="density-label">ハモリ</span>
+                    <div
+                      className="density-segments density-segments--4"
+                      role="group"
+                      aria-label="Vocal ハモリ"
+                    >
+                      {VOCAL_HARMONY_OPTIONS.map((opt) => {
+                        const active = (section.vocalHarmony ?? 'off') === opt.value;
+                        return (
+                          <button
+                            key={opt.value}
+                            type="button"
+                            className={`density-btn harmony-btn ${active ? 'active' : ''}`}
+                            disabled={!effectivelyEnabled}
+                            onClick={() =>
+                              onChangeSectionVocalHarmony(section.id, opt.value)
+                            }
+                          >
+                            {opt.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                 </div>
               )}
+
+              <div className="copy-paste-row">
+                <button
+                  type="button"
+                  className="btn btn-secondary copy-paste-btn"
+                  disabled={!member.enabled}
+                  onClick={() => {
+                    const takeKey =
+                      cell.selectedTake === 'OFF' ? 'A' : cell.selectedTake;
+                    onCopyPartPhrase({
+                      part: key,
+                      sourceSectionId: section.id,
+                      sourceSectionName: section.name,
+                      sourceBars: section.bars,
+                      patternPreset: member.patternPreset ?? 'auto',
+                      notes: (cell.takes[takeKey] ?? []).map((n) => ({ ...n })),
+                      unisonRiff:
+                        key === 'bass' && section.unisonRiff
+                          ? {
+                              ...section.unisonRiff,
+                              cleanedBassNotes: section.unisonRiff.cleanedBassNotes.map(
+                                (n) => ({ ...n })
+                              ),
+                              accentTicks: [...section.unisonRiff.accentTicks],
+                            }
+                          : undefined,
+                      vocalMelody:
+                        key === 'vocal' && section.vocalMelody
+                          ? {
+                              ...section.vocalMelody,
+                              notes: section.vocalMelody.notes.map((n) => ({ ...n })),
+                            }
+                          : undefined,
+                    });
+                  }}
+                >
+                  📋 コピー
+                </button>
+                {copiedPhrase && copiedPhrase.part === key && (
+                  <button
+                    type="button"
+                    className="btn btn-primary copy-paste-btn"
+                    disabled={!member.enabled}
+                    onClick={() => onPastePartPhrase(section.id, copiedPhrase)}
+                  >
+                    📥 ペースト（元: {copiedPhrase.sourceSectionName}）
+                  </button>
+                )}
+              </div>
             </article>
           );
         })}

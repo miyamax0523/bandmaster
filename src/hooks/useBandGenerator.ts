@@ -7,15 +7,14 @@ import {
   duplicateSectionInSong,
   generateAllSections,
   generateSectionCells,
+  pastePartPhraseToSection,
   pushUndoSnapshot,
   regenerateInstrumentCell,
   reorderSectionsInSong,
   selectInstrumentTake,
   setSectionUnisonRiff,
   setSectionVocalMelody,
-  syncKeyboardGlobalSequence,
   toggleCellLock,
-  toggleKeyboardGlobalSequence,
   toggleSectionPartEnabled,
   toggleSectionRiffOctaveUpOn808,
   updateSectionBars,
@@ -24,6 +23,7 @@ import {
   updateSectionKeyboardDensity,
   updateSectionKickMode,
   updateSectionVocalDensity,
+  updateSectionVocalHarmony,
   type ArrangementPresetId,
   type BandSnapshot,
   type QuickTemplateId,
@@ -35,6 +35,7 @@ import {
 } from '../lib/storage';
 import {
   createDefaultEnabledParts,
+  type CopiedPartPhrase,
   type DensityLevel,
   type DrumLoopData,
   type InstrumentType,
@@ -45,6 +46,7 @@ import {
   type SongConfig,
   type TakeStyle,
   type UnisonRiffData,
+  type VocalHarmonyMode,
   type VocalMelodyData,
 } from '../types/song';
 import type { BandState } from '../types/track';
@@ -151,11 +153,7 @@ export function useBandGenerator() {
         Date.now() & 0xffff,
         false
       );
-      const syncedSong =
-        instrument === 'keyboard' && nextSong.keyboardGlobalSequence?.enabled
-          ? syncKeyboardGlobalSequence(nextSong, nextState)
-          : nextSong;
-      commitChange(syncedSong, nextState, true);
+      commitChange(nextSong, nextState, true);
     },
     [song, bandState, commitChange]
   );
@@ -167,10 +165,7 @@ export function useBandGenerator() {
       (Date.now() & 0x7fffff) + 1,
       true
     );
-    const syncedSong = song.keyboardGlobalSequence?.enabled
-      ? syncKeyboardGlobalSequence(song, nextState)
-      : song;
-    commitChange(syncedSong, nextState, true);
+    commitChange(song, nextState, true);
   }, [song, bandState, commitChange]);
 
   const regenerateCell = useCallback(
@@ -182,11 +177,7 @@ export function useBandGenerator() {
         instrument,
         (Date.now() & 0x7fffff) + 7
       );
-      const syncedSong =
-        instrument === 'keyboard' && song.keyboardGlobalSequence?.enabled
-          ? syncKeyboardGlobalSequence(song, nextState, sectionId)
-          : song;
-      commitChange(syncedSong, nextState, true);
+      commitChange(song, nextState, true);
     },
     [song, bandState, commitChange]
   );
@@ -200,11 +191,7 @@ export function useBandGenerator() {
         instrument,
         take
       );
-      const syncedSong =
-        instrument === 'keyboard' && song.keyboardGlobalSequence?.enabled
-          ? syncKeyboardGlobalSequence(song, nextState, sectionId)
-          : song;
-      commitChange(syncedSong, nextState, true);
+      commitChange(song, nextState, true);
     },
     [song, bandState, commitChange]
   );
@@ -231,6 +218,7 @@ export function useBandGenerator() {
       kickDensity: 3,
       keyboardDensity: 4,
       vocalDensity: 3,
+      vocalHarmony: 'off',
       enabledParts: createDefaultEnabledParts(),
       chords: ['Em', 'C', 'G', 'D'],
     };
@@ -440,16 +428,37 @@ export function useBandGenerator() {
     [song, bandState, commitChange]
   );
 
-  const toggleGlobalKeyboardSequence = useCallback(
-    (sourceSectionId: string) => {
-      const nextSong = toggleKeyboardGlobalSequence(
+  const changeSectionVocalHarmony = useCallback(
+    (sectionId: string, vocalHarmony: VocalHarmonyMode) => {
+      const res = updateSectionVocalHarmony(
         song,
         bandState,
-        sourceSectionId
+        sectionId,
+        vocalHarmony
       );
-      commitChange(nextSong, bandState, true);
+      commitChange(res.song, res.bandState, true);
     },
     [song, bandState, commitChange]
+  );
+
+  const pastePartPhrase = useCallback(
+    (targetSectionId: string, copiedPhrase: CopiedPartPhrase) => {
+      const res = pastePartPhraseToSection(
+        song,
+        bandState,
+        targetSectionId,
+        copiedPhrase
+      );
+      commitChange(res.song, res.bandState, true);
+    },
+    [song, bandState, commitChange]
+  );
+
+  const loadSnapshotData = useCallback(
+    (nextSong: SongConfig, nextState: BandState) => {
+      commitChange(cloneSongConfig(nextSong), cloneBandState(nextState), true);
+    },
+    [commitChange]
   );
 
   const transposeSectionChords = useCallback(
@@ -509,8 +518,10 @@ export function useBandGenerator() {
     toggleSectionPart,
     changeSectionVocalMelody,
     changeSectionVocalDensity,
+    changeSectionVocalHarmony,
     changeSectionKeyboardDensity,
-    toggleGlobalKeyboardSequence,
+    pastePartPhrase,
+    loadSnapshotData,
     transposeSectionChords,
   };
 }

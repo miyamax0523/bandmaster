@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  generateVocalHarmonyNotes,
   generateVocalNotes,
   VOCAL_MAX_PITCH,
   VOCAL_MIN_PITCH,
@@ -354,5 +355,101 @@ describe('vocalEngine', () => {
       .filter((n) => n.startTick >= 2 * TICKS_PER_BAR)
       .map((n) => n.startTick - 2 * TICKS_PER_BAR);
     expect(cycle2Local).toEqual(cycle1Local);
+  });
+
+  it('supports all 10 new melody/rap presets with strict monophony, density scaling, and distinct phrasing', () => {
+    const newPresets = [
+      'melody_alt_soar',
+      'melody_grunge_drag',
+      'melody_britpop_catchy',
+      'melody_metalcore_chorus',
+      'melody_emo_screamo',
+      'rap_jhiphop_bounce',
+      'rap_mixture_melodic',
+      'rap_hybrid_soar',
+      'rap_cinematic_burst',
+      'rap_emo_sparse',
+    ] as const;
+
+    for (const preset of newPresets) {
+      const song = createDefaultSongConfig('rockBand');
+      song.members.vocal.patternPreset = preset;
+      const sparse = generateVocalNotes({
+        song,
+        section: createSection({ bars: 2, vocalDensity: 1 }),
+        sectionIndex: 0,
+        style: 'A',
+        seed: 77,
+        params: resolveInstrumentParams(song, createSection({ bars: 2, vocalDensity: 1 }), 'vocal', 'A'),
+      });
+      const dense = generateVocalNotes({
+        song,
+        section: createSection({ bars: 2, vocalDensity: 5 }),
+        sectionIndex: 0,
+        style: 'A',
+        seed: 77,
+        params: resolveInstrumentParams(song, createSection({ bars: 2, vocalDensity: 5 }), 'vocal', 'A'),
+      });
+      expect(sparse.length).toBeGreaterThan(0);
+      expect(dense.length).toBeGreaterThanOrEqual(sparse.length);
+
+      // Strict monophony (no overlapping start+duration)
+      for (let i = 1; i < dense.length; i++) {
+        expect(dense[i - 1].startTick + dense[i - 1].durationTicks).toBeLessThanOrEqual(
+          dense[i].startTick
+        );
+      }
+    }
+
+    // rap_cinematic_burst keeps beat 4 empty per bar for dramatic tension
+    const burstSong = createDefaultSongConfig('rockBand');
+    burstSong.members.vocal.patternPreset = 'rap_cinematic_burst';
+    const burstNotes = generateVocalNotes({
+      song: burstSong,
+      section: createSection({ bars: 2, vocalDensity: 3 }),
+      sectionIndex: 0,
+      style: 'A',
+      seed: 12,
+      params: resolveInstrumentParams(burstSong, createSection({ bars: 2, vocalDensity: 3 }), 'vocal', 'A'),
+    });
+    expect(burstNotes.some((n) => n.startTick % TICKS_PER_BAR >= 1440)).toBe(false);
+
+    // rap_hybrid_soar ends each bar with a long sustained singing note at beat 3 (tick 960)
+    const hybridSong = createDefaultSongConfig('rockBand');
+    hybridSong.members.vocal.patternPreset = 'rap_hybrid_soar';
+    const hybridNotes = generateVocalNotes({
+      song: hybridSong,
+      section: createSection({ bars: 2, vocalDensity: 3 }),
+      sectionIndex: 0,
+      style: 'A',
+      seed: 12,
+      params: resolveInstrumentParams(hybridSong, createSection({ bars: 2, vocalDensity: 3 }), 'vocal', 'A'),
+    });
+    expect(
+      hybridNotes.some((n) => n.startTick % TICKS_PER_BAR === 960 && n.durationTicks >= 700)
+    ).toBe(true);
+  });
+
+  it('generates diatonic upper_3rd, lower_3rd, and octave_up harmony with ~82% velocity', () => {
+    // C Major: E4 (64), G4 (67), C5 (72), C6/higher edge test (76)
+    const melody = [
+      { pitch: 64, velocity: 100, startTick: 0, durationTicks: 480 },
+      { pitch: 67, velocity: 110, startTick: 480, durationTicks: 240 },
+      { pitch: 76, velocity: 90, startTick: 960, durationTicks: 480 },
+    ];
+
+    expect(generateVocalHarmonyNotes(melody, 'C', 'Major', 'off')).toEqual([]);
+
+    const up3 = generateVocalHarmonyNotes(melody, 'C', 'Major', 'upper_3rd');
+    expect(up3.map((n) => n.pitch)).toEqual([67, 71, 79]); // E->G, G->B, E5->G5
+    expect(up3.map((n) => n.startTick)).toEqual([0, 480, 960]);
+    expect(up3.map((n) => n.durationTicks)).toEqual([480, 240, 480]);
+    expect(up3.map((n) => n.velocity)).toEqual([82, 90, 74]);
+
+    const low3 = generateVocalHarmonyNotes(melody, 'C', 'Major', 'lower_3rd');
+    expect(low3.map((n) => n.pitch)).toEqual([60, 64, 72]); // E->C, G->E, E5->C5
+
+    const oct = generateVocalHarmonyNotes(melody, 'C', 'Major', 'octave_up');
+    expect(oct.map((n) => n.pitch)).toEqual([76, 79, 88]); // capped at 88
   });
 });

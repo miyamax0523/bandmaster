@@ -10,13 +10,17 @@ import {
 import type { BandState, SectionBandCells, SectionInstrumentCell } from '../types/track';
 import {
   createSeedTriple,
+  cloneSongConfig,
   GENERATION_ORDER,
+  generateAllSections,
   generateCellTakes,
   getAverageVocalPitch,
   getSelectedDrumNotes,
 } from './bandState';
 
 export const STORAGE_SCHEMA_VERSION = 1;
+export const PROJECT_SNAPSHOTS_KEY = 'bandmaster_project_snapshots_v1';
+export const MAX_PROJECT_SNAPSHOTS = 15;
 const DB_NAME = 'bandmaster_db';
 const STORE_NAME = 'projects';
 const DEFAULT_RECORD_KEY = 'current_project';
@@ -198,17 +202,8 @@ export function hydrateProject(stored: StoredBandProject): {
       };
     }
   }
-    // Normalize keyboardGlobalSequence if present
-    if (song.keyboardGlobalSequence) {
-      song.keyboardGlobalSequence = {
-        ...song.keyboardGlobalSequence,
-        enabled: Boolean(song.keyboardGlobalSequence.enabled),
-        baseBars: Math.max(1, song.keyboardGlobalSequence.baseBars || 1),
-        baseNotes: (song.keyboardGlobalSequence.baseNotes ?? []).map((n) => ({
-          ...n,
-        })),
-      };
-    }
+    // Drop legacy keyboardGlobalSequence from old saved data cleanly
+    delete (song as unknown as Record<string, unknown>).keyboardGlobalSequence;
 
   const cellsBySection: Record<string, SectionBandCells> = {};
 
@@ -220,6 +215,7 @@ export function hydrateProject(stored: StoredBandProject): {
       kickDensity: rawSec.kickDensity ?? 3,
       keyboardDensity: rawSec.keyboardDensity ?? 4,
       vocalDensity: rawSec.vocalDensity ?? 3,
+      vocalHarmony: rawSec.vocalHarmony ?? 'off',
       enabledParts: {
         ...createDefaultEnabledParts(),
         ...rawSec.enabledParts,
@@ -378,4 +374,220 @@ export function createDebouncedProjectSaver(
   };
 
   return { scheduleSave, cancel };
+}
+
+export interface SavedProjectSnapshot {
+  id: string;
+  name: string;
+  savedAt: string;
+  song: SongConfig;
+  cellsBySection?: Record<string, Record<InstrumentType, StoredInstrumentCell>>;
+}
+
+const memorySnapshotFallback = new Map<string, string>();
+
+function readSnapshotsRaw(): string | null {
+  if (typeof globalThis.localStorage !== 'undefined') {
+    try {
+      return globalThis.localStorage.getItem(PROJECT_SNAPSHOTS_KEY);
+    } catch {
+      return memorySnapshotFallback.get(PROJECT_SNAPSHOTS_KEY) ?? null;
+    }
+  }
+  return memorySnapshotFallback.get(PROJECT_SNAPSHOTS_KEY) ?? null;
+}
+
+function writeSnapshotsRaw(value: string): void {
+  if (typeof globalThis.localStorage !== 'undefined') {
+    try {
+      globalThis.localStorage.setItem(PROJECT_SNAPSHOTS_KEY, value);
+      return;
+    } catch {
+      // Fallback to in-memory map
+    }
+  }
+  memorySnapshotFallback.set(PROJECT_SNAPSHOTS_KEY, value);
+}
+
+function deepCopyJson<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function serializeCellsForSnapshot(
+  bandState?: BandState
+): Record<string, Record<InstrumentType, StoredInstrumentCell>> | undefined {
+  if (!bandState) return undefined;
+  const result: Record<string, Record<InstrumentType, StoredInstrumentCell>> = {};
+  for (const [secId, cells] of Object.entries(bandState.cellsBySection)) {
+    const secRecord = {} as Record<InstrumentType, StoredInstrumentCell>;
+    for (const inst of GENERATION_ORDER) {
+      const cell = cells[inst];
+      if (!cell) continue;
+      const keepNotes =
+        cell.locked || cell.engineVersion !== CURRENT_ENGINE_VERSION;
+      secRecord[inst] = {
+        selectedTake: cell.selectedTake,
+        locked: cell.locked,
+        engineVersion: cell.engineVersion,
+        seeds: { ...cell.seeds },
+        takes: keepNotes
+          ? {
+              A: cell.takes.A.map((n) => ({ ...n })),
+              B: cell.takes.B.map((n) => ({ ...n })),
+              C: cell.takes.C.map((n) => ({ ...n })),
+            }
+          : undefined,
+      };
+    }
+    result[secId] = secRecord;
+  }
+  return deepCopyJson(result);
+}
+
+function persistSnapshots(snapshots: SavedProjectSnapshot[]): void {
+  const trimmed = snapshots.slice(0, MAX_PROJECT_SNAPSHOTS);
+  writeSnapshotsRaw(JSON.stringify(trimmed));
+}
+
+export function listProjectSnapshots(): SavedProjectSnapshot[] {
+  const raw = readSnapshotsRaw();
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return deepCopyJson(
+      parsed.filter(
+        (item): item is SavedProjectSnapshot =>
+          Boolean(
+            item &&
+              typeof item === 'object' &&
+              typeof item.id === 'string' &&
+              typeof item.name === 'string' &&
+              typeof item.savedAt === 'string' &&
+              item.song &&
+              typeof item.song === 'object'
+          )
+      )
+    );
+  } catch {
+    return [];
+  }
+}
+
+export function saveProjectSnapshot(
+  song: SongConfig,
+  customName?: string,
+  bandState?: BandState
+): SavedProjectSnapshot {
+  const trimmedCustom = customName?.trim();
+  const resolvedName =
+    trimmedCustom && trimmedCustom.length > 0
+      ? trimmedCustom
+      : (song.title?.trim() || '無題のプロジェクト');
+
+  const songCopy = deepCopyJson(cloneSongConfig(song));
+  if (trimmedCustom) {
+    songCopy.title = resolvedName;
+  }
+
+  const snapshot: SavedProjectSnapshot = {
+    id: `snap-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    name: resolvedName,
+    savedAt: new Date().toISOString(),
+    song: songCopy,
+    cellsBySection: serializeCellsForSnapshot(bandState),
+  };
+
+  const existing = listProjectSnapshots();
+  const nextList = [snapshot, ...existing].slice(0, MAX_PROJECT_SNAPSHOTS);
+  persistSnapshots(nextList);
+  return deepCopyJson(snapshot);
+}
+
+export function overwriteProjectSnapshot(
+  snapshotId: string,
+  song: SongConfig,
+  bandState?: BandState
+): SavedProjectSnapshot | null {
+  const list = listProjectSnapshots();
+  const idx = list.findIndex((s) => s.id === snapshotId);
+  if (idx === -1) return null;
+
+  const target = list[idx];
+  const songCopy = deepCopyJson(cloneSongConfig(song));
+  songCopy.title = target.name;
+
+  const updated: SavedProjectSnapshot = {
+    ...target,
+    savedAt: new Date().toISOString(),
+    song: songCopy,
+    cellsBySection: serializeCellsForSnapshot(bandState),
+  };
+
+  const nextList = [updated, ...list.filter((s) => s.id !== snapshotId)].slice(
+    0,
+    MAX_PROJECT_SNAPSHOTS
+  );
+  persistSnapshots(nextList);
+  return deepCopyJson(updated);
+}
+
+export function loadProjectSnapshotWithState(
+  snapshotId: string
+): { song: SongConfig; bandState: BandState } | null {
+  const list = listProjectSnapshots();
+  const target = list.find((s) => s.id === snapshotId);
+  if (!target) return null;
+
+  const songCopy = deepCopyJson(target.song);
+  const parsedUpdatedAt = Date.parse(target.savedAt);
+  const updatedAt = Number.isNaN(parsedUpdatedAt) ? Date.now() : parsedUpdatedAt;
+  if (target.cellsBySection) {
+    return hydrateProject({
+      schemaVersion: STORAGE_SCHEMA_VERSION,
+      updatedAt,
+      song: songCopy,
+      cellsBySection: deepCopyJson(target.cellsBySection),
+    });
+  }
+
+  const hydrated = hydrateProject({
+    schemaVersion: STORAGE_SCHEMA_VERSION,
+    updatedAt,
+    song: songCopy,
+    cellsBySection: {},
+  });
+  return {
+    song: hydrated.song,
+    bandState: generateAllSections(hydrated.song),
+  };
+}
+
+export function loadProjectSnapshot(snapshotId: string): SongConfig | null {
+  const loaded = loadProjectSnapshotWithState(snapshotId);
+  return loaded ? loaded.song : null;
+}
+
+export function renameProjectSnapshot(snapshotId: string, newName: string): void {
+  const trimmed = newName.trim();
+  if (!trimmed) return;
+  const list = listProjectSnapshots();
+  const idx = list.findIndex((s) => s.id === snapshotId);
+  if (idx === -1) return;
+
+  list[idx] = {
+    ...list[idx],
+    name: trimmed,
+    song: {
+      ...deepCopyJson(list[idx].song),
+      title: trimmed,
+    },
+  };
+  persistSnapshots(list);
+}
+
+export function deleteProjectSnapshot(snapshotId: string): void {
+  const list = listProjectSnapshots();
+  const nextList = list.filter((s) => s.id !== snapshotId);
+  persistSnapshots(nextList);
 }
