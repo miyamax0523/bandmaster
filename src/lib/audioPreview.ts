@@ -97,6 +97,10 @@ export class AudioPreviewEngine {
   private loopWrappedUntil: number | null = null;
   private timerId: ReturnType<typeof setInterval> | null = null;
   private activeVoices = new Set<ActiveVoice>();
+  private activeBassVoice: {
+    endTime: number;
+    fadeOut: (atTime: number) => void;
+  } | null = null;
   private listeners = new Set<(state: AudioPreviewState) => void>();
 
   constructor(contextFactory?: () => AudioContext) {
@@ -397,6 +401,7 @@ export class AudioPreviewEngine {
   }
 
   private stopAllActiveVoices(): void {
+    this.activeBassVoice = null;
     for (const v of this.activeVoices) {
       v.stop();
     }
@@ -522,15 +527,13 @@ export class AudioPreviewEngine {
     } else if (track === 'drums') {
       this.synthDrum(this.ctx, dest, note.pitch, startTime, velGain);
     } else if (track === 'bass') {
-      this.synthTone(
+      this.synthBass(
         this.ctx,
         dest,
         midiToFrequency(note.pitch),
         startTime,
-        Math.min(0.8, durSec),
-        velGain * 0.75,
-        'sawtooth',
-        420
+        Math.min(1.6, durSec),
+        velGain * 0.78
       );
     } else if (track === 'keyboard') {
       this.synthTone(
@@ -775,6 +778,86 @@ export class AudioPreviewEngine {
     osc.start(startTime);
     osc.stop(endTime);
     this.registerVoice([osc, filter, gain], [osc], endTime);
+  }
+
+  private synthBass(
+    ctx: AudioContext,
+    dest: GainNode,
+    freq: number,
+    startTime: number,
+    durSec: number,
+    velGain: number
+  ): void {
+    const releaseSec = 0.16; // Natural 0.14s..0.18s release tail to prevent abrupt cutoff
+    const overlapFadeSec = 0.02;
+
+    if (this.activeBassVoice && this.activeBassVoice.endTime > startTime) {
+      this.activeBassVoice.fadeOut(startTime);
+    }
+
+    const osc = ctx.createOscillator();
+    const filter = ctx.createBiquadFilter();
+    const gain = ctx.createGain();
+
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(freq, startTime);
+
+    // Warm low-pass envelope that keeps low-end body/core full during sustain
+    filter.type = 'lowpass';
+    if ('Q' in filter && filter.Q && typeof filter.Q === 'object') {
+      (filter.Q as { value: number }).value = 1.4;
+    }
+    filter.frequency.setValueAtTime(860, startTime);
+
+    const safeSustainDur = Math.max(0.05, durSec);
+    const noteOffTime = startTime + safeSustainDur;
+    const releaseEndTime = noteOffTime + releaseSec;
+    const attackEnd = Math.min(noteOffTime - 0.005, startTime + 0.012);
+
+    if (typeof filter.frequency.exponentialRampToValueAtTime === 'function') {
+      filter.frequency.exponentialRampToValueAtTime(
+        460,
+        Math.min(releaseEndTime, startTime + Math.max(0.08, safeSustainDur * 0.85))
+      );
+    } else {
+      filter.frequency.setValueAtTime(460, noteOffTime);
+    }
+
+    const peakGain = Math.max(0.002, velGain);
+    gain.gain.setValueAtTime(0.0005, startTime);
+    gain.gain.linearRampToValueAtTime(peakGain, attackEnd);
+    gain.gain.linearRampToValueAtTime(Math.max(0.002, peakGain * 0.78), noteOffTime);
+    gain.gain.exponentialRampToValueAtTime(0.0001, releaseEndTime);
+
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(dest);
+
+    osc.start(startTime);
+    osc.stop(releaseEndTime + 0.01);
+    this.registerVoice([osc, filter, gain], [osc], releaseEndTime + 0.01);
+
+    let faded = false;
+    this.activeBassVoice = {
+      endTime: releaseEndTime,
+      fadeOut: (atTime: number) => {
+        if (faded) return;
+        faded = true;
+        const gParam = gain.gain as AudioParam & {
+          cancelScheduledValues?: (t: number) => void;
+        };
+        if (typeof gParam.cancelScheduledValues === 'function') {
+          gParam.cancelScheduledValues(atTime);
+        }
+        gParam.setValueAtTime(Math.max(0.001, peakGain * 0.7), atTime);
+        gParam.exponentialRampToValueAtTime(0.0001, atTime + overlapFadeSec);
+        try {
+          osc.stop(atTime + overlapFadeSec + 0.005);
+        } catch {
+          // ignore if already stopped
+        }
+      },
+    };
   }
 
   private synthVocalLead(

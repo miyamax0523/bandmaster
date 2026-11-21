@@ -354,4 +354,46 @@ describe('audioPreview', () => {
 
     engine.dispose();
   });
+
+  it('applies natural 0.16s release tail and smooth 0.02s voice fade-out on bass playback', async () => {
+    const { mockCtx, createdGains, createdOscs } = createMockAudioContext();
+    const engine = new AudioPreviewEngine(
+      () => mockCtx as unknown as AudioContext
+    );
+
+    const tracks: LogicalTracks = {
+      drums: [],
+      kick808: [],
+      bass: [
+        { pitch: 40, velocity: 100, startTick: 0, durationTicks: 240, channel: 0 }, // 0.25s at 120 BPM
+        { pitch: 43, velocity: 100, startTick: 240, durationTicks: 240, channel: 0 }, // starts during previous 0.16s release
+      ],
+      keyboard: [],
+      pad: [],
+      vocal: [],
+      vocalHarmony: [],
+    };
+
+    engine.loadSongData(tracks, 120, 1920);
+    await engine.play();
+
+    // Bass voice 1 scheduled at t=0: noteOff = 0.25s, release ends at 0.41s, osc.stop around 0.42s
+    expect(createdOscs.length).toBe(1);
+    const firstOscStop = createdOscs[0].stop.mock.calls[0][0] as number;
+    expect(firstOscStop).toBeGreaterThanOrEqual(0.4);
+
+    // Advance to t=0.15s -> lookahead triggers bass note 2 at t=0.25s while release of note 1 overlaps
+    mockCtx.currentTime = 0.15;
+    vi.advanceTimersByTime(SCHEDULER_INTERVAL_MS);
+    expect(createdOscs.length).toBe(2);
+
+    // Previous bass voice smoothly faded out at t=0.25s -> t=0.27s (0.02s fade) and stopped cleanly
+    const bass1Gain = createdGains[createdGains.length - 2];
+    expect(bass1Gain.gain.exponentialRampToValueAtTime).toHaveBeenCalledWith(
+      0.0001,
+      expect.closeTo(0.27, 2)
+    );
+
+    engine.dispose();
+  });
 });

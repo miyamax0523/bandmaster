@@ -255,4 +255,64 @@ describe('bassEngine', () => {
     expect(pedal.length).toBeGreaterThan(0);
     expect(pedal.every((n) => n.pitch % 12 === 4)).toBe(true);
   });
+
+  it('uses legato gate times (>= 85% of grid span) on standard presets and prevents any note overlap', () => {
+    const standardPresets = [
+      'auto',
+      'root_steady',
+      'pedal_point',
+      'melodic_walk',
+      'octave_disco',
+      'root_whole',
+      'kick_lock',
+      'jrock_anticipation',
+    ];
+
+    for (const preset of standardPresets) {
+      const song = createSong({ patternPreset: preset });
+      const section = createSection({ bars: 2, chords: ['Em', 'C'], energy: 'Mid' });
+      const notes = generateBassNotes({
+        song,
+        section,
+        sectionIndex: 0,
+        style: 'A',
+        seed: 7,
+        params: resolveInstrumentParams(song, section, 'bass', 'A'),
+        drumNotes: [
+          { pitch: 36, velocity: 110, startTick: 0, durationTicks: 120 },
+          { pitch: 36, velocity: 105, startTick: 960, durationTicks: 120 },
+          { pitch: 36, velocity: 110, startTick: 1920, durationTicks: 120 },
+          { pitch: 36, velocity: 105, startTick: 2880, durationTicks: 120 },
+        ],
+      });
+
+      expect(notes.length).toBeGreaterThan(0);
+
+      // Strict non-overlap across the entire section (>= 5 tick safety clearance between notes)
+      for (let i = 0; i < notes.length - 1; i++) {
+        const curr = notes[i];
+        const next = notes[i + 1];
+        expect(curr.startTick + curr.durationTicks).toBeLessThanOrEqual(
+          next.startTick - 5
+        );
+
+        const span = next.startTick - curr.startTick;
+        if (span >= 120 && curr.velocity >= 65) {
+          expect(curr.durationTicks / span).toBeGreaterThanOrEqual(0.85);
+        }
+      }
+    }
+
+    // root_steady (8th grid = 240 ticks) -> duration >= 204 (85%+) and <= 235
+    const steadySong = createSong({ patternPreset: 'root_steady' });
+    const steadyNotes = generateBassNotes({
+      song: steadySong,
+      section: createSection({ bars: 1, chords: ['Em'] }),
+      sectionIndex: 0,
+      style: 'A',
+      seed: 1,
+      params: resolveInstrumentParams(steadySong, createSection({ bars: 1 }), 'bass', 'A'),
+    });
+    expect(steadyNotes.every((n) => n.durationTicks >= 204)).toBe(true);
+  });
 });

@@ -453,11 +453,16 @@ describe('vocalEngine', () => {
     expect(oct.map((n) => n.pitch)).toEqual([76, 79, 88]); // capped at 88
   });
 
-  it('produces predominantly stepwise arch contours without extreme zigzag jumps across melody presets', () => {
+  it('produces predominantly stepwise/repeated arch contours with Gap-Fill descent after climax leaps across melody presets', () => {
     const scalePcs = new Set(getScalePitchClasses('E', 'Minor'));
     const fullScaleGrid: number[] = [];
     for (let p = VOCAL_MIN_PITCH; p <= VOCAL_MAX_PITCH; p++) {
       if (scalePcs.has(p % 12)) fullScaleGrid.push(p);
+    }
+    const eMinorPentPcs = new Set([4, 7, 9, 11, 2]); // E, G, A, B, D
+    const pentGrid: number[] = [];
+    for (let p = VOCAL_MIN_PITCH; p <= VOCAL_MAX_PITCH; p++) {
+      if (eMinorPentPcs.has(p % 12)) pentGrid.push(p);
     }
 
     const melodyPresets = [
@@ -474,6 +479,10 @@ describe('vocalEngine', () => {
     ];
 
     for (const preset of melodyPresets) {
+      const activeGrid =
+        preset === 'melody_alt_minor' || preset === 'melody_britpop_catchy'
+          ? pentGrid
+          : fullScaleGrid;
       const song = createDefaultSongConfig('rockBand');
       song.members.vocal.patternPreset = preset;
       const section = createSection({
@@ -490,28 +499,42 @@ describe('vocalEngine', () => {
         params: resolveInstrumentParams(song, section, 'vocal', 'A'),
       });
 
-      let stepwiseCount = 0;
+      // Strict 100% scale conformance & monophonic non-overlap check
+      for (let i = 0; i < notes.length; i++) {
+        expect(scalePcs.has(notes[i].pitch % 12)).toBe(true);
+        if (i > 0) {
+          expect(notes[i - 1].startTick + notes[i - 1].durationTicks).toBeLessThanOrEqual(
+            notes[i].startTick
+          );
+        }
+      }
+
+      let stepwiseOrRepeatCount = 0;
       let totalTransitions = 0;
       const stepDiffs: number[] = [];
       for (let i = 1; i < notes.length; i++) {
-        const prevIdx = fullScaleGrid.indexOf(notes[i - 1].pitch);
-        const currIdx = fullScaleGrid.indexOf(notes[i].pitch);
+        const prevIdx = activeGrid.indexOf(notes[i - 1].pitch);
+        const currIdx = activeGrid.indexOf(notes[i].pitch);
         const diff = currIdx - prevIdx;
         stepDiffs.push(diff);
         totalTransitions++;
         if (Math.abs(diff) <= 2) {
-          stepwiseCount++;
+          stepwiseOrRepeatCount++;
         }
       }
 
-      // Majority (> 50%) of intervals must be smooth stepwise (<= 2 scale steps)
-      expect(stepwiseCount).toBeGreaterThan(totalTransitions * 0.5);
+      // >= 65% of intervals must be smooth stepwise (<= 2 scale steps) or same-note lyric repetition
+      expect(stepwiseOrRepeatCount).toBeGreaterThanOrEqual(totalTransitions * 0.65);
 
-      // No consecutive extreme reverse zigzag leaps (>= +3 immediately followed by <= -3 or vice versa)
-      for (let i = 1; i < stepDiffs.length; i++) {
+      // Gap-Fill invariant: after any large upward leap (>= +3), immediately resolve downward (-1..-2 steps)
+      for (let i = 0; i + 1 < stepDiffs.length; i++) {
+        if (stepDiffs[i] >= 3) {
+          expect(stepDiffs[i + 1]).toBeLessThan(0);
+          expect(stepDiffs[i + 1]).toBeGreaterThanOrEqual(-2);
+        }
         const extremeZigzag =
-          (stepDiffs[i - 1] >= 3 && stepDiffs[i] <= -3) ||
-          (stepDiffs[i - 1] <= -3 && stepDiffs[i] >= 3);
+          (stepDiffs[i] >= 3 && stepDiffs[i + 1] <= -3) ||
+          (stepDiffs[i] <= -3 && stepDiffs[i + 1] >= 3);
         expect(extremeZigzag).toBe(false);
       }
     }

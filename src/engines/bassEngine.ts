@@ -39,17 +39,47 @@ function enforceMonophonicAndClip(
     deduped.push(n);
   }
 
-  // Truncate overlapping durations
+  // Truncate overlapping durations leaving a >=5 tick safety margin before the next note
   for (let i = 0; i < deduped.length; i++) {
     const curr = deduped[i];
-    const maxAllowed =
-      i + 1 < deduped.length
-        ? Math.min(sectionEnd - curr.startTick, deduped[i + 1].startTick - curr.startTick)
-        : sectionEnd - curr.startTick;
-    curr.durationTicks = Math.max(1, Math.min(curr.durationTicks, maxAllowed));
+    if (i + 1 < deduped.length) {
+      const gap = deduped[i + 1].startTick - curr.startTick;
+      const safeCap = gap > 5 ? gap - 5 : gap;
+      const maxAllowed = Math.min(sectionEnd - curr.startTick, safeCap);
+      curr.durationTicks = Math.max(1, Math.min(curr.durationTicks, maxAllowed));
+    } else {
+      curr.durationTicks = Math.max(
+        1,
+        Math.min(curr.durationTicks, sectionEnd - curr.startTick)
+      );
+    }
   }
 
   return deduped;
+}
+
+/**
+ * Applies natural legato gate times (88%..95% of inter-onset span) to main bass notes
+ * while leaving ghost/muted notes short and never overlapping nextNote.startTick - 5.
+ */
+function applyLegatoGateToList(
+  notes: MidiNote[],
+  sectionEnd: number,
+  gateRatio = 0.92,
+  maxLegatoSpan = TICKS_PER_BAR
+): void {
+  if (notes.length === 0) return;
+  notes.sort((a, b) => a.startTick - b.startTick || a.pitch - b.pitch);
+  for (let i = 0; i < notes.length; i++) {
+    const curr = notes[i];
+    if (curr.velocity < 65) continue; // preserve ghost/muted staccato notes
+    const nextStart = i + 1 < notes.length ? notes[i + 1].startTick : sectionEnd;
+    const span = Math.max(1, nextStart - curr.startTick);
+    if (span > maxLegatoSpan) continue;
+    const legatoDur = Math.max(curr.durationTicks, Math.round(span * gateRatio));
+    const maxSafe = i + 1 < notes.length ? Math.max(1, span - 5) : sectionEnd - curr.startTick;
+    curr.durationTicks = Math.max(1, Math.min(legatoDur, maxSafe));
+  }
 }
 
 export function generateBassNotes(input: EngineInput): MidiNote[] {
@@ -87,8 +117,11 @@ export function generateBassNotes(input: EngineInput): MidiNote[] {
       }
     }
 
+    // Connect adjacent unison riff notes with natural 92% legato while keeping Take C deco pop crisp
+    applyLegatoGateToList(expanded, sectionEnd, 0.92, 960);
+
     if (style === 'B') {
-      // Take B: 100% exact copy (after partial +12 if 808 octaveUpOn808)
+      // Take B: 100% exact copy (after partial +12 if 808 octaveUpOn808 & natural legato)
       return enforceMonophonicAndClip(expanded, sectionEnd);
     }
 
@@ -251,35 +284,46 @@ export function generateBassNotes(input: EngineInput): MidiNote[] {
       };
 
       if (bassPreset === 'root_whole') {
-        pushBassNote(0, barHeadPitch, TICKS_PER_BAR - 40, 8);
+        pushBassNote(0, barHeadPitch, Math.round(TICKS_PER_BAR * 0.94), 8);
       } else if (bassPreset === 'root_steady' || bassPreset === 'pedal_point') {
+        const steadyDur = Math.round(240 * 0.92);
         for (let off = 0; off < TICKS_PER_BAR; off += 240) {
-          pushBassNote(off, barHeadPitch, 210, off === 0 ? 8 : -2);
+          pushBassNote(off, barHeadPitch, steadyDur, off === 0 ? 8 : -2);
         }
       } else if (bassPreset === 'kick_lock') {
-        pushBassNote(0, barHeadPitch, 220, 8);
-        for (const kt of barKicks) {
-          pushBassNote(kt - barStart, barHeadPitch, 200, 0);
+        const lockOffsets = Array.from(
+          new Set([0, ...barKicks.map((kt) => kt - barStart)])
+        )
+          .filter((off) => off >= 0 && off < TICKS_PER_BAR)
+          .sort((a, b) => a - b);
+        for (let i = 0; i < lockOffsets.length; i++) {
+          const off = lockOffsets[i];
+          const nextOff = i + 1 < lockOffsets.length ? lockOffsets[i + 1] : TICKS_PER_BAR;
+          const span = Math.max(120, nextOff - off);
+          const dur = Math.min(Math.max(1, span - 5), Math.round(span * 0.92));
+          pushBassNote(off, barHeadPitch, dur, off === 0 ? 8 : 0);
         }
       } else if (bassPreset === 'octave_disco') {
+        const discoDur = Math.round(240 * 0.9);
         for (let s = 0; s < 8; s++) {
           const off = s * 240;
           const p = s % 2 === 0 ? barHeadPitch : octPitch;
-          pushBassNote(off, p, 200, s % 2 === 0 ? 6 : 0);
+          pushBassNote(off, p, discoDur, s % 2 === 0 ? 6 : 0);
         }
       } else if (bassPreset === 'melodic_walk') {
-        pushBassNote(0, barHeadPitch, 440, 8);
-        pushBassNote(480, thirdPitch, 440, 0);
-        pushBassNote(960, fifthPitch, 440, 2);
-        pushBassNote(1440, approachPitch, 440, -2);
+        const walkDur = Math.round(480 * 0.92);
+        pushBassNote(0, barHeadPitch, walkDur, 8);
+        pushBassNote(480, thirdPitch, walkDur, 0);
+        pushBassNote(960, fifthPitch, walkDur, 2);
+        pushBassNote(1440, approachPitch, walkDur, -2);
       } else if (bassPreset === 'syncopated_groove') {
         const steps: Array<[number, number, number]> = [
-          [0, barHeadPitch, 320],
-          [360, barHeadPitch, 280],
-          [720, fifthPitch, 110],
-          [840, octPitch, 300],
-          [1200, barHeadPitch, 300],
-          [1560, approachPitch, 280],
+          [0, barHeadPitch, Math.round(360 * 0.92)],
+          [360, barHeadPitch, Math.round(360 * 0.92)],
+          [720, fifthPitch, 110], // crisp 16th syncopated ghost jump into octave
+          [840, octPitch, Math.round(360 * 0.92)],
+          [1200, barHeadPitch, Math.round(360 * 0.92)],
+          [1560, approachPitch, Math.round(360 * 0.92)],
         ];
         for (const [off, p, dur] of steps) {
           pushBassNote(off, p, dur, off === 0 ? 8 : 0);
@@ -313,7 +357,8 @@ export function generateBassNotes(input: EngineInput): MidiNote[] {
         for (let i = 0; i < uniqueSubs.length; i++) {
           const off = uniqueSubs[i];
           const nextOff = i + 1 < uniqueSubs.length ? uniqueSubs[i + 1] : TICKS_PER_BAR;
-          pushBassNote(off, barHeadPitch, Math.max(240, nextOff - off - 20), 10);
+          const span = Math.max(240, nextOff - off);
+          pushBassNote(off, barHeadPitch, Math.min(span - 5, Math.round(span * 0.94)), 10);
         }
       } else if (bassPreset === 'jrock_anticipation') {
         // Driving 8th root/octave groove that anticipates nextChord root on beat 4-and (1680)
@@ -322,13 +367,14 @@ export function generateBassNotes(input: EngineInput): MidiNote[] {
           bar === 0
             ? [0, 240, 480, 720, 960, 1200, 1440]
             : [240, 480, 720, 960, 1200, 1440];
+        const antLegatoDur = Math.round(240 * 0.92);
         for (let i = 0; i < bodySteps.length; i++) {
           const off = bodySteps[i];
           const p =
             style !== 'B' && off % 480 === 240 && off !== 1440
               ? octPitch
               : barHeadPitch;
-          pushBassNote(off, p, 210, off % 480 === 0 ? 8 : 0);
+          pushBassNote(off, p, antLegatoDur, off % 480 === 0 ? 8 : 0);
         }
         // Anticipate next bar's root at 1680 and tie across barEnd (duration 460 -> 2140)
         pushBassNote(1680, nextRoot, 460, 10);
@@ -526,6 +572,11 @@ export function generateBassNotes(input: EngineInput): MidiNote[] {
         });
       }
     }
+  }
+
+  // Apply natural legato gate time (92% of grid span) for auto-mode notes across the section
+  if (bassPreset === 'auto') {
+    applyLegatoGateToList(notes, sectionEnd, 0.92, TICKS_PER_BAR);
   }
 
   return enforceMonophonicAndClip(notes, sectionEnd);
