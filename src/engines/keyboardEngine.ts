@@ -1,5 +1,9 @@
 import { TICKS_PER_BAR, type MidiNote } from '../types/song';
 import {
+  getActiveChordAtTick,
+  getTimelineBoundaryChanges,
+} from '../lib/chordTimeline';
+import {
   fitPitchClassToRange,
   getScalePitchClasses,
   resolveChordForBar,
@@ -80,13 +84,13 @@ export function generateKeyboardNotes(input: EngineInput): MidiNote[] {
     const motif = [0, 7, 14, 12]; // Root, 5th, 9th, Octave
     let stepIdx = 0;
     for (let t = 0; t < sectionEnd; t += stepTicks) {
-      const barIdx = Math.floor(t / TICKS_PER_BAR);
-      const chord = resolveChordForBar(
+      const chord = getActiveChordAtTick(
         section.chords,
-        barIdx,
+        t,
         song.key,
-        song.scale
-      );
+        song.scale,
+        section.bars
+      ).parsed;
       const rootMidi = fitPitchClassToRange(chord.rootSemitone, 60, 71);
       const pitch = Math.min(88, rootMidi + motif[stepIdx % motif.length]);
       const dur = Math.max(1, Math.min(stepTicks >= 720 ? 320 : 180, sectionEnd - t));
@@ -123,29 +127,56 @@ export function generateKeyboardNotes(input: EngineInput): MidiNote[] {
     return notes;
   }
 
+  const timelineChanges = getTimelineBoundaryChanges(
+    section.chords,
+    section.bars,
+    song.key,
+    song.scale
+  );
+
+  const voicingOptions =
+    kbPreset === 'dark_low_riff'
+      ? { minPitch: 48, maxPitch: 67 }
+      : kbPreset === 'rock_power_riff'
+        ? { minPitch: 48, maxPitch: 67 }
+        : kbPreset === 'floating_tension' ||
+            kbPreset === 'emo_arp_cascade' ||
+            kbPreset === 'gospel_rich_comp'
+          ? { forceFloating: true }
+          : kbPreset === 'counter_melody'
+            ? { minPitch: 67, maxPitch: 86 }
+            : undefined;
+
+  const getVoicingAtTick = (absTick: number): number[] => {
+    const { parsed } = getActiveChordAtTick(
+      section.chords,
+      absTick,
+      song.key,
+      song.scale,
+      section.bars
+    );
+    return buildKeyboardVoicing(
+      parsed.rootSemitone,
+      parsed.intervals,
+      params,
+      voicingOptions
+    );
+  };
+
   for (let bar = 0; bar < section.bars; bar++) {
     const barStart = bar * TICKS_PER_BAR;
-    const chord = resolveChordForBar(
+    const chord = getActiveChordAtTick(
       section.chords,
-      bar,
+      barStart,
       song.key,
-      song.scale
-    );
+      song.scale,
+      section.bars
+    ).parsed;
     const voicing = buildKeyboardVoicing(
       chord.rootSemitone,
       chord.intervals,
       params,
-      kbPreset === 'dark_low_riff'
-        ? { minPitch: 48, maxPitch: 67 }
-        : kbPreset === 'rock_power_riff'
-          ? { minPitch: 48, maxPitch: 67 }
-          : kbPreset === 'floating_tension' ||
-              kbPreset === 'emo_arp_cascade' ||
-              kbPreset === 'gospel_rich_comp'
-            ? { forceFloating: true }
-            : kbPreset === 'counter_melody'
-              ? { minPitch: 67, maxPitch: 86 }
-              : undefined
+      voicingOptions
     );
 
     const pushChordHit = (
@@ -153,7 +184,12 @@ export function generateKeyboardNotes(input: EngineInput): MidiNote[] {
       durationTicks: number,
       velOffset = 0
     ) => {
-      for (const p of voicing) {
+      const activeVoicing =
+        startTick > barStart &&
+        timelineChanges.some((c) => c.changeTick > barStart && c.changeTick <= startTick)
+          ? getVoicingAtTick(startTick)
+          : voicing;
+      for (const p of activeVoicing) {
         const jitter =
           params.humanizeTicks > 0 && startTick > barStart
             ? rng.nextInt(-params.humanizeTicks, params.humanizeTicks)
@@ -705,6 +741,87 @@ export function generateKeyboardNotes(input: EngineInput): MidiNote[] {
       for (const h of hits) {
         const dur = style === 'B' ? 440 : 200;
         pushChordHit(barStart + h, dur, h === 0 ? 4 : -4);
+      }
+    }
+  }
+
+  // Timeline chord boundary & offbeat anticipation sync
+  if (timelineChanges.length > 0 && kbPreset !== 'jrock_anticipation') {
+    for (const change of timelineChanges) {
+      const changeTick = change.changeTick;
+      // 1. Cut pre-existing chord notes cleanly before changeTick - 5 to avoid chord clash
+      for (let i = notes.length - 1; i >= 0; i--) {
+        const n = notes[i];
+        if (n.startTick < changeTick && n.startTick + n.durationTicks > changeTick - 5) {
+          const clipped = changeTick - 5 - n.startTick;
+          if (clipped < 20) {
+            notes.splice(i, 1);
+          } else {
+            n.durationTicks = clipped;
+          }
+        }
+      }
+
+      if (change.isOffbeat) {
+        // Clear notes in [changeTick, changeTick + 240] so the anticipated voicing rings cleanly across barline
+        for (let i = notes.length - 1; i >= 0; i--) {
+          const n = notes[i];
+          if (n.startTick >= changeTick && n.startTick <= changeTick + 240) {
+            notes.splice(i, 1);
+          }
+        }
+
+        const nextVoicing = buildKeyboardVoicing(
+          change.parsed.rootSemitone,
+          change.parsed.intervals,
+          params,
+          voicingOptions
+        );
+        const antDur = Math.max(
+          120,
+          Math.min(680, change.endTick - changeTick - 5, sectionEnd - changeTick)
+        );
+        for (const p of nextVoicing) {
+          notes.push({
+            pitch: p,
+            velocity: clampVelocity(
+              Math.min(params.velocityCap, baseVel + 8 + params.velocityBoost)
+            ),
+            startTick: changeTick,
+            durationTicks: antDur,
+            channel: 1,
+          });
+        }
+      } else if (changeTick % TICKS_PER_BAR !== 0) {
+        // Regular mid-bar ChordSlot split (e.g. beat 3 split): ensure new voicing triggers only if remainder of bar has no notes (e.g. whole_sustain)
+        const nextBarTick = (Math.floor(changeTick / TICKS_PER_BAR) + 1) * TICKS_PER_BAR;
+        const slotWindowEnd = Math.min(change.endTick, nextBarTick);
+        const hasHitInSlotWindow = notes.some(
+          (n) => n.startTick >= changeTick && n.startTick < slotWindowEnd
+        );
+        if (!hasHitInSlotWindow) {
+          const splitVoicing = buildKeyboardVoicing(
+            change.parsed.rootSemitone,
+            change.parsed.intervals,
+            params,
+            voicingOptions
+          );
+          const splitDur = Math.max(
+            120,
+            Math.min(change.endTick - changeTick - 10, sectionEnd - changeTick)
+          );
+          for (const p of splitVoicing) {
+            notes.push({
+              pitch: p,
+              velocity: clampVelocity(
+                Math.min(params.velocityCap, baseVel + params.velocityBoost)
+              ),
+              startTick: changeTick,
+              durationTicks: splitDur,
+              channel: 1,
+            });
+          }
+        }
       }
     }
   }

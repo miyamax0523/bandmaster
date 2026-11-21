@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createDefaultSongConfig, generateAllSections } from '../src/lib/bandState';
+import { createUniformChordTimeline } from '../src/lib/chordTimeline';
 import { selectSongTracks } from '../src/lib/noteSelector';
 import { TICKS_PER_BAR, TRACK_CHANNELS } from '../src/types/song';
 
@@ -14,7 +15,7 @@ describe('noteSelector', () => {
         bars: 2,
         energy: 'Mid',
         kickMode: '808',
-        chords: ['Em', 'C'],
+        chords: createUniformChordTimeline(['Em', 'C'], 2),
       },
     ];
     song.split808KickTrack = false; // Even when false, noteSelector must logically split kick808
@@ -53,7 +54,7 @@ describe('noteSelector', () => {
         bars: 1,
         energy: 'High',
         kickMode: 'acoustic',
-        chords: ['Em'],
+        chords: createUniformChordTimeline(['Em'], 1),
       },
     ];
     const state = generateAllSections(song);
@@ -84,7 +85,7 @@ describe('noteSelector', () => {
         bars: 1,
         energy: 'Mid',
         kickMode: 'acoustic',
-        chords: ['Em'],
+        chords: createUniformChordTimeline(['Em'], 1),
         uploadedDrumLoop: {
           fileName: 'ext.mid',
           bars: 1,
@@ -99,7 +100,7 @@ describe('noteSelector', () => {
         bars: 1,
         energy: 'High',
         kickMode: 'acoustic',
-        chords: ['Em'],
+        chords: createUniformChordTimeline(['Em'], 1),
         unisonRiff: {
           sourceName: 'riff.mid',
           analysisMethod: 'manual',
@@ -154,7 +155,7 @@ describe('noteSelector', () => {
         bars: 2,
         energy: 'Mid',
         kickMode: 'acoustic',
-        chords: ['Em'],
+        chords: createUniformChordTimeline(['Em'], 2),
       },
     ];
     const state = generateAllSections(song);

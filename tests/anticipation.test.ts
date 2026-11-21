@@ -5,6 +5,7 @@ import { generateKeyboardNotes } from '../src/engines/keyboardEngine';
 import { generatePadNotes } from '../src/engines/padEngine';
 import { generateVocalNotes } from '../src/engines/vocalEngine';
 import { createDefaultSongConfig, generateAllSections } from '../src/lib/bandState';
+import { createUniformChordTimeline } from '../src/lib/chordTimeline';
 import { resolveInstrumentParams } from '../src/lib/keywordParser';
 import { PATTERN_PRESET_GROUPS } from '../src/lib/patternPresets';
 import { TICKS_PER_BAR, type InstrumentType, type Section } from '../src/types/song';
@@ -29,7 +30,7 @@ function createAnticipationSetup() {
     kickDensity: 3,
     keyboardDensity: 3,
     vocalDensity: 3,
-    chords: ['Em', 'C'], // Bar 0 = Em, Bar 1 = C (pitch class 0)
+    chords: createUniformChordTimeline(['Em', 'C'], 2), // Bar 0 = Em, Bar 1 = C (pitch class 0)
   };
   song.sections = [section];
   return { song, section };

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { generatePadNotes } from '../src/engines/padEngine';
+import { createUniformChordTimeline } from '../src/lib/chordTimeline';
 import { resolveInstrumentParams } from '../src/lib/keywordParser';
 import type { Section, SongConfig } from '../src/types/song';
 
@@ -38,7 +39,7 @@ const section: Section = {
   bars: 2,
   energy: 'High',
   kickMode: 'acoustic',
-  chords: ['Em', 'C'],
+  chords: createUniformChordTimeline(['Em', 'C'], 2),
 };
 
 describe('padEngine', () => {

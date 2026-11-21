@@ -6,11 +6,11 @@ import {
   type ScaleType,
   type VocalHarmonyMode,
 } from '../types/song';
+import { getActiveChordAtTick } from '../lib/chordTimeline';
 import {
   fitPitchClassToRange,
   getScalePitchClasses,
   noteNameToSemitone,
-  resolveChordForBar,
   type ParsedChord,
 } from '../lib/chordUtils';
 import { createSeededRng } from '../lib/random';
@@ -332,6 +332,79 @@ export function generateVocalNotes(input: EngineInput): MidiNote[] {
   const baseVel =
     section.energy === 'High' ? 104 : section.energy === 'Low' ? 78 : 92;
   const notes: MidiNote[] = [];
+
+  // Draw 5 Performance Variants from seeded RNG so every 🎲 re-roll creates fresh phrasing
+  type ArticulationStyle =
+    | 'staccato_chop'
+    | 'dramatic_hold'
+    | 'contrast_stop'
+    | 'flowing_legato';
+  type ContourShape =
+    | 'arch'
+    | 'ascending_launch'
+    | 'descending_cascade'
+    | 'wave_pendulum';
+  type EntryTiming = 'on_beat' | 'auftakt_pickup' | 'syncopated_after';
+  type HookDevice = 'octave_leap' | 'machinegun_repeat' | 'call_response_drop';
+  type RapFlowVariant =
+    | 'rapid_then_freeze'
+    | 'laidback_triplet'
+    | 'melodic_hook_tail'
+    | 'sparse_punchline';
+
+  const articulationStyle: ArticulationStyle =
+    preset === 'melody_staccato_chop' || preset === 'melody_staccato_rock'
+      ? 'staccato_chop'
+      : preset === 'melody_shoegaze_float' ||
+          preset === 'melody_soar_long' ||
+          preset === 'melody_ballad_breath' ||
+          preset === 'melody_ballad'
+        ? 'dramatic_hold'
+        : rng.pick([
+            'dramatic_hold',
+            'contrast_stop',
+            'flowing_legato',
+            'staccato_chop',
+          ]);
+
+  const contourShape: ContourShape =
+    preset === 'melody_anthem_climb'
+      ? 'ascending_launch'
+      : preset === 'melody_grunge_drag'
+        ? 'descending_cascade'
+        : rng.pick([
+            'arch',
+            'ascending_launch',
+            'descending_cascade',
+            'wave_pendulum',
+          ]);
+
+  const entryTiming: EntryTiming =
+    preset === 'melody_staccato_chop' || preset === 'melody_syncopated_hook'
+      ? 'syncopated_after'
+      : preset === 'melody_ballad' || preset === 'melody_soar_long'
+        ? 'on_beat'
+        : rng.pick(['on_beat', 'auftakt_pickup', 'syncopated_after']);
+
+  const hookDevice: HookDevice = rng.pick([
+    'octave_leap',
+    'machinegun_repeat',
+    'call_response_drop',
+  ]);
+
+  const rapFlowVariant: RapFlowVariant =
+    preset === 'rap_stop_and_go'
+      ? 'rapid_then_freeze'
+      : preset === 'rap_triplet_bounce'
+        ? 'laidback_triplet'
+        : preset === 'rap_spoken_tension'
+          ? 'melodic_hook_tail'
+          : rng.pick([
+              'rapid_then_freeze',
+              'laidback_triplet',
+              'melodic_hook_tail',
+              'sparse_punchline',
+            ]);
 
   const isRapPreset = preset.startsWith('rap_');
   if (isRapPreset) {
@@ -663,7 +736,13 @@ export function generateVocalNotes(input: EngineInput): MidiNote[] {
           });
         }
         // Sustained melodic sing tail starting at beat 3 using diatonic guide tones
-        const barChord = resolveChordForBar(section.chords, bar, song.key, song.scale);
+        const barChord = getActiveChordAtTick(
+          section.chords,
+          barStart + 960,
+          song.key,
+          song.scale,
+          section.bars
+        ).parsed;
         const { stableTones, questionTones } = getDiatonicGuideToneBuckets(
           barChord,
           scalePcs,
@@ -738,26 +817,95 @@ export function generateVocalNotes(input: EngineInput): MidiNote[] {
             channel: TRACK_CHANNELS.vocal,
           });
         }
+      } else if (preset === 'rap_stop_and_go') {
+        // 16th machine-gun bursts followed by complete silent freeze break
+        const burstSteps =
+          vocalDensity === 1
+            ? [0, 240]
+            : vocalDensity === 2
+              ? [0, 120, 240, 480]
+              : vocalDensity === 3
+                ? [0, 120, 240, 360, 480, 600, 720, 840]
+                : [0, 120, 240, 360, 480, 600, 720, 840, 960, 1080];
+        for (let i = 0; i < burstSteps.length; i++) {
+          const off = burstSteps[i];
+          notes.push({
+            pitch: i === burstSteps.length - 1 ? rapThird : i % 3 === 1 ? rapSecond : rapAnchor,
+            velocity: clampVelocity(baseVel + (i === burstSteps.length - 1 ? 10 : 4)),
+            startTick: barStart + off,
+            durationTicks: 85,
+            channel: TRACK_CHANNELS.vocal,
+          });
+        }
+        // Leaves 960..1920 (or 1200..1920 at dense) as sudden freeze silence!
+      } else if (preset === 'rap_triplet_bounce') {
+        const tripSteps =
+          vocalDensity === 1
+            ? [0, 960]
+            : vocalDensity === 2
+              ? [0, 320, 960, 1280]
+              : vocalDensity === 3
+                ? [0, 160, 320, 480, 800, 960, 1120, 1440]
+                : [0, 160, 320, 480, 640, 800, 960, 1120, 1280, 1440, 1600, 1760];
+        for (let i = 0; i < tripSteps.length; i++) {
+          const off = tripSteps[i];
+          const pitch =
+            off === 800 || off === 1600
+              ? rapThird
+              : i % 3 === 1
+                ? rapSecond
+                : rapAnchor;
+          notes.push({
+            pitch,
+            velocity: clampVelocity(baseVel + (off % 480 === 0 ? 8 : -2) + rng.nextInt(-3, 3)),
+            startTick: barStart + off,
+            durationTicks: vocalDensity <= 2 ? 220 : 125,
+            channel: TRACK_CHANNELS.vocal,
+          });
+        }
+      } else if (preset === 'rap_spoken_tension') {
+        const spokenSteps =
+          vocalDensity === 1
+            ? [0, 1440]
+            : vocalDensity === 2
+              ? [0, 480, 1440]
+              : vocalDensity === 3
+                ? [0, 240, 480, 720, 960, 1440]
+                : [0, 120, 240, 480, 600, 720, 960, 1080, 1440, 1680];
+        for (let i = 0; i < spokenSteps.length; i++) {
+          const off = spokenSteps[i];
+          const isBarEndLift = off >= 1440;
+          const pitch = isBarEndLift ? rapFifth : i % 2 === 1 ? rapBelow : rapTwoBelow;
+          notes.push({
+            pitch,
+            velocity: clampVelocity(isBarEndLift ? baseVel + 12 : baseVel - 10),
+            startTick: barStart + off,
+            durationTicks: isBarEndLift ? 360 : 170,
+            channel: TRACK_CHANNELS.vocal,
+          });
+        }
       } else {
-        // rap_monotone_chant
-        const chantSteps =
+        // rap_monotone_chant & flow variant influence
+        const baseChant =
           vocalDensity === 1
             ? [0, 960]
             : vocalDensity === 2
               ? [0, 480, 960]
               : vocalDensity >= 4
                 ? [0, 120, 240, 480, 720, 960, 1200, 1320, 1440, 1680]
-                : style === 'C'
-                  ? [0, 240, 480, 840, 960, 1200, 1440]
-                  : style === 'B'
-                    ? [0, 480, 960, 1200, 1440]
-                    : [0, 240, 480, 960, 1200];
-        for (let i = 0; i < chantSteps.length; i++) {
-          const off = chantSteps[i];
-          if (vocalDensity <= 3 && isPhraseEndBar && i === chantSteps.length - 1 && rng.chance(0.45)) {
+                : rapFlowVariant === 'sparse_punchline'
+                  ? [480, 960, 1200, 1440]
+                  : style === 'C'
+                    ? [0, 240, 480, 840, 960, 1200, 1440]
+                    : style === 'B'
+                      ? [0, 480, 960, 1200, 1440]
+                      : [0, 240, 480, 960, 1200];
+        for (let i = 0; i < baseChant.length; i++) {
+          const off = baseChant[i];
+          if (vocalDensity <= 3 && isPhraseEndBar && i === baseChant.length - 1 && rng.chance(0.45)) {
             continue;
           }
-          const isTail = isPhraseEndBar && i === chantSteps.length - 1;
+          const isTail = isPhraseEndBar && i === baseChant.length - 1;
           const pitch = isTail ? rapBelow : rapAnchor;
           notes.push({
             pitch,
@@ -836,7 +984,13 @@ export function generateVocalNotes(input: EngineInput): MidiNote[] {
   if (preset === 'jrock_anticipation') {
     for (let bar = 0; bar < section.bars; bar++) {
       const barStart = bar * TICKS_PER_BAR;
-      const chord = resolveChordForBar(section.chords, bar, song.key, song.scale);
+      const chord = getActiveChordAtTick(
+        section.chords,
+        barStart,
+        song.key,
+        song.scale,
+        section.bars
+      ).parsed;
       const chordTones = getScaleChordTones(chord, scalePcs, bandMin, bandMax);
       const bodyOffsets =
         bar === 0
@@ -873,12 +1027,13 @@ export function generateVocalNotes(input: EngineInput): MidiNote[] {
 
       const antTick = barStart + 1680;
       if (antTick < sectionEnd) {
-        const nextChord = resolveChordForBar(
+        const nextChord = getActiveChordAtTick(
           section.chords,
-          bar + 1,
+          Math.min(sectionEnd - 1, barStart + TICKS_PER_BAR),
           song.key,
-          song.scale
-        );
+          song.scale,
+          section.bars
+        ).parsed;
         const nextChordTones = getScaleChordTones(
           nextChord,
           scalePcs,
@@ -912,7 +1067,16 @@ export function generateVocalNotes(input: EngineInput): MidiNote[] {
     preset === 'melody_syncopated_hook' ||
     preset === 'melody_britpop_catchy' ||
     preset === 'melody_alt_soar' ||
-    (preset === 'melody_pop' && style !== 'B');
+    entryTiming === 'auftakt_pickup' ||
+    entryTiming === 'syncopated_after';
+
+  const isStaccatoPreset =
+    preset === 'melody_staccato_rock' || preset === 'melody_staccato_chop';
+  const isLongHoldPreset =
+    preset === 'melody_shoegaze_float' ||
+    preset === 'melody_soar_long' ||
+    preset === 'melody_ballad_breath' ||
+    preset === 'melody_anthem_climb';
 
   const buildPhraseRhythmSkeleton = (
     blockBars: number,
@@ -921,10 +1085,10 @@ export function generateVocalNotes(input: EngineInput): MidiNote[] {
   ): RhythmSlot[] => {
     // 1-bar single-section fallback
     if (blockBars === 1) {
-      if (preset === 'melody_soar_long') {
+      if (preset === 'melody_soar_long' || preset === 'melody_shoegaze_float') {
         return [{ localTick: 0, durationTicks: 1440, role: 'tail' }];
       }
-      if (preset === 'melody_staccato_rock') {
+      if (isStaccatoPreset) {
         const offs = vocalDensity === 1 ? [0, 960] : [0, 240, 480, 960];
         return offs.map((t, idx) => ({
           localTick: t,
@@ -955,16 +1119,15 @@ export function generateVocalNotes(input: EngineInput): MidiNote[] {
       const inherited: RhythmSlot[] = motifASkeleton.map((s) => ({ ...s }));
       if (
         preset !== 'melody_soar_long' &&
-        preset !== 'melody_staccato_rock' &&
+        !isStaccatoPreset &&
         vocalDensity >= 3 &&
         inherited.length >= 4
       ) {
         const lastIdx = inherited.length - 1;
         if (inherited[lastIdx].role === 'tail' && inherited[lastIdx].localTick === TICKS_PER_BAR + 480) {
-          // Subtle resolution expansion in Phrase A' (leaves 360-tick breath rest cleanly)
           inherited[lastIdx] = {
             localTick: TICKS_PER_BAR + 480,
-            durationTicks: 1080,
+            durationTicks: preset === 'melody_shoegaze_float' ? 1200 : 1080,
             role: 'tail',
           };
         }
@@ -975,26 +1138,32 @@ export function generateVocalNotes(input: EngineInput): MidiNote[] {
     // Phrase A ("Question") Construction
     const slots: RhythmSlot[] = [];
 
-    if (preset === 'melody_staccato_rock') {
+    if (isStaccatoPreset) {
       const bar0 =
         vocalDensity === 1
           ? [0, 960]
           : vocalDensity === 2
             ? [0, 480, 960]
-            : vocalDensity >= 4
-              ? [0, 240, 480, 600, 720, 960, 1200, 1440]
-              : [0, 240, 480, 960, 1200, 1440];
+            : preset === 'melody_staccato_chop'
+              ? vocalDensity >= 4
+                ? [240, 360, 720, 840, 1200, 1440, 1680]
+                : [240, 720, 960, 1200, 1680]
+              : vocalDensity >= 4
+                ? [0, 240, 480, 600, 720, 960, 1200, 1440]
+                : [0, 240, 480, 960, 1200, 1440];
       const bar1 =
         vocalDensity === 1
           ? [0, 960]
           : vocalDensity === 2
             ? [0, 480, 960]
-            : [0, 240, 480, 960, 1200];
+            : preset === 'melody_staccato_chop'
+              ? [0, 240, 720, 1200]
+              : [0, 240, 480, 960, 1200];
       for (let i = 0; i < bar0.length; i++) {
         const nextT = i + 1 < bar0.length ? bar0[i + 1] : TICKS_PER_BAR;
         slots.push({
           localTick: bar0[i],
-          durationTicks: Math.max(55, Math.min(220, Math.round((nextT - bar0[i]) * 0.46))),
+          durationTicks: Math.max(55, Math.min(200, Math.round((nextT - bar0[i]) * 0.45))),
           role: 'word',
         });
       }
@@ -1002,33 +1171,42 @@ export function generateVocalNotes(input: EngineInput): MidiNote[] {
         const nextT = i + 1 < bar1.length ? bar1[i + 1] : 1440;
         slots.push({
           localTick: TICKS_PER_BAR + bar1[i],
-          durationTicks: Math.max(55, Math.min(220, Math.round((nextT - bar1[i]) * 0.46))),
+          durationTicks: Math.max(55, Math.min(200, Math.round((nextT - bar1[i]) * 0.45))),
           role: i === 0 ? 'peak' : i === bar1.length - 1 ? 'tail' : 'word',
         });
       }
       return slots;
     }
 
-    if (preset === 'melody_soar_long') {
+    if (preset === 'melody_soar_long' || preset === 'melody_shoegaze_float') {
       const frontOffs =
-        vocalDensity === 1
-          ? [0, 960]
-          : vocalDensity === 2
-            ? [0, 480, 960, 1440]
-            : vocalDensity === 3
-              ? [0, 240, 480, 960, 1200, 1680]
-              : vocalDensity === 4
-                ? [0, 240, 360, 480, 720, 960, 1200, 1440, 1680]
-                : [0, 120, 240, 360, 480, 600, 720, 840, 960, 1080, 1200, 1440, 1680];
+        preset === 'melody_shoegaze_float'
+          ? vocalDensity <= 2
+            ? [0]
+            : [0, 960]
+          : vocalDensity === 1
+            ? [0, 960]
+            : vocalDensity === 2
+              ? [0, 480, 960, 1440]
+              : vocalDensity === 3
+                ? [0, 240, 480, 960, 1200, 1680]
+                : vocalDensity === 4
+                  ? [0, 240, 360, 480, 720, 960, 1200, 1440, 1680]
+                  : [0, 120, 240, 360, 480, 600, 720, 840, 960, 1080, 1200, 1440, 1680];
       for (let i = 0; i < frontOffs.length; i++) {
         const t = frontOffs[i];
         const nextT = i + 1 < frontOffs.length ? frontOffs[i + 1] : TICKS_PER_BAR;
+        const durCap =
+          preset === 'melody_shoegaze_float'
+            ? 1400
+            : vocalDensity === 1
+              ? 880
+              : vocalDensity >= 4
+                ? 190
+                : 380;
         slots.push({
           localTick: t,
-          durationTicks: Math.min(
-            vocalDensity === 1 ? 880 : vocalDensity >= 4 ? 190 : 380,
-            Math.max(100, nextT - t - 20)
-          ),
+          durationTicks: Math.min(durCap, Math.max(100, nextT - t - 20)),
           role: 'word',
         });
       }
@@ -1041,12 +1219,11 @@ export function generateVocalNotes(input: EngineInput): MidiNote[] {
       return slots;
     }
 
-    // Standard 2-bar Melodic Soul skeleton with word chunks + auftakt + climax + >= 960 sustain + 360..480 breath rest
-    if (vocalDensity === 1) {
+    // Standard 2-bar Melodic Soul skeleton driven by Performance Variants + Vocal Density
+    if (vocalDensity === 1 || preset === 'melody_ballad_breath') {
       return [
-        { localTick: 0, durationTicks: 880, role: 'word' },
-        { localTick: 960, durationTicks: 880, role: 'word' },
-        { localTick: TICKS_PER_BAR, durationTicks: 1440, role: 'peak' }, // sustained 1440 + 480 rest
+        { localTick: 0, durationTicks: 960, role: 'word' },
+        { localTick: TICKS_PER_BAR, durationTicks: 1440, role: 'peak' }, // sustained 1440 + 480 breath rest
       ];
     }
 
@@ -1061,7 +1238,7 @@ export function generateVocalNotes(input: EngineInput): MidiNote[] {
       ];
     }
 
-    // vocalDensity 3..5: Word chunks in Bar 0 + peak pickup in Bar 1 + >= 960 sustained landing
+    // vocalDensity 3..5: Shaped cleanly by entryTiming & articulationStyle
     let frontBar0: number[];
     if (vocalDensity >= 5) {
       frontBar0 = [0, 120, 240, 360, 480, 600, 720, 840, 960, 1080, 1200, 1320, 1440, 1680];
@@ -1069,15 +1246,22 @@ export function generateVocalNotes(input: EngineInput): MidiNote[] {
       frontBar0 =
         preset === 'melody_syncopated_hook'
           ? [0, 120, 360, 600, 840, 960, 1200, 1560]
-          : [240, 360, 480, 720, 960, 1200, 1440, 1680];
+          : entryTiming === 'syncopated_after'
+            ? [240, 360, 720, 840, 1200, 1440, 1680]
+            : [240, 360, 480, 720, 960, 1200, 1440, 1680];
     } else {
-      // vocalDensity === 3: 3-4 syllable chunk 1 + breath gap + 3-note chunk 2 with auftakt pickup
+      // vocalDensity === 3
       if (preset === 'melody_syncopated_hook') {
         frontBar0 = [0, 360, 720, 1200, 1560];
       } else if (preset === 'melody_grunge_drag') {
         frontBar0 = [0, 270, 510, 990, 1470];
       } else if (preset === 'melody_ballad' || preset === 'melody_emo_screamo') {
         frontBar0 = [0, 480, 960, 1440];
+      } else if (articulationStyle === 'contrast_stop') {
+        // Pack 4 fast 16th/8th syllables in beat 1..2, then stop suddenly for 480-tick break!
+        frontBar0 = [0, 120, 240, 480, 1200, 1440, 1680];
+      } else if (entryTiming === 'syncopated_after') {
+        frontBar0 = [240, 480, 720, 1200, 1560];
       } else if (usesAuftakt) {
         frontBar0 = [240, 480, 720, 1200, 1440, 1680];
       } else {
@@ -1088,10 +1272,19 @@ export function generateVocalNotes(input: EngineInput): MidiNote[] {
     for (let i = 0; i < frontBar0.length; i++) {
       const t = frontBar0[i];
       const nextT = i + 1 < frontBar0.length ? frontBar0[i + 1] : TICKS_PER_BAR;
-      const maxDur = vocalDensity >= 5 ? 110 : vocalDensity === 4 ? 190 : 380;
+      const gap = nextT - t;
+      let dur: number;
+      if (articulationStyle === 'staccato_chop' && vocalDensity <= 4) {
+        dur = Math.max(70, Math.min(180, Math.round(gap * 0.52)));
+      } else if (articulationStyle === 'flowing_legato' && vocalDensity <= 4) {
+        dur = Math.max(100, Math.min(440, gap - 8));
+      } else {
+        const maxDur = vocalDensity >= 5 ? 110 : vocalDensity === 4 ? 190 : 380;
+        dur = Math.max(90, Math.min(maxDur, gap - 15));
+      }
       slots.push({
         localTick: t,
-        durationTicks: Math.max(90, Math.min(maxDur, nextT - t - 15)),
+        durationTicks: dur,
         role: 'word',
       });
     }
@@ -1102,11 +1295,18 @@ export function generateVocalNotes(input: EngineInput): MidiNote[] {
         ? [0, 120, 240, 360]
         : preset === 'melody_syncopated_hook'
           ? [0, 360]
-          : [0, 240];
+          : isLongHoldPreset
+            ? [0]
+            : [0, 240];
     for (let i = 0; i < bar1Pickups.length; i++) {
       const t = bar1Pickups[i];
       const nextT = i + 1 < bar1Pickups.length ? bar1Pickups[i + 1] : 480;
-      const dur = vocalDensity >= 4 ? Math.min(110, nextT - t - 10) : Math.max(100, nextT - t - 20);
+      const dur =
+        vocalDensity >= 4
+          ? Math.min(110, nextT - t - 10)
+          : articulationStyle === 'staccato_chop'
+            ? Math.max(90, Math.round((nextT - t) * 0.6))
+            : Math.max(100, nextT - t - 20);
       slots.push({
         localTick: TICKS_PER_BAR + t,
         durationTicks: dur,
@@ -1137,12 +1337,13 @@ export function generateVocalNotes(input: EngineInput): MidiNote[] {
     // Preserve Call & Response 4-bar resting structure (bars 2 & 3 respond gently / rest)
     if (preset === 'melody_call_response' && isAPrime) {
       if (vocalDensity >= 3) {
-        const echoChord = resolveChordForBar(
+        const echoChord = getActiveChordAtTick(
           section.chords,
-          blockStartBar,
+          blockStartBar * TICKS_PER_BAR,
           song.key,
-          song.scale
-        );
+          song.scale,
+          section.bars
+        ).parsed;
         const { stableTones } = getDiatonicGuideToneBuckets(
           echoChord,
           scalePcs,
@@ -1166,14 +1367,21 @@ export function generateVocalNotes(input: EngineInput): MidiNote[] {
     // STAGE 1: Generate/inherit rhythm skeleton
     const skeleton = buildPhraseRhythmSkeleton(blockBars, isAPrime, motifASkeleton);
 
-    // STAGE 2: Guide-tone anchor selection per chord in this block
-    const frontChord = resolveChordForBar(section.chords, blockStartBar, song.key, song.scale);
-    const tailChord = resolveChordForBar(
+    // STAGE 2: Guide-tone anchor selection per timeline chord in this block
+    const frontChord = getActiveChordAtTick(
       section.chords,
-      blockStartBar + (blockBars - 1),
+      blockStartBar * TICKS_PER_BAR,
       song.key,
-      song.scale
-    );
+      song.scale,
+      section.bars
+    ).parsed;
+    const tailChord = getActiveChordAtTick(
+      section.chords,
+      Math.min(sectionEnd - 1, (blockStartBar + blockBars - 1) * TICKS_PER_BAR + 960),
+      song.key,
+      song.scale,
+      section.bars
+    ).parsed;
     const frontBuckets = getDiatonicGuideToneBuckets(frontChord, scalePcs, bandMin, bandMax);
     const tailBuckets = getDiatonicGuideToneBuckets(tailChord, scalePcs, bandMin, bandMax);
 
@@ -1183,15 +1391,23 @@ export function generateVocalNotes(input: EngineInput): MidiNote[] {
       frontBuckets.questionTones.length > 0 ? frontBuckets.questionTones : frontBuckets.stableTones
     );
     const rawStartIdx = findGridIdx(startTargetPitch);
-    if (blockStartBar === 0) {
+    const shoegazeMinIdx = Math.max(0, soulGrid.length - 3);
+    if (preset === 'melody_shoegaze_float') {
+      currIdx = Math.max(shoegazeMinIdx, Math.min(soulGrid.length - 1, Math.max(rawStartIdx, shoegazeMinIdx)));
+    } else if (blockStartBar === 0) {
       currIdx =
-        preset === 'melody_grunge_drag'
-          ? Math.min(soulGrid.length - 1, rawStartIdx + 2)
-          : Math.min(Math.max(0, soulGrid.length - 4), rawStartIdx);
+        preset === 'melody_grunge_drag' || contourShape === 'descending_cascade'
+          ? Math.min(Math.max(0, soulGrid.length - 4), rawStartIdx + 2)
+          : contourShape === 'ascending_launch'
+            ? Math.max(0, Math.min(soulGrid.length - 5, rawStartIdx - 1))
+            : Math.min(Math.max(0, soulGrid.length - 4), rawStartIdx);
     } else if (lastWasBigUpLeap) {
-      // Gap-fill continuation across bar boundary (e.g. melody_soar_long phrase 1 peak -> phrase 2 step down)
+      // Gap-fill continuation across bar boundary
       currIdx = Math.max(0, currIdx - 1);
       lastWasBigUpLeap = false;
+    } else if (hookDevice === 'call_response_drop' && isAPrime) {
+      // Smooth 2-step drop into lower responsive register for Phrase A'
+      currIdx = Math.max(0, currIdx - 2);
     } else {
       const startDiff = Math.max(-2, Math.min(2, rawStartIdx - currIdx));
       currIdx = Math.max(0, Math.min(soulGrid.length - 1, currIdx + startDiff));
@@ -1205,17 +1421,20 @@ export function generateVocalNotes(input: EngineInput): MidiNote[] {
     );
     const endAnchorIdx = findGridIdx(endAnchorPitch);
 
-    // STAGE 3: Stepwise + Lyric Same-Note Repetition + 1-Point Peak Leap + Gap-Fill
+    // STAGE 3: Stepwise + Lyric Repetition + 1-Point Climax Leap + Gap-Fill
     const leapMagnitude =
-      preset === 'melody_alt_soar' ||
-      preset === 'melody_metalcore_chorus' ||
-      preset === 'melody_emo_screamo'
-        ? isAPrime
-          ? 5
-          : 4
-        : isAPrime
-          ? 4
-          : 3;
+      hookDevice === 'octave_leap'
+        ? Math.min(6, Math.max(4, soulGrid.length - 2))
+        : preset === 'melody_alt_soar' ||
+            preset === 'melody_metalcore_chorus' ||
+            preset === 'melody_emo_screamo' ||
+            preset === 'melody_anthem_climb'
+          ? isAPrime
+            ? 5
+            : 4
+          : isAPrime
+            ? 4
+            : 3;
 
     const blockBaseTick = blockStartBar * TICKS_PER_BAR;
     const wordContourForMotif: number[] = [];
@@ -1224,11 +1443,14 @@ export function generateVocalNotes(input: EngineInput): MidiNote[] {
       const slot = skeleton[i];
       let nextIdx = currIdx;
 
-      if (i === 0 && slot.role !== 'peak') {
+      if (preset === 'melody_shoegaze_float') {
+        const floatStep = slot.role === 'peak' ? 1 : i % 2 === 0 ? 1 : -1;
+        nextIdx = Math.max(shoegazeMinIdx, Math.min(soulGrid.length - 1, currIdx + floatStep));
+        lastWasBigUpLeap = false;
+      } else if (i === 0 && slot.role !== 'peak') {
         nextIdx = currIdx;
         lastWasBigUpLeap = false;
       } else if (slot.role === 'peak') {
-        // Ensure room for a genuine +3..+5 upward leap inside soulGrid!
         const roomCeiling = soulGrid.length - 1;
         const maxPrePeak = Math.max(0, roomCeiling - 3);
         const baseForLeap = Math.min(currIdx, maxPrePeak);
@@ -1245,12 +1467,10 @@ export function generateVocalNotes(input: EngineInput): MidiNote[] {
         nextIdx = Math.max(0, currIdx + Math.min(-1, desiredStepDown));
         lastWasBigUpLeap = false;
       } else if (slot.role === 'tail') {
-        // Guide toward Phrase A Question or Phrase A' Answer anchor smoothly within <= 2 scale steps
         const toEnd = endAnchorIdx - currIdx;
         const clampedToEnd = Math.max(-2, Math.min(2, toEnd));
         nextIdx = Math.max(0, Math.min(soulGrid.length - 1, currIdx + clampedToEnd));
       } else {
-        // Word-chunk melody flesh: stepwise (+-1..2) & lyric repetition (0) inside safe pre-peak ceiling
         const prePeakIdx = skeleton.findIndex((s) => s.role === 'peak');
         const beforePeak = prePeakIdx === -1 || i < prePeakIdx;
         const prePeakCap = Math.max(1, soulGrid.length - 4);
@@ -1262,14 +1482,20 @@ export function generateVocalNotes(input: EngineInput): MidiNote[] {
           i < motifARelativeContour.length
         ) {
           delta = motifARelativeContour[i];
-        } else if (preset === 'melody_grunge_drag') {
-          delta = i % 3 === 0 ? 0 : i % 3 === 1 ? -1 : 1;
+        } else if (hookDevice === 'machinegun_repeat' && i <= 3) {
+          delta = 0; // Rapid syllable lyric repeat before moving
+        } else if (contourShape === 'descending_cascade' || preset === 'melody_grunge_drag') {
+          delta = i % 3 === 0 ? 0 : -1;
+        } else if (contourShape === 'ascending_launch') {
+          delta = i % 2 === 0 ? 1 : 0;
+        } else if (contourShape === 'wave_pendulum') {
+          delta = i % 2 === 1 ? 1 : -1;
         } else if (preset === 'melody_emo_screamo') {
           delta = i % 2 === 0 ? 0 : 1;
         } else if (i % 4 === 1) {
-          delta = 0; // Lyric same-note repetition (2-note vocal articulation)
+          delta = 0;
         } else if (beforePeak && currIdx >= prePeakCap) {
-          delta = -1; // Leave headroom for the emotional upward leap!
+          delta = -1;
         } else {
           delta = rng.pick([1, 0, 1, -1, 2]);
         }

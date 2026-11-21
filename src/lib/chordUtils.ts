@@ -1,4 +1,4 @@
-import type { KeyName, ScaleType } from '../types/song';
+import type { ChordSlot, KeyName, ScaleType } from '../types/song';
 
 export const KEY_NAMES: readonly KeyName[] = [
   'C',
@@ -360,14 +360,18 @@ export function getDefaultProgression(key: KeyName, scale: ScaleType): string[] 
 }
 
 export function resolveChordForBar(
-  chords: readonly string[],
+  chords: readonly ChordSlot[] | readonly string[],
   barIndex: number,
   key: KeyName,
   scale: ScaleType
 ): ParsedChord {
-  const effectiveChords =
-    chords.length > 0 ? chords : getDefaultProgression(key, scale);
-  const raw = effectiveChords[barIndex % effectiveChords.length];
+  const effectiveStrings: string[] =
+    chords.length > 0
+      ? typeof chords[0] === 'string'
+        ? (chords as readonly string[]).slice()
+        : (chords as readonly ChordSlot[]).map((c) => c.chord)
+      : getDefaultProgression(key, scale);
+  const raw = effectiveStrings[barIndex % effectiveStrings.length];
   try {
     return parseChord(raw);
   } catch {

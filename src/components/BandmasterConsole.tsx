@@ -5,6 +5,7 @@ import { isAutoTacet, isSectionPartEnabled } from '../lib/noteSelector';
 import { PATTERN_PRESET_GROUPS } from '../lib/patternPresets';
 import { useHorizontalSwipe } from '../lib/touchSwipe';
 import type {
+  ChordSlot,
   CopiedPartPhrase,
   DensityLevel,
   DrumLoopData,
@@ -15,6 +16,7 @@ import type {
   VocalHarmonyMode,
 } from '../types/song';
 import type { BandState } from '../types/track';
+import { ChordTimelineEditor } from './ChordTimelineEditor';
 import { MidiExportButton } from './MidiExportButton';
 import { TakeSelector } from './TakeSelector';
 
@@ -52,6 +54,8 @@ interface BandmasterConsoleProps {
     inst: InstrumentType,
     preset: string
   ) => void;
+  onChangeSectionChordTimeline: (sectionId: string, slots: ChordSlot[]) => void;
+  onCopyTimelineToAllSections: (sourceSectionId: string) => void;
   onToggleSectionPart: (sectionId: string, inst: InstrumentType) => void;
   onOpenVocalModal: (sectionId: string) => void;
   onClearSectionVocalMelody: (sectionId: string) => void;
@@ -105,6 +109,8 @@ export function BandmasterConsole({
   onCopyPartPhrase,
   onPastePartPhrase,
   onChangeSectionPatternPreset,
+  onChangeSectionChordTimeline,
+  onCopyTimelineToAllSections,
   onToggleSectionPart,
   onOpenVocalModal,
   onClearSectionVocalMelody,
@@ -193,6 +199,14 @@ export function BandmasterConsole({
           </button>
         ))}
       </div>
+
+      <ChordTimelineEditor
+        key={`tl-${section.id}`}
+        song={song}
+        section={section}
+        onChangeSlots={onChangeSectionChordTimeline}
+        onCopyTimelineToAllSections={onCopyTimelineToAllSections}
+      />
 
       <div className="section-meta-bar">
         <div className="section-meta-info">

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   applyArrangementPresetToSong,
+  applyTimelineToAllSections,
   cloneBandState,
   cloneSongConfig,
   createDefaultSongConfig,
@@ -18,6 +19,7 @@ import {
   toggleSectionPartEnabled,
   toggleSectionRiffOctaveUpOn808,
   updateSectionBars,
+  updateSectionChordTimeline,
   updateSectionDrumDensity,
   updateSectionDrumLoop,
   updateSectionKeyboardDensity,
@@ -29,7 +31,10 @@ import {
   type BandSnapshot,
   type QuickTemplateId,
 } from '../lib/bandState';
-import { transposeChords } from '../lib/chordUtils';
+import {
+  createUniformChordTimeline,
+  transposeChordTimeline,
+} from '../lib/chordTimeline';
 import {
   createDebouncedProjectSaver,
   loadCurrentProjectSync,
@@ -39,6 +44,7 @@ import {
 import {
   createDefaultEnabledParts,
   createDefaultPartPresets,
+  type ChordSlot,
   type CopiedPartPhrase,
   type DensityLevel,
   type DrumLoopData,
@@ -301,7 +307,7 @@ export function useBandGenerator() {
       vocalHarmony: 'off',
       patternPresets: createDefaultPartPresets(nextSong.members),
       enabledParts: createDefaultEnabledParts(),
-      chords: ['Em', 'C', 'G', 'D'],
+      chords: createUniformChordTimeline(['Em', 'C', 'G', 'D'], 4),
     };
     nextSong.sections.push(newSec);
     const nextState = cloneBandState(bandState);
@@ -556,13 +562,31 @@ export function useBandGenerator() {
     [commitChange]
   );
 
+  const changeSectionChordTimeline = useCallback(
+    (sectionId: string, slots: readonly ChordSlot[]) => {
+      const res = updateSectionChordTimeline(song, bandState, sectionId, slots);
+      commitChange(res.song, res.bandState, true, true);
+    },
+    [song, bandState, commitChange]
+  );
+
+  const copyTimelineToAllSections = useCallback(
+    (sourceSectionId: string) => {
+      const src = song.sections.find((s) => s.id === sourceSectionId);
+      if (!src) return;
+      const res = applyTimelineToAllSections(song, bandState, src.chords);
+      commitChange(res.song, res.bandState, true, true);
+    },
+    [song, bandState, commitChange]
+  );
+
   const transposeSectionChords = useCallback(
     (sectionId: string, semitones: number) => {
       const sec = song.sections.find((s) => s.id === sectionId);
       if (!sec) return;
       updateSectionProps(
         sectionId,
-        { chords: transposeChords(sec.chords, semitones) },
+        { chords: transposeChordTimeline(sec.chords, semitones) },
         true
       );
     },
@@ -616,6 +640,8 @@ export function useBandGenerator() {
     changeSectionVocalHarmony,
     changeSectionKeyboardDensity,
     changeSectionPartPreset,
+    changeSectionChordTimeline,
+    copyTimelineToAllSections,
     pastePartPhrase,
     loadSnapshotData,
     transposeSectionChords,

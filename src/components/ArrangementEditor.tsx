@@ -4,6 +4,12 @@ import {
   type ArrangementPresetId,
 } from '../lib/bandState';
 import {
+  createUniformChordTimeline,
+  describeChordRhythm,
+  resolveEffectiveTimeline,
+  updateChordName,
+} from '../lib/chordTimeline';
+import {
   applySuffixToChord,
   getChordPalette,
   type ChordPaletteMode,
@@ -128,14 +134,14 @@ export function ArrangementEditor({
   const current = song.sections[currentIdx];
 
   const [chordTextDraft, setChordTextDraft] = useState<string>(() =>
-    current ? current.chords.join(', ') : ''
+    current ? current.chords.map((c) => c.chord).join(', ') : ''
   );
   const prevChordSyncRef = useRef<{ id: string; key: string }>({
     id: current?.id ?? '',
-    key: current ? current.chords.join('|') : '',
+    key: current ? current.chords.map((c) => c.chord).join('|') : '',
   });
   const currentId = current?.id ?? '';
-  const currentChordKey = current ? current.chords.join('|') : '';
+  const currentChordKey = current ? current.chords.map((c) => c.chord).join('|') : '';
   if (
     current &&
     (prevChordSyncRef.current.id !== currentId ||
@@ -149,7 +155,7 @@ export function ArrangementEditor({
       prevChordSyncRef.current.id !== currentId ||
       draftParsed.join('|') !== currentChordKey
     ) {
-      setChordTextDraft(current.chords.join(', '));
+      setChordTextDraft(current.chords.map((c) => c.chord).join(', '));
     }
     prevChordSyncRef.current = { id: currentId, key: currentChordKey };
   }
@@ -296,6 +302,59 @@ export function ArrangementEditor({
             </button>
           </div>
         ))}
+      </div>
+
+      <div className="section-chords-overview" aria-label="セクション別コード概要">
+        {song.sections.map((sec, idx) => {
+          const slots = resolveEffectiveTimeline(
+            sec.chords,
+            sec.bars,
+            song.key,
+            song.scale
+          );
+          const totalBeats = Math.max(4, sec.bars * 4);
+          const rhythm = describeChordRhythm(slots, sec.bars);
+          return (
+            <button
+              key={sec.id}
+              type="button"
+              className={`section-overview-row ${sec.id === current.id ? 'active' : ''}`}
+              onClick={() => onSelectSection(sec.id)}
+            >
+              <div className="overview-top-line">
+                <span className="overview-name">
+                  {idx + 1}. {sec.name} ({sec.bars}小節)
+                </span>
+                <span className={`overview-rhythm-tag mode-${rhythm.modeId}`}>
+                  {rhythm.badgeIcon} {rhythm.label}
+                </span>
+              </div>
+              <div
+                className="overview-mini-bar"
+                aria-label={`${sec.name}の譜割りタイムライン`}
+                style={{
+                  backgroundSize: `${100 / Math.max(1, sec.bars)}% 100%`,
+                }}
+              >
+                {slots.map((slot) => {
+                  const isAnt = Boolean(slot.anticipated || slot.startBeat % 1 !== 0);
+                  const pct = (slot.durationBeats / totalBeats) * 100;
+                  return (
+                    <span
+                      key={slot.id}
+                      className={`mini-rhythm-seg ${isAnt ? 'is-anticipated' : ''}`}
+                      style={{ width: `${pct}%` }}
+                      title={`${slot.chord} (${slot.durationBeats}拍)`}
+                    >
+                      {isAnt ? '⚡' : ''}
+                      {slot.chord}
+                    </span>
+                  );
+                })}
+              </div>
+            </button>
+          );
+        })}
       </div>
 
       <div className="section-action-bar">
@@ -565,22 +624,29 @@ export function ArrangementEditor({
             </div>
           </div>
 
-          <label className="field">
-            <span>小節ごとのコード（カンマ区切り・循環）</span>
-            <input
-              type="text"
-              value={chordTextDraft}
-              onChange={(e) => {
-                const rawText = e.target.value;
-                setChordTextDraft(rawText);
-                const list = rawText
-                  .split(',')
-                  .map((c) => c.trim())
-                  .filter(Boolean);
-                onUpdateSectionProps(current.id, { chords: list }, true);
-              }}
-            />
-          </label>
+          <details className="memo-details">
+            <summary>テキスト直接編集（カンマ区切り・補助用）</summary>
+            <label className="field" style={{ marginTop: 8 }}>
+              <span>小節ごとのコード（カンマ区切り・循環）</span>
+              <input
+                type="text"
+                value={chordTextDraft}
+                onChange={(e) => {
+                  const rawText = e.target.value;
+                  setChordTextDraft(rawText);
+                  const list = rawText
+                    .split(',')
+                    .map((c) => c.trim())
+                    .filter(Boolean);
+                  onUpdateSectionProps(
+                    current.id,
+                    { chords: createUniformChordTimeline(list, current.bars) },
+                    true
+                  );
+                }}
+              />
+            </label>
+          </details>
 
           <div className="palette-label">ワンタップコードパレット（末尾に追加）:</div>
           <div className="chip-list palette-mode-tabs" role="group" aria-label="パレット表示モード">
@@ -602,13 +668,14 @@ export function ArrangementEditor({
                 key={ch}
                 type="button"
                 className="chip-btn"
-                onClick={() =>
+                onClick={() => {
+                  const nextStrings = [...current.chords.map((c) => c.chord), ch];
                   onUpdateSectionProps(
                     current.id,
-                    { chords: [...current.chords, ch] },
+                    { chords: createUniformChordTimeline(nextStrings, current.bars) },
                     true
-                  )
-                }
+                  );
+                }}
               >
                 +{ch}
               </button>
@@ -627,7 +694,7 @@ export function ArrangementEditor({
           <div className="palette-label">
             末尾コードのクオリティ変換
             {current.chords.length > 0
-              ? `（対象: ${current.chords[current.chords.length - 1]}）:`
+              ? `（対象: ${current.chords[current.chords.length - 1].chord}）:`
               : '（コード未入力）:'}
           </div>
           <div className="chip-list">
@@ -639,10 +706,16 @@ export function ArrangementEditor({
                 disabled={current.chords.length === 0}
                 onClick={() => {
                   if (current.chords.length === 0) return;
-                  const updated = [...current.chords];
-                  const lastIdx = updated.length - 1;
-                  updated[lastIdx] = applySuffixToChord(updated[lastIdx], suf);
-                  onUpdateSectionProps(current.id, { chords: updated }, true);
+                  const lastIdx = current.chords.length - 1;
+                  const nextChord = applySuffixToChord(
+                    current.chords[lastIdx].chord,
+                    suf
+                  );
+                  onUpdateSectionProps(
+                    current.id,
+                    { chords: updateChordName(current.chords, lastIdx, nextChord) },
+                    true
+                  );
                 }}
               >
                 {suf}

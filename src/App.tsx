@@ -49,6 +49,8 @@ export function App() {
     changeSectionVocalHarmony,
     changeSectionKeyboardDensity,
     changeSectionPartPreset,
+    changeSectionChordTimeline,
+    copyTimelineToAllSections,
     pastePartPhrase,
     loadSnapshotData,
     transposeSectionChords,
@@ -222,6 +224,8 @@ export function App() {
               onCopyPartPhrase={(phrase) => setCopiedPhrase(phrase)}
               onPastePartPhrase={pastePartPhrase}
               onChangeSectionPatternPreset={changeSectionPartPreset}
+              onChangeSectionChordTimeline={changeSectionChordTimeline}
+              onCopyTimelineToAllSections={copyTimelineToAllSections}
               onToggleSectionPart={toggleSectionPart}
               onOpenVocalModal={(id) => setVocalModalSectionId(id)}
               onClearSectionVocalMelody={(id) =>

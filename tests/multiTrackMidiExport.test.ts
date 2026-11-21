@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createDefaultSongConfig, generateAllSections } from '../src/lib/bandState';
+import { createUniformChordTimeline } from '../src/lib/chordTimeline';
 import { parseMidiFile } from '../src/lib/midiParser';
 import {
   canExportMidi,
@@ -21,7 +22,7 @@ describe('multiTrackMidiExport', () => {
         bars: 1,
         energy: 'Mid',
         kickMode: '808',
-        chords: ['Em'],
+        chords: createUniformChordTimeline(['Em'], 1),
       },
       {
         id: 's2',
@@ -30,7 +31,7 @@ describe('multiTrackMidiExport', () => {
         bars: 1,
         energy: 'Mid',
         kickMode: 'acoustic',
-        chords: ['C'],
+        chords: createUniformChordTimeline(['C'], 1),
       },
     ];
     const state = generateAllSections(song);
@@ -76,7 +77,7 @@ describe('multiTrackMidiExport', () => {
         bars: 1,
         energy: 'Mid',
         kickMode: '808',
-        chords: ['Em'],
+        chords: createUniformChordTimeline(['Em'], 1),
       },
     ];
     const state = generateAllSections(song);
@@ -127,7 +128,7 @@ describe('multiTrackMidiExport', () => {
         energy: 'Mid',
         kickMode: 'acoustic',
         vocalHarmony: 'off',
-        chords: ['C'],
+        chords: createUniformChordTimeline(['C'], 1),
       },
       {
         id: 's1',
@@ -137,7 +138,7 @@ describe('multiTrackMidiExport', () => {
         energy: 'High',
         kickMode: 'acoustic',
         vocalHarmony: 'upper_5th',
-        chords: ['C'],
+        chords: createUniformChordTimeline(['C'], 1),
       },
     ];
     const state = generateAllSections(song);

@@ -1,4 +1,5 @@
 import { TICKS_PER_BAR, type MidiNote } from '../types/song';
+import { getTimelineBoundaryChanges } from '../lib/chordTimeline';
 import { createSeededRng } from '../lib/random';
 import type { EngineInput } from './types';
 
@@ -1050,6 +1051,61 @@ export function generateDrumNotes(input: EngineInput): MidiNote[] {
         finalBarStart + TICKS_PER_BAR,
         fillCount
       );
+    }
+  }
+
+  // 3.5. Offbeat Chord Timeline Anticipation Sync (e.g. beat 4-and push):
+  // Place Kick + Crash/OpenHH accent at `changeTick` and clear colliding kick in (changeTick, changeTick + 240]
+  if (!section.unisonRiff) {
+    const offbeatChanges = getTimelineBoundaryChanges(
+      section.chords,
+      section.bars,
+      song.key,
+      song.scale
+    ).filter((c) => c.isOffbeat);
+
+    for (const change of offbeatChanges) {
+      const changeTick = change.changeTick;
+      // Remove kicks right at changeTick (+-60) AND colliding downbeat kicks within (changeTick, changeTick + 240]
+      for (let i = notes.length - 1; i >= 0; i--) {
+        const n = notes[i];
+        if (
+          n.pitch === GM_DRUM.KICK &&
+          ((n.startTick > changeTick && n.startTick <= changeTick + 240) ||
+            Math.abs(n.startTick - changeTick) <= 60)
+        ) {
+          notes.splice(i, 1);
+        } else if (
+          (n.pitch === GM_DRUM.CRASH || n.pitch === GM_DRUM.OPEN_HH) &&
+          Math.abs(n.startTick - changeTick) <= 30
+        ) {
+          notes.splice(i, 1);
+        }
+      }
+
+      notes.push({
+        pitch: GM_DRUM.KICK,
+        velocity: 112,
+        startTick: changeTick,
+        durationTicks: 120,
+        channel: 9,
+        isAnchor: true,
+        noTimingJitter: true,
+        noVelCapOrBoost: true,
+      });
+
+      const useOpenHatAccent =
+        hatDensity <= 2 && kickDensity <= 2 && section.energy === 'Low';
+      notes.push({
+        pitch: useOpenHatAccent ? GM_DRUM.OPEN_HH : GM_DRUM.CRASH,
+        velocity: useOpenHatAccent ? 102 : 108,
+        startTick: changeTick,
+        durationTicks: 240,
+        channel: 9,
+        isAnchor: true,
+        noTimingJitter: true,
+        noVelCapOrBoost: true,
+      });
     }
   }
 

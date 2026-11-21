@@ -9,6 +9,7 @@ import {
   type TakeStyle,
 } from '../types/song';
 import type { BandState, SectionBandCells, SectionInstrumentCell } from '../types/track';
+import { normalizeSectionChords } from './chordTimeline';
 import {
   createSeedTriple,
   cloneSongConfig,
@@ -216,19 +217,11 @@ export function hydrateProject(stored: StoredBandProject): {
     const rawSec = song.sections[secIdx] as Section & {
       chordProgression?: string | string[];
     };
-    let restoredChords: string[];
-    if (Array.isArray(rawSec.chords)) {
-      restoredChords = [...rawSec.chords];
-    } else if (Array.isArray(rawSec.chordProgression)) {
-      restoredChords = [...rawSec.chordProgression];
-    } else if (typeof rawSec.chordProgression === 'string') {
-      restoredChords = rawSec.chordProgression
-        .split(',')
-        .map((c) => c.trim())
-        .filter(Boolean);
-    } else {
-      restoredChords = [];
-    }
+    const restoredChords = normalizeSectionChords(
+      rawSec.chords,
+      rawSec.bars,
+      rawSec.chordProgression
+    );
 
     const section: Section = {
       ...rawSec,

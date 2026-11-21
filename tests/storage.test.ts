@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { createDefaultSongConfig, generateAllSections, toggleCellLock } from '../src/lib/bandState';
 import {
+  createUniformChordTimeline,
+  shiftChordBoundary,
+  splitChordSlot,
+  updateChordName,
+} from '../src/lib/chordTimeline';
+import {
   createMemoryStorageBackend,
   deleteProjectSnapshot,
   hydrateProject,
@@ -32,7 +38,7 @@ describe('storage', () => {
         bars: 2,
         energy: 'High',
         kickMode: 'acoustic',
-        chords: ['Em', 'C'],
+        chords: createUniformChordTimeline(['Em', 'C'], 2),
         unisonRiff: {
           sourceName: 'riff.mid',
           analysisMethod: 'manual',
@@ -228,11 +234,20 @@ describe('storage', () => {
     song.title = 'Restart Chord Check';
     song.key = 'C';
     song.scale = 'Major';
-    song.sections[0].chords = ['Fmaj7', 'G6', 'Em7', 'Am9'];
     song.sections[0].bars = 4;
-    song.sections[1].chords = ['Dm7', 'G7', 'Cmaj7', 'A7'];
+    song.sections[0].chords = shiftChordBoundary(
+      createUniformChordTimeline(['Fmaj7', 'G6', 'Em7', 'Am9'], 4),
+      1,
+      -0.5
+    );
     song.sections[1].bars = 8;
-    song.sections[2].chords = ['F#m7-5', 'Fm6', 'C/G'];
+    song.sections[1].chords = updateChordName(
+      splitChordSlot(createUniformChordTimeline(['Dm7', 'G7', 'Cmaj7', 'A7'], 8), 0),
+      1,
+      'Em7'
+    );
+    song.sections[2].bars = 4;
+    song.sections[2].chords = createUniformChordTimeline(['F#m7-5', 'Fm6', 'C/G'], 4);
     song.sections[3].chords = []; // explicitly cleared diatonic fallback
 
     let state = generateAllSections(song, undefined, 919, false);
@@ -251,22 +266,44 @@ describe('storage', () => {
     expect(restored!.song.title).toBe('Restart Chord Check');
     expect(restored!.song.key).toBe('C');
     expect(restored!.song.scale).toBe('Major');
-    expect(restored!.song.sections[0].chords).toEqual(['Fmaj7', 'G6', 'Em7', 'Am9']);
+    expect(restored!.song.sections[0].chords.map((c) => c.chord)).toEqual([
+      'Fmaj7',
+      'G6',
+      'Em7',
+      'Am9',
+    ]);
+    expect(restored!.song.sections[0].chords[1].startBeat).toBe(3.5);
+    expect(restored!.song.sections[0].chords[1].anticipated).toBe(true);
     expect(restored!.song.sections[0].bars).toBe(4);
-    expect(restored!.song.sections[1].chords).toEqual(['Dm7', 'G7', 'Cmaj7', 'A7']);
+    expect(restored!.song.sections[1].chords.map((c) => c.chord)).toEqual([
+      'Dm7',
+      'Em7',
+      'G7',
+      'Cmaj7',
+      'A7',
+    ]);
     expect(restored!.song.sections[1].bars).toBe(8);
-    expect(restored!.song.sections[2].chords).toEqual(['F#m7-5', 'Fm6', 'C/G']);
+    expect(restored!.song.sections[2].chords.map((c) => c.chord)).toEqual(['F#m7-5', 'Fm6', 'C/G']);
     expect(restored!.song.sections[3].chords).toEqual([]);
     expect(restored!.bandState.cellsBySection[song.sections[0].id].keyboard.locked).toBe(true);
     expect(restored!.bandState.cellsBySection[song.sections[0].id].keyboard.takes.A).toEqual(
       lockedNotesBeforeRestart
     );
 
-    // Verify legacy chordProgression string field migration in hydrateProject preserves custom chords
+    // Verify legacy chordProgression string field & legacy string[] chords migration in hydrateProject
     const legacySerialized = JSON.parse(JSON.stringify(serializeProject(song, state)));
     delete legacySerialized.song.sections[0].chords;
     legacySerialized.song.sections[0].chordProgression = 'Cmaj9, A7sus4, Dm9, G13';
+    legacySerialized.song.sections[1].chords = ['Dm7', 'G7'];
     const migrated = hydrateProject(legacySerialized);
-    expect(migrated.song.sections[0].chords).toEqual(['Cmaj9', 'A7sus4', 'Dm9', 'G13']);
+    expect(migrated.song.sections[0].chords.map((c) => c.chord)).toEqual([
+      'Cmaj9',
+      'A7sus4',
+      'Dm9',
+      'G13',
+    ]);
+    expect(migrated.song.sections[0].chords[0].startBeat).toBe(0);
+    expect(migrated.song.sections[0].chords[1].startBeat).toBe(4);
+    expect(migrated.song.sections[1].chords.map((c) => c.chord)).toEqual(['Dm7', 'G7']);
   });
 });

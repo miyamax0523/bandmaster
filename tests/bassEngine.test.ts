@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { generateBassNotes } from '../src/engines/bassEngine';
+import {
+  createUniformChordTimeline,
+  shiftChordBoundary,
+} from '../src/lib/chordTimeline';
 import { resolveInstrumentParams } from '../src/lib/keywordParser';
 import { TICKS_PER_BAR, type Section, type SongConfig } from '../src/types/song';
 
@@ -41,7 +45,7 @@ function createSection(overrides: Partial<Section> = {}): Section {
     bars: 2,
     energy: 'Mid',
     kickMode: 'acoustic',
-    chords: ['Em', 'C'],
+    chords: createUniformChordTimeline(['Em', 'C'], 2),
     ...overrides,
   };
 }
@@ -49,7 +53,10 @@ function createSection(overrides: Partial<Section> = {}): Section {
 describe('bassEngine', () => {
   it('enforces bar-head root and monophonic output in acoustic mode', () => {
     const song = createSong();
-    const section = createSection({ bars: 2, chords: ['Em', 'C'] });
+    const section = createSection({
+      bars: 2,
+      chords: createUniformChordTimeline(['Em', 'C'], 2),
+    });
     const params = resolveInstrumentParams(song, section, 'bass', 'A');
     const notes = generateBassNotes({
       song,
@@ -84,7 +91,10 @@ describe('bassEngine', () => {
       bass808Behavior: 'octaveUp',
       instructionText: 'ハーフ 重く',
     });
-    const sec808 = createSection({ kickMode: '808', chords: ['Em', 'D'] });
+    const sec808 = createSection({
+      kickMode: '808',
+      chords: createUniformChordTimeline(['Em', 'D'], 2),
+    });
     const notesOct = generateBassNotes({
       song: songOct,
       section: sec808,
@@ -226,7 +236,11 @@ describe('bassEngine', () => {
   it('applies patternPreset deterministically across bass presets', () => {
     const runPreset = (preset: string) => {
       const song = createSong({ patternPreset: preset });
-      const section = createSection({ bars: 2, chords: ['Em', 'C'], energy: 'Mid' });
+      const section = createSection({
+        bars: 2,
+        chords: createUniformChordTimeline(['Em', 'C'], 2),
+        energy: 'Mid',
+      });
       return generateBassNotes({
         song,
         section,
@@ -270,7 +284,11 @@ describe('bassEngine', () => {
 
     for (const preset of standardPresets) {
       const song = createSong({ patternPreset: preset });
-      const section = createSection({ bars: 2, chords: ['Em', 'C'], energy: 'Mid' });
+      const section = createSection({
+        bars: 2,
+        chords: createUniformChordTimeline(['Em', 'C'], 2),
+        energy: 'Mid',
+      });
       const notes = generateBassNotes({
         song,
         section,
@@ -307,12 +325,45 @@ describe('bassEngine', () => {
     const steadySong = createSong({ patternPreset: 'root_steady' });
     const steadyNotes = generateBassNotes({
       song: steadySong,
-      section: createSection({ bars: 1, chords: ['Em'] }),
+      section: createSection({
+        bars: 1,
+        chords: createUniformChordTimeline(['Em'], 1),
+      }),
       sectionIndex: 0,
       style: 'A',
       seed: 1,
       params: resolveInstrumentParams(steadySong, createSection({ bars: 1 }), 'bass', 'A'),
     });
     expect(steadyNotes.every((n) => n.durationTicks >= 204)).toBe(true);
+  });
+
+  it('syncs bass cutoff and anticipated root hit to offbeat ChordSlot boundary (1680 ticks)', () => {
+    const shifted = shiftChordBoundary(createUniformChordTimeline(['Em', 'C'], 2), 1, -0.5);
+    const song = createSong({ patternPreset: 'root_whole' });
+    const section = createSection({
+      bars: 2,
+      energy: 'Mid',
+      chords: shifted,
+    });
+    const notes = generateBassNotes({
+      song,
+      section,
+      sectionIndex: 0,
+      style: 'A',
+      seed: 1,
+      params: resolveInstrumentParams(song, section, 'bass', 'A'),
+    });
+
+    // Previous slot (Em) notes must end at or before 1680 - 5 = 1675
+    const beforeBoundary = notes.filter((n) => n.startTick < 1680);
+    expect(beforeBoundary.length).toBeGreaterThan(0);
+    expect(beforeBoundary.every((n) => n.startTick + n.durationTicks <= 1675)).toBe(true);
+
+    // Anticipated slot (C, pitch class 0 -> C2 = 36) strikes at 1680 and ties across barline 1920 without re-strike
+    const changeNote = notes.find((n) => n.startTick === 1680);
+    expect(changeNote).toBeDefined();
+    expect(changeNote?.pitch).toBe(36);
+    expect((changeNote?.startTick ?? 0) + (changeNote?.durationTicks ?? 0)).toBeGreaterThan(1920);
+    expect(notes.some((n) => n.startTick === 1920)).toBe(false);
   });
 });

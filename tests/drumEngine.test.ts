@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { generateDrumNotes, GM_DRUM } from '../src/engines/drumEngine';
+import {
+  createUniformChordTimeline,
+  shiftChordBoundary,
+} from '../src/lib/chordTimeline';
 import { resolveInstrumentParams } from '../src/lib/keywordParser';
 import { TICKS_PER_BAR, type DrumLoopData, type Section, type SongConfig } from '../src/types/song';
 
@@ -39,7 +43,7 @@ function createSection(overrides: Partial<Section> = {}): Section {
     bars: 4,
     energy: 'High',
     kickMode: 'acoustic',
-    chords: ['Em', 'C', 'G', 'D'],
+    chords: createUniformChordTimeline(['Em', 'C', 'G', 'D'], 4),
     ...overrides,
   };
 }
@@ -376,7 +380,11 @@ describe('drumEngine', () => {
     const runPreset = (preset: string, bars = 2) => {
       const song = createSong('');
       song.members.drums.patternPreset = preset;
-      const section = createSection({ bars, chords: ['Em', 'C'], energy: 'Mid' });
+      const section = createSection({
+        bars,
+        chords: createUniformChordTimeline(['Em', 'C'], bars),
+        energy: 'Mid',
+      });
       return generateDrumNotes({
         song,
         section,
@@ -423,5 +431,36 @@ describe('drumEngine', () => {
       (n) => n.pitch === GM_DRUM.SNARE && n.startTick >= TICKS_PER_BAR
     );
     expect(bar2Snares.length).toBeGreaterThanOrEqual(bar1Snares.length);
+  });
+
+  it('punches kick + crash accent at offbeat ChordSlot boundary (1680 ticks) and suppresses downbeat kick collision', () => {
+    const song = createSong('');
+    const shifted = shiftChordBoundary(createUniformChordTimeline(['Em', 'C'], 2), 1, -0.5);
+    const section = createSection({
+      bars: 2,
+      energy: 'High',
+      chords: shifted,
+    });
+    const notes = generateDrumNotes({
+      song,
+      section,
+      sectionIndex: 0,
+      style: 'A',
+      seed: 1,
+      params: resolveInstrumentParams(song, section, 'drums', 'A'),
+    });
+
+    // Anticipated changeTick = 3.5 * 480 = 1680
+    expect(
+      notes.some((n) => n.pitch === GM_DRUM.KICK && Math.abs(n.startTick - 1680) <= 15)
+    ).toBe(true);
+    expect(
+      notes.some((n) => n.pitch === GM_DRUM.CRASH && Math.abs(n.startTick - 1680) <= 15)
+    ).toBe(true);
+    // Colliding downbeat kicks in (1680, 1920] (e.g. bar 1 downbeat at 1920) are cleared
+    const collidingKicks = notes.filter(
+      (n) => n.pitch === GM_DRUM.KICK && n.startTick > 1680 && n.startTick <= 1920
+    );
+    expect(collidingKicks).toEqual([]);
   });
 });

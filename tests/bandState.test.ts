@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   applyArrangementPresetToSong,
+  applyTimelineToAllSections,
   createDefaultSongConfig,
   duplicateSectionInSong,
   generateAllSections,
@@ -21,6 +22,12 @@ import {
   updateSectionPartPreset,
   updateSectionVocalHarmony,
 } from '../src/lib/bandState';
+import {
+  createUniformChordTimeline,
+  shiftChordBoundary,
+  splitChordSlot,
+  updateChordName,
+} from '../src/lib/chordTimeline';
 import { detectHorizontalSwipe } from '../src/lib/touchSwipe';
 import { selectSongTracks } from '../src/lib/noteSelector';
 import {
@@ -40,7 +47,7 @@ describe('bandState', () => {
         bars: 2,
         energy: 'Mid',
         kickMode: 'acoustic',
-        chords: ['Em', 'C'],
+        chords: createUniformChordTimeline(['Em', 'C'], 2),
       },
     ];
     const state = generateAllSections(song);
@@ -68,7 +75,7 @@ describe('bandState', () => {
         bars: 1,
         energy: 'Mid',
         kickMode: '808',
-        chords: ['Em'],
+        chords: createUniformChordTimeline(['Em'], 1),
       },
     ];
     let state = generateAllSections(song);
@@ -130,7 +137,7 @@ describe('bandState', () => {
         bars: 4,
         energy: 'Mid',
         kickMode: 'acoustic',
-        chords: ['Em', 'C', 'G', 'D'],
+        chords: createUniformChordTimeline(['Em', 'C', 'G', 'D'], 4),
       },
     ];
     let state = generateAllSections(song);
@@ -257,7 +264,7 @@ describe('bandState', () => {
         kickMode: 'acoustic',
         hatDensity: 3,
         kickDensity: 3,
-        chords: ['Em', 'C', 'G', 'D'],
+        chords: createUniformChordTimeline(['Em', 'C', 'G', 'D'], 4),
       },
     ];
     let state = generateAllSections(song);
@@ -303,7 +310,7 @@ describe('bandState', () => {
         bars: 1,
         energy: 'Mid',
         kickMode: 'acoustic',
-        chords: ['Em'],
+        chords: createUniformChordTimeline(['Em'], 1),
       },
       {
         id: 's2',
@@ -312,7 +319,7 @@ describe('bandState', () => {
         bars: 1,
         energy: 'High',
         kickMode: 'acoustic',
-        chords: ['C'],
+        chords: createUniformChordTimeline(['C'], 1),
       },
     ];
     let state = generateAllSections(song);
@@ -364,7 +371,7 @@ describe('bandState', () => {
         energy: 'Mid',
         kickMode: 'acoustic',
         keyboardDensity: 4,
-        chords: ['C', 'G'],
+        chords: createUniformChordTimeline(['C', 'G'], 2),
       },
       {
         id: 's4',
@@ -374,7 +381,7 @@ describe('bandState', () => {
         energy: 'High',
         kickMode: 'acoustic',
         keyboardDensity: 4,
-        chords: ['F', 'G', 'Em', 'Am'],
+        chords: createUniformChordTimeline(['F', 'G', 'Em', 'Am'], 4),
       },
       {
         id: 's8',
@@ -384,7 +391,7 @@ describe('bandState', () => {
         energy: 'High',
         kickMode: 'acoustic',
         keyboardDensity: 4,
-        chords: ['F', 'G'],
+        chords: createUniformChordTimeline(['F', 'G'], 8),
       },
     ];
     const state = generateAllSections(song, undefined, 100, false);
@@ -436,7 +443,7 @@ describe('bandState', () => {
         energy: 'Mid',
         kickMode: 'acoustic',
         vocalHarmony: 'off',
-        chords: ['Em', 'C'],
+        chords: createUniformChordTimeline(['Em', 'C'], 2),
       },
     ];
     const state = generateAllSections(song, undefined, 200, false);
@@ -487,5 +494,36 @@ describe('bandState', () => {
     // Mutating sec1's patternPresets object does not affect sec2
     finalSec1.patternPresets!.drums = 'trap_active';
     expect(finalSec2.patternPresets?.drums).toBe('straight_16');
+  });
+
+  it('copies a custom offbeat ChordSlot[] timeline to all sections independently via applyTimelineToAllSections', () => {
+    const base = createDefaultSongConfig('rockBand');
+    const customSlots = shiftChordBoundary(
+      updateChordName(
+        splitChordSlot(createUniformChordTimeline(['Am', 'F', 'C', 'G'], 4), 0),
+        1,
+        'G'
+      ),
+      2,
+      -0.5
+    );
+    const updated = applyTimelineToAllSections(base, customSlots);
+
+    for (const sec of updated.sections) {
+      expect(sec.chords.length).toBeGreaterThanOrEqual(4);
+      // Verify total beats match section.bars * 4
+      const totalBeats = sec.chords.reduce((sum, slot) => sum + slot.durationBeats, 0);
+      expect(totalBeats).toBe(sec.bars * 4);
+      // Verify shifted anticipated slot survived cleanly on matching-length 4-bar section
+      if (sec.bars === 4) {
+        expect(
+          sec.chords.some((slot) => slot.chord === 'F' && slot.startBeat === 3.5 && slot.anticipated)
+        ).toBe(true);
+      }
+    }
+
+    // Mutating section 0's chords must not mutate section 1's chords
+    updated.sections[0].chords[0].chord = 'Dm';
+    expect(updated.sections[1].chords[0].chord).toBe('Am');
   });
 });

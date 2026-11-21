@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { createUniformChordTimeline } from '../src/lib/chordTimeline';
 import {
   extractMatchedKeywords,
   resolveInstrumentParams,
@@ -62,7 +63,7 @@ function makeSection(overrides: Partial<Section> = {}): Section {
     bars: 4,
     energy: 'Mid',
     kickMode: 'acoustic',
-    chords: ['Em', 'C', 'G', 'D'],
+    chords: createUniformChordTimeline(['Em', 'C', 'G', 'D'], 4),
     ...overrides,
   };
 }

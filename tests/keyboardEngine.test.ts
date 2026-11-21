@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { generateKeyboardNotes } from '../src/engines/keyboardEngine';
+import {
+  createUniformChordTimeline,
+  shiftChordBoundary,
+} from '../src/lib/chordTimeline';
 import { resolveInstrumentParams } from '../src/lib/keywordParser';
 import type { Section, SongConfig } from '../src/types/song';
 
@@ -38,7 +42,7 @@ const section: Section = {
   bars: 2,
   energy: 'Mid',
   kickMode: 'acoustic',
-  chords: ['C', 'Am'],
+  chords: createUniformChordTimeline(['C', 'Am'], 2),
 };
 
 describe('keyboardEngine', () => {
@@ -229,5 +233,29 @@ describe('keyboardEngine', () => {
     const riffLow = runArp('rock_power_riff', 1);
     const riffHigh = runArp('rock_power_riff', 7);
     expect(riffHigh.length).toBeGreaterThan(riffLow.length * 4);
+  });
+
+  it('releases prior chord <= 1675 ticks and sustains new voicing from 1680 across barline 1920 on offbeat ChordSlot', () => {
+    const song = createSong();
+    song.members.keyboard.patternPreset = 'whole_sustain';
+    const shifted = shiftChordBoundary(createUniformChordTimeline(['C', 'Am'], 2), 1, -0.5);
+    const targetSec: Section = { ...section, chords: shifted };
+    const notes = generateKeyboardNotes({
+      song,
+      section: targetSec,
+      sectionIndex: 0,
+      style: 'A',
+      seed: 1,
+      params: resolveInstrumentParams(song, targetSec, 'keyboard', 'A'),
+    });
+
+    const priorNotes = notes.filter((n) => n.startTick < 1680);
+    expect(priorNotes.length).toBeGreaterThan(0);
+    expect(priorNotes.every((n) => n.startTick + n.durationTicks <= 1675)).toBe(true);
+
+    const antNotes = notes.filter((n) => n.startTick === 1680);
+    expect(antNotes.length).toBeGreaterThan(0);
+    expect(antNotes.every((n) => n.startTick + n.durationTicks > 1920)).toBe(true);
+    expect(notes.some((n) => n.startTick === 1920)).toBe(false);
   });
 });

@@ -6,6 +6,7 @@ import {
   VOCAL_MIN_PITCH,
 } from '../src/engines/vocalEngine';
 import { createDefaultSongConfig, generateAllSections } from '../src/lib/bandState';
+import { createUniformChordTimeline } from '../src/lib/chordTimeline';
 import { getScalePitchClasses, snapPitchToScale } from '../src/lib/chordUtils';
 import { resolveInstrumentParams } from '../src/lib/keywordParser';
 import { PATTERN_PRESET_GROUPS } from '../src/lib/patternPresets';
@@ -20,7 +21,7 @@ function createSection(overrides: Partial<Section> = {}): Section {
     bars: 2,
     energy: 'Mid',
     kickMode: 'acoustic',
-    chords: ['Em', 'C'],
+    chords: createUniformChordTimeline(['Em', 'C'], 2),
     ...overrides,
   };
 }
@@ -299,7 +300,10 @@ describe('vocalEngine', () => {
     const run = (preset: string, bars = 4) => {
       const song = createDefaultSongConfig('rockBand');
       song.members.vocal.patternPreset = preset;
-      const section = createSection({ bars, chords: ['Em', 'C', 'G', 'D'] });
+      const section = createSection({
+        bars,
+        chords: createUniformChordTimeline(['Em', 'C', 'G', 'D'], bars),
+      });
       return generateVocalNotes({
         song,
         section,
@@ -500,7 +504,7 @@ describe('vocalEngine', () => {
       const section = createSection({
         bars: 4,
         vocalDensity: 3,
-        chords: ['Em', 'C', 'G', 'D'],
+        chords: createUniformChordTimeline(['Em', 'C', 'G', 'D'], 4),
       });
       const notes = generateVocalNotes({
         song,
@@ -571,7 +575,7 @@ describe('vocalEngine', () => {
       const section = createSection({
         bars: 4,
         vocalDensity: 3,
-        chords: ['Em', 'C', 'G', 'D'],
+        chords: createUniformChordTimeline(['Em', 'C', 'G', 'D'], 4),
       });
       const notes = generateVocalNotes({
         song,
@@ -600,7 +604,11 @@ describe('vocalEngine', () => {
     // Check A -> A' rhythm skeleton inheritance between bar 0 and bar 2
     const popSong = createDefaultSongConfig('rockBand');
     popSong.members.vocal.patternPreset = 'melody_pop';
-    const popSec = createSection({ bars: 4, vocalDensity: 3, chords: ['Em', 'C', 'G', 'D'] });
+    const popSec = createSection({
+      bars: 4,
+      vocalDensity: 3,
+      chords: createUniformChordTimeline(['Em', 'C', 'G', 'D'], 4),
+    });
     const popNotes = generateVocalNotes({
       song: popSong,
       section: popSec,
@@ -627,5 +635,130 @@ describe('vocalEngine', () => {
         }
       }
     }
+    // Vocal non-auto presets keep compact <= 15 char mobile-friendly labels across 3 categories
+    const vocalGroups = PATTERN_PRESET_GROUPS.vocal;
+    expect(vocalGroups.length).toBeGreaterThanOrEqual(3);
+    for (const grp of vocalGroups) {
+      for (const opt of grp.options) {
+        if (opt.value !== 'auto') {
+          expect(opt.label.length).toBeLessThanOrEqual(15);
+        }
+      }
+    }
+  });
+
+  it('varies articulation, contour, entry timing, and rap flow across different regenerate seeds', () => {
+    const runSeed = (preset: string, seed: number) => {
+      const song = createDefaultSongConfig('rockBand');
+      song.members.vocal.patternPreset = preset;
+      const section = createSection({
+        bars: 4,
+        vocalDensity: 3,
+        chords: createUniformChordTimeline(['Em', 'C', 'G', 'D'], 4),
+      });
+      return generateVocalNotes({
+        song,
+        section,
+        sectionIndex: 0,
+        style: 'A',
+        seed,
+        params: resolveInstrumentParams(song, section, 'vocal', 'A'),
+      });
+    };
+
+    const seeds = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+    const popSignatures = new Set(
+      seeds.map((s) =>
+        runSeed('melody_pop', s)
+          .map((n) => `${n.startTick}:${n.durationTicks}:${n.pitch}`)
+          .join('|')
+      )
+    );
+    expect(popSignatures.size).toBeGreaterThanOrEqual(4);
+
+    // Entry timings vary across seeds (on-beat 0, pickup/syncopated, or after-rest)
+    const popFirstTicks = new Set(seeds.map((s) => runSeed('melody_pop', s)[0]?.startTick ?? -1));
+    expect(popFirstTicks.size).toBeGreaterThanOrEqual(2);
+
+    const rapSignatures = new Set(
+      seeds.map((s) =>
+        runSeed('rap_16th_push', s)
+          .map((n) => `${n.startTick}:${n.durationTicks}:${n.pitch}`)
+          .join('|')
+      )
+    );
+    expect(rapSignatures.size).toBeGreaterThanOrEqual(4);
+  });
+
+  it('supports the 7 new expressive melody and rap presets with strict Key/Scale and monophony', () => {
+    const song = createDefaultSongConfig('rockBand');
+    song.key = 'E';
+    song.scale = 'Minor';
+    const scalePcs = new Set(getScalePitchClasses('E', 'Minor'));
+
+    const newPresets = [
+      'melody_shoegaze_float',
+      'melody_staccato_chop',
+      'melody_anthem_climb',
+      'melody_ballad_breath',
+      'rap_stop_and_go',
+      'rap_triplet_bounce',
+      'rap_spoken_tension',
+    ];
+
+    const byPreset: Record<string, ReturnType<typeof generateVocalNotes>> = {};
+    for (const preset of newPresets) {
+      song.members.vocal.patternPreset = preset;
+      const section = createSection({
+        bars: 4,
+        vocalDensity: 3,
+        chords: createUniformChordTimeline(['Em', 'C', 'G', 'D'], 4),
+      });
+      const notes = generateVocalNotes({
+        song,
+        section,
+        sectionIndex: 0,
+        style: 'A',
+        seed: 77,
+        params: resolveInstrumentParams(song, section, 'vocal', 'A'),
+      });
+      byPreset[preset] = notes;
+      expect(notes.length).toBeGreaterThan(0);
+
+      for (let i = 0; i < notes.length; i++) {
+        expect(scalePcs.has(notes[i].pitch % 12)).toBe(true);
+        expect(notes[i].pitch).toBeGreaterThanOrEqual(VOCAL_MIN_PITCH);
+        expect(notes[i].pitch).toBeLessThanOrEqual(VOCAL_MAX_PITCH);
+        if (i > 0) {
+          expect(notes[i - 1].startTick + notes[i - 1].durationTicks).toBeLessThanOrEqual(
+            notes[i].startTick
+          );
+        }
+      }
+    }
+
+    // shoegaze float: long sustained tones (>= 960) and upper register average pitch
+    expect(byPreset.melody_shoegaze_float.some((n) => n.durationTicks >= 960)).toBe(true);
+    const avgShoegaze =
+      byPreset.melody_shoegaze_float.reduce((sum, n) => sum + n.pitch, 0) /
+      byPreset.melody_shoegaze_float.length;
+    expect(avgShoegaze).toBeGreaterThanOrEqual(66);
+
+    // staccato chop & rap_stop_and_go: crisp short durations and deliberate silent break gaps
+    expect(byPreset.melody_staccato_chop.some((n) => n.durationTicks <= 180)).toBe(true);
+    const stopAndGo = byPreset.rap_stop_and_go;
+    let maxGap = 0;
+    for (let i = 0; i + 1 < stopAndGo.length; i++) {
+      maxGap = Math.max(
+        maxGap,
+        stopAndGo[i + 1].startTick - (stopAndGo[i].startTick + stopAndGo[i].durationTicks)
+      );
+    }
+    expect(maxGap).toBeGreaterThanOrEqual(480);
+
+    // triplet bounce: hits 160-tick triplet subdivisions
+    expect(
+      byPreset.rap_triplet_bounce.some((n) => n.startTick % 480 === 160 || n.startTick % 480 === 320)
+    ).toBe(true);
   });
 });

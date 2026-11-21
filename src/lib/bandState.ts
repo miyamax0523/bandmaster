@@ -8,6 +8,7 @@ import {
   createDefaultPartPresets,
   CURRENT_ENGINE_VERSION,
   TICKS_PER_BAR,
+  type ChordSlot,
   type CopiedPartPhrase,
   type DensityLevel,
   type DrumLoopData,
@@ -27,6 +28,12 @@ import type {
   SectionBandCells,
   SectionInstrumentCell,
 } from '../types/track';
+import {
+  cloneChordSlots,
+  createUniformChordTimeline,
+  normalizeSectionChords,
+  resizeTimelineToBars,
+} from './chordTimeline';
 import { getDefaultProgression, getDiatonicChords } from './chordUtils';
 import { resolveInstrumentParams } from './keywordParser';
 import { createSeededRng } from './random';
@@ -84,7 +91,7 @@ export function cloneSection(sec: Section): Section {
   return {
     ...sec,
     vocalHarmony: sec.vocalHarmony ?? 'off',
-    chords: [...sec.chords],
+    chords: normalizeSectionChords(sec.chords, sec.bars),
     patternPresets: clonedPresets
       ? { ...clonedPresets }
       : createDefaultPartPresets(),
@@ -785,6 +792,72 @@ export function updateSectionVocalHarmony(
   return { song: nextSong, bandState };
 }
 
+export function updateSectionChordTimeline(
+  song: SongConfig,
+  bandState: BandState,
+  sectionId: string,
+  slots: readonly ChordSlot[]
+): { song: SongConfig; bandState: BandState } {
+  const nextSong = cloneSongConfig(song);
+  const secIdx = nextSong.sections.findIndex((s) => s.id === sectionId);
+  if (secIdx === -1) return { song, bandState };
+
+  const sec = nextSong.sections[secIdx];
+  sec.chords = cloneChordSlots(slots);
+
+  const nextState = cloneBandState(bandState);
+  const prevVocalAvgPitch =
+    secIdx > 0
+      ? getAverageVocalPitch(nextState.cellsBySection[nextSong.sections[secIdx - 1].id])
+      : undefined;
+
+  nextState.cellsBySection[sectionId] = generateSectionCells(
+    nextSong,
+    sec,
+    secIdx,
+    nextState.cellsBySection[sectionId],
+    5800 + secIdx,
+    { newSeeds: false, prevVocalAvgPitch }
+  );
+
+  return { song: nextSong, bandState: nextState };
+}
+
+export function applyTimelineToAllSections(
+  song: SongConfig,
+  sourceSlots: readonly ChordSlot[]
+): SongConfig;
+export function applyTimelineToAllSections(
+  song: SongConfig,
+  bandState: BandState,
+  sourceSlots: readonly ChordSlot[]
+): { song: SongConfig; bandState: BandState };
+export function applyTimelineToAllSections(
+  song: SongConfig,
+  bandStateOrSlots: BandState | readonly ChordSlot[],
+  maybeSlots?: readonly ChordSlot[]
+): SongConfig | { song: SongConfig; bandState: BandState } {
+  const isSongOnly = Array.isArray(bandStateOrSlots);
+  const sourceSlots = (isSongOnly ? bandStateOrSlots : maybeSlots) as readonly ChordSlot[];
+  const nextSong = cloneSongConfig(song);
+
+  for (const sec of nextSong.sections) {
+    sec.chords = resizeTimelineToBars(cloneChordSlots(sourceSlots), sec.bars);
+  }
+
+  if (isSongOnly) {
+    return nextSong;
+  }
+
+  const nextState = generateAllSections(
+    nextSong,
+    bandStateOrSlots as BandState,
+    5900,
+    false
+  );
+  return { song: nextSong, bandState: nextState };
+}
+
 export function updateSectionKeyboardDensity(
   song: SongConfig,
   bandState: BandState,
@@ -961,6 +1034,10 @@ export function updateSectionBars(
 
   const oldBars = nextSong.sections[secIdx].bars;
   nextSong.sections[secIdx].bars = clampedBars;
+  nextSong.sections[secIdx].chords = resizeTimelineToBars(
+    nextSong.sections[secIdx].chords,
+    clampedBars
+  );
   const nextState = cloneBandState(bandState);
   const existingSec = nextState.cellsBySection[sectionId];
 
@@ -1159,7 +1236,7 @@ export function createDefaultSongConfig(
         vocalHarmony: 'off',
         patternPresets: createDefaultPartPresets(),
         enabledParts: createDefaultEnabledParts(),
-        chords: [...defaultChords],
+        chords: createUniformChordTimeline(defaultChords, 4),
       },
       {
         id: 'sec-verse',
@@ -1175,7 +1252,7 @@ export function createDefaultSongConfig(
         vocalHarmony: 'off',
         patternPresets: createDefaultPartPresets(),
         enabledParts: createDefaultEnabledParts(),
-        chords: [...defaultChords],
+        chords: createUniformChordTimeline(defaultChords, 8),
       },
       {
         id: 'sec-pre',
@@ -1191,7 +1268,7 @@ export function createDefaultSongConfig(
         vocalHarmony: 'off',
         patternPresets: createDefaultPartPresets(),
         enabledParts: createDefaultEnabledParts(),
-        chords: ['Am', 'G', 'C', 'D'],
+        chords: createUniformChordTimeline(['Am', 'G', 'C', 'D'], 4),
       },
       {
         id: 'sec-chorus',
@@ -1207,7 +1284,7 @@ export function createDefaultSongConfig(
         vocalHarmony: 'off',
         patternPresets: createDefaultPartPresets(),
         enabledParts: createDefaultEnabledParts(),
-        chords: ['C', 'D', 'Em', 'G'],
+        chords: createUniformChordTimeline(['C', 'D', 'Em', 'G'], 8),
       },
     ],
   };
@@ -1293,7 +1370,7 @@ export function applyArrangementPresetToSong(
         bars: 8,
         energy: 'Mid',
         kickMode: 'acoustic',
-        chords: [...prog],
+        chords: createUniformChordTimeline(prog, 8),
       },
       {
         id: mkId('chorus'),
@@ -1302,7 +1379,7 @@ export function applyArrangementPresetToSong(
         bars: 8,
         energy: 'High',
         kickMode: 'acoustic',
-        chords: [...chorusChords],
+        chords: createUniformChordTimeline(chorusChords, 8),
       },
     ];
   } else if (presetId === 'fourPart') {
@@ -1314,7 +1391,7 @@ export function applyArrangementPresetToSong(
         bars: 4,
         energy: 'Mid',
         kickMode: 'acoustic',
-        chords: [...prog],
+        chords: createUniformChordTimeline(prog, 4),
       },
       {
         id: mkId('verse'),
@@ -1323,7 +1400,7 @@ export function applyArrangementPresetToSong(
         bars: 8,
         energy: 'Mid',
         kickMode: 'acoustic',
-        chords: [...prog],
+        chords: createUniformChordTimeline(prog, 8),
       },
       {
         id: mkId('pre'),
@@ -1332,7 +1409,7 @@ export function applyArrangementPresetToSong(
         bars: 4,
         energy: 'Mid',
         kickMode: 'acoustic',
-        chords: [...preChords],
+        chords: createUniformChordTimeline(preChords, 4),
       },
       {
         id: mkId('chorus'),
@@ -1341,7 +1418,7 @@ export function applyArrangementPresetToSong(
         bars: 8,
         energy: 'High',
         kickMode: 'acoustic',
-        chords: [...chorusChords],
+        chords: createUniformChordTimeline(chorusChords, 8),
       },
     ];
   } else {
@@ -1353,7 +1430,7 @@ export function applyArrangementPresetToSong(
         bars: 4,
         energy: 'Mid',
         kickMode: 'acoustic',
-        chords: [...prog],
+        chords: createUniformChordTimeline(prog, 4),
       },
       {
         id: mkId('verse'),
@@ -1362,7 +1439,7 @@ export function applyArrangementPresetToSong(
         bars: 8,
         energy: 'Mid',
         kickMode: 'acoustic',
-        chords: [...prog],
+        chords: createUniformChordTimeline(prog, 8),
       },
       {
         id: mkId('pre'),
@@ -1371,7 +1448,7 @@ export function applyArrangementPresetToSong(
         bars: 4,
         energy: 'Mid',
         kickMode: 'acoustic',
-        chords: [...preChords],
+        chords: createUniformChordTimeline(preChords, 4),
       },
       {
         id: mkId('chorus'),
@@ -1380,7 +1457,7 @@ export function applyArrangementPresetToSong(
         bars: 8,
         energy: 'High',
         kickMode: 'acoustic',
-        chords: [...chorusChords],
+        chords: createUniformChordTimeline(chorusChords, 8),
       },
       {
         id: mkId('bridge'),
@@ -1389,7 +1466,7 @@ export function applyArrangementPresetToSong(
         bars: 4,
         energy: 'Mid',
         kickMode: 'acoustic',
-        chords: [...bridgeChords],
+        chords: createUniformChordTimeline(bridgeChords, 4),
       },
       {
         id: mkId('outro'),
@@ -1398,7 +1475,7 @@ export function applyArrangementPresetToSong(
         bars: 4,
         energy: 'Low',
         kickMode: 'acoustic',
-        chords: [...prog],
+        chords: createUniformChordTimeline(prog, 4),
       },
     ];
   }

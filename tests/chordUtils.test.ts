@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { generateBassNotes } from '../src/engines/bassEngine';
 import { generateKeyboardNotes } from '../src/engines/keyboardEngine';
 import { createDefaultSongConfig } from '../src/lib/bandState';
+import { createUniformChordTimeline } from '../src/lib/chordTimeline';
 import {
   applySuffixToChord,
   fitPitchClassToRange,
@@ -141,7 +142,7 @@ describe('chordUtils', () => {
       bars: 2,
       energy: 'Mid',
       kickMode: 'acoustic',
-      chords: ['CM9', 'E5'],
+      chords: createUniformChordTimeline(['CM9', 'E5'], 2),
     };
 
     const kbNotes = generateKeyboardNotes({
@@ -192,7 +193,7 @@ describe('chordUtils', () => {
       bars: 1,
       energy: 'Mid',
       kickMode: 'acoustic',
-      chords: ['C/E'],
+      chords: createUniformChordTimeline(['C/E'], 1),
     };
     const bassNotes = generateBassNotes({
       song,

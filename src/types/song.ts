@@ -95,6 +95,14 @@ export interface MidiNote {
 
 export type MidiNoteEvent = MidiNote;
 
+export interface ChordSlot {
+  id: string;
+  chord: string;
+  startBeat: number; // 0-based; 0.5 increments allowed
+  durationBeats: number; // >= 0.5
+  anticipated?: boolean;
+}
+
 export function createDefaultEnabledParts(): Record<InstrumentType, boolean> {
   return {
     drums: true,
@@ -182,7 +190,7 @@ export interface Section {
   vocalHarmony?: VocalHarmonyMode; // default 'off'
   partPresets?: Partial<Record<InstrumentType, string>>;
   patternPresets?: Partial<Record<InstrumentType, string>>;
-  chords: string[];
+  chords: ChordSlot[];
   enabledParts?: Record<InstrumentType, boolean>;
   uploadedDrumLoop?: DrumLoopData;
   unisonRiff?: UnisonRiffData;

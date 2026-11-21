@@ -1,4 +1,8 @@
 import { TICKS_PER_BAR, type MidiNote } from '../types/song';
+import {
+  getActiveChordAtTick,
+  getTimelineBoundaryChanges,
+} from '../lib/chordTimeline';
 import { fitPitchClassToRange, resolveChordForBar } from '../lib/chordUtils';
 import { createSeededRng } from '../lib/random';
 import type { EngineInput } from './types';
@@ -24,17 +28,24 @@ export function generatePadNotes(input: EngineInput): MidiNote[] {
   const baseVel = section.energy === 'High' ? 84 : section.energy === 'Low' ? 58 : 72;
 
   const notes: MidiNote[] = [];
+  const timelineChanges = getTimelineBoundaryChanges(
+    section.chords,
+    section.bars,
+    song.key,
+    song.scale
+  );
 
   for (let bar = 0; bar < section.bars; bar++) {
     const barStart = bar * TICKS_PER_BAR;
     if (barStart >= sectionEnd) break;
 
-    const chord = resolveChordForBar(
+    const chord = getActiveChordAtTick(
       section.chords,
-      bar,
+      barStart,
       song.key,
-      song.scale
-    );
+      song.scale,
+      section.bars
+    ).parsed;
 
     const minP =
       padPreset === 'high_shimmer'
@@ -296,6 +307,83 @@ export function generatePadNotes(input: EngineInput): MidiNote[] {
             velocity: clampVelocity(baseVel - 16),
             startTick,
             durationTicks: Math.max(1, Math.min(440, sectionEnd - startTick)),
+            channel: 2,
+          });
+        }
+      }
+    }
+  }
+
+  // Timeline chord boundary & offbeat anticipation sync
+  if (timelineChanges.length > 0 && padPreset !== 'jrock_anticipation') {
+    for (const change of timelineChanges) {
+      const changeTick = change.changeTick;
+      // Cut previous pad voicing cleanly before changeTick - 5
+      for (let i = notes.length - 1; i >= 0; i--) {
+        const n = notes[i];
+        if (n.startTick < changeTick && n.startTick + n.durationTicks > changeTick - 5) {
+          const clipped = changeTick - 5 - n.startTick;
+          if (clipped < 20) {
+            notes.splice(i, 1);
+          } else {
+            n.durationTicks = clipped;
+          }
+        }
+      }
+
+      // Clear any barline pad attack inside [changeTick, changeTick + 240] when offbeat
+      if (change.isOffbeat) {
+        for (let i = notes.length - 1; i >= 0; i--) {
+          const n = notes[i];
+          if (n.startTick >= changeTick && n.startTick <= changeTick + 240) {
+            notes.splice(i, 1);
+          }
+        }
+      }
+
+      const hasPadAtChange = notes.some((n) => Math.abs(n.startTick - changeTick) <= 15);
+      if (change.isOffbeat || !hasPadAtChange) {
+        const cChord = change.parsed;
+        const cMinP =
+          padPreset === 'high_shimmer'
+            ? 64
+            : padPreset === 'dark_cinematic' || padPreset === 'analog_warm_drift'
+              ? 43
+              : params.voicingMin;
+        const cMaxP =
+          padPreset === 'high_shimmer'
+            ? 88
+            : padPreset === 'dark_cinematic'
+              ? 64
+              : padPreset === 'analog_warm_drift'
+                ? 67
+                : params.voicingMax;
+        const cRoot = fitPitchClassToRange(
+          cChord.rootSemitone,
+          cMinP,
+          Math.min(cMinP + 11, cMaxP)
+        );
+        const cIntervals = new Set<number>(cChord.intervals);
+        if (!cChord.intervals.includes(12)) cIntervals.add(12);
+        const cPitches = Array.from(
+          new Set(
+            Array.from(cIntervals)
+              .map((iv) => cRoot + iv)
+              .filter((p) => p >= 36 && p <= 96)
+          )
+        ).sort((a, b) => a - b);
+        const cDur = Math.max(
+          240,
+          Math.min(change.endTick - changeTick - 5, sectionEnd - changeTick)
+        );
+        for (const p of cPitches) {
+          notes.push({
+            pitch: p,
+            velocity: clampVelocity(
+              Math.min(params.velocityCap, baseVel + 4 + params.velocityBoost)
+            ),
+            startTick: changeTick,
+            durationTicks: cDur,
             channel: 2,
           });
         }

@@ -3,6 +3,7 @@ import { generateBassNotes } from '../src/engines/bassEngine';
 import { generateDrumNotes, GM_DRUM } from '../src/engines/drumEngine';
 import { generateKeyboardNotes } from '../src/engines/keyboardEngine';
 import { createDefaultSongConfig } from '../src/lib/bandState';
+import { createUniformChordTimeline } from '../src/lib/chordTimeline';
 import { resolveInstrumentParams } from '../src/lib/keywordParser';
 import { PATTERN_PRESET_GROUPS } from '../src/lib/patternPresets';
 import { TICKS_PER_BAR, type Section } from '../src/types/song';
@@ -25,7 +26,7 @@ function createDiscoSetup(bars = 4) {
     hatDensity: 3,
     kickDensity: 3,
     keyboardDensity: 4,
-    chords: ['Em7', 'Am7', 'Bm7', 'Em7'],
+    chords: createUniformChordTimeline(['Em7', 'Am7', 'Bm7', 'Em7'], bars),
   };
   return { song, section };
 }
