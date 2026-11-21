@@ -430,13 +430,14 @@ describe('vocalEngine', () => {
     ).toBe(true);
   });
 
-  it('generates diatonic upper_3rd, lower_3rd, and octave_up harmony with ~82% velocity', () => {
-    // C Major: E4 (64), G4 (67), C5 (72), C6/higher edge test (76)
+  it('generates diatonic upper_3rd, lower_3rd, upper_5th, octave_up, and octave_down harmony with ~82% velocity', () => {
+    // C Major: E4 (64), G4 (67), E5 (76)
     const melody = [
       { pitch: 64, velocity: 100, startTick: 0, durationTicks: 480 },
       { pitch: 67, velocity: 110, startTick: 480, durationTicks: 240 },
       { pitch: 76, velocity: 90, startTick: 960, durationTicks: 480 },
     ];
+    const cMajorPcs = new Set(getScalePitchClasses('C', 'Major'));
 
     expect(generateVocalHarmonyNotes(melody, 'C', 'Major', 'off')).toEqual([]);
 
@@ -445,12 +446,23 @@ describe('vocalEngine', () => {
     expect(up3.map((n) => n.startTick)).toEqual([0, 480, 960]);
     expect(up3.map((n) => n.durationTicks)).toEqual([480, 240, 480]);
     expect(up3.map((n) => n.velocity)).toEqual([82, 90, 74]);
+    expect(up3.every((n) => cMajorPcs.has(n.pitch % 12))).toBe(true);
 
     const low3 = generateVocalHarmonyNotes(melody, 'C', 'Major', 'lower_3rd');
     expect(low3.map((n) => n.pitch)).toEqual([60, 64, 72]); // E->C, G->E, E5->C5
+    expect(low3.every((n) => cMajorPcs.has(n.pitch % 12))).toBe(true);
 
-    const oct = generateVocalHarmonyNotes(melody, 'C', 'Major', 'octave_up');
-    expect(oct.map((n) => n.pitch)).toEqual([76, 79, 88]); // capped at 88
+    const up5 = generateVocalHarmonyNotes(melody, 'C', 'Major', 'upper_5th');
+    expect(up5.map((n) => n.pitch)).toEqual([71, 74, 83]); // +4 diatonic steps: E->B, G->D, E5->B5
+    expect(up5.every((n) => cMajorPcs.has(n.pitch % 12))).toBe(true);
+    expect(up5.every((n, i) => n.velocity < melody[i].velocity && n.velocity >= 45)).toBe(true);
+
+    const octUp = generateVocalHarmonyNotes(melody, 'C', 'Major', 'octave_up');
+    expect(octUp.map((n) => n.pitch)).toEqual([76, 79, 88]); // +12 capped <= 88
+
+    const octDown = generateVocalHarmonyNotes(melody, 'C', 'Major', 'octave_down');
+    expect(octDown.map((n) => n.pitch)).toEqual([52, 55, 64]); // -12 kept >= 40
+    expect(octDown.every((n) => n.pitch >= 40)).toBe(true);
   });
 
   it('produces predominantly stepwise/repeated arch contours with Gap-Fill descent after climax leaps across melody presets', () => {

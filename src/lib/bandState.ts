@@ -5,6 +5,7 @@ import { generatePadNotes } from '../engines/padEngine';
 import { generateVocalNotes } from '../engines/vocalEngine';
 import {
   createDefaultEnabledParts,
+  createDefaultPartPresets,
   CURRENT_ENGINE_VERSION,
   TICKS_PER_BAR,
   type CopiedPartPhrase,
@@ -79,10 +80,14 @@ export function cloneVocalMelody(
 }
 
 export function cloneSection(sec: Section): Section {
+  const clonedPresets = sec.patternPresets ?? sec.partPresets;
   return {
     ...sec,
     vocalHarmony: sec.vocalHarmony ?? 'off',
     chords: [...sec.chords],
+    patternPresets: clonedPresets
+      ? { ...clonedPresets }
+      : createDefaultPartPresets(),
     enabledParts: sec.enabledParts
       ? { ...createDefaultEnabledParts(), ...sec.enabledParts }
       : createDefaultEnabledParts(),
@@ -646,9 +651,10 @@ export function pastePartPhraseToSection(
   const targetSec = nextSong.sections[secIdx];
   const part = copiedPhrase.part;
 
-  nextSong.members[part] = {
-    ...nextSong.members[part],
-    patternPreset: copiedPhrase.patternPreset,
+  targetSec.patternPresets = {
+    ...createDefaultPartPresets(nextSong.members),
+    ...(targetSec.patternPresets ?? targetSec.partPresets ?? {}),
+    [part]: copiedPhrase.patternPreset,
   };
   if (part === 'bass' && copiedPhrase.unisonRiff !== undefined) {
     targetSec.unisonRiff = cloneUnisonRiff(copiedPhrase.unisonRiff);
@@ -698,12 +704,79 @@ export function pastePartPhraseToSection(
   return { song: nextSong, bandState: nextState };
 }
 
+export function updateSectionPartPreset(
+  song: SongConfig,
+  bandState: BandState,
+  sectionId: string,
+  instrument: InstrumentType,
+  preset: string
+): { song: SongConfig; bandState: BandState } {
+  const nextSong = cloneSongConfig(song);
+  const secIdx = nextSong.sections.findIndex((s) => s.id === sectionId);
+  if (secIdx === -1) return { song, bandState };
+
+  const sec = nextSong.sections[secIdx];
+  sec.patternPresets = {
+    ...createDefaultPartPresets(nextSong.members),
+    ...(sec.patternPresets ?? sec.partPresets ?? {}),
+    [instrument]: preset,
+  };
+
+  const nextState = cloneBandState(bandState);
+  const existingSec = nextState.cellsBySection[sectionId];
+  const targets: InstrumentType[] = [instrument];
+  if (instrument === 'drums' && !sec.unisonRiff && !existingSec?.bass?.locked) {
+    targets.push('bass');
+  }
+  const prevVocalAvgPitch =
+    secIdx > 0
+      ? getAverageVocalPitch(nextState.cellsBySection[nextSong.sections[secIdx - 1].id])
+      : undefined;
+
+  if (existingSec) {
+    nextState.cellsBySection[sectionId] = generateSectionCells(
+      nextSong,
+      sec,
+      secIdx,
+      existingSec,
+      5500 + secIdx,
+      { newSeeds: false, instruments: targets, prevVocalAvgPitch }
+    );
+  }
+
+  return { song: nextSong, bandState: nextState };
+}
+
+export function updateSectionVocalHarmony(
+  song: SongConfig,
+  sectionId: string,
+  vocalHarmony: VocalHarmonyMode
+): SongConfig;
 export function updateSectionVocalHarmony(
   song: SongConfig,
   bandState: BandState,
   sectionId: string,
   vocalHarmony: VocalHarmonyMode
-): { song: SongConfig; bandState: BandState } {
+): { song: SongConfig; bandState: BandState };
+export function updateSectionVocalHarmony(
+  song: SongConfig,
+  bandStateOrSectionId: BandState | string,
+  sectionIdOrMode: string | VocalHarmonyMode,
+  maybeMode?: VocalHarmonyMode
+): SongConfig | { song: SongConfig; bandState: BandState } {
+  if (typeof bandStateOrSectionId === 'string') {
+    const sectionId = bandStateOrSectionId;
+    const vocalHarmony = sectionIdOrMode as VocalHarmonyMode;
+    const nextSong = cloneSongConfig(song);
+    const secIdx = nextSong.sections.findIndex((s) => s.id === sectionId);
+    if (secIdx === -1) return song;
+    nextSong.sections[secIdx].vocalHarmony = vocalHarmony;
+    return nextSong;
+  }
+
+  const bandState = bandStateOrSectionId;
+  const sectionId = sectionIdOrMode;
+  const vocalHarmony = maybeMode ?? 'off';
   const nextSong = cloneSongConfig(song);
   const secIdx = nextSong.sections.findIndex((s) => s.id === sectionId);
   if (secIdx === -1) return { song, bandState };
@@ -1084,6 +1157,7 @@ export function createDefaultSongConfig(
         keyboardDensity: 4,
         vocalDensity: 3,
         vocalHarmony: 'off',
+        patternPresets: createDefaultPartPresets(),
         enabledParts: createDefaultEnabledParts(),
         chords: [...defaultChords],
       },
@@ -1099,6 +1173,7 @@ export function createDefaultSongConfig(
         keyboardDensity: 4,
         vocalDensity: 3,
         vocalHarmony: 'off',
+        patternPresets: createDefaultPartPresets(),
         enabledParts: createDefaultEnabledParts(),
         chords: [...defaultChords],
       },
@@ -1114,6 +1189,7 @@ export function createDefaultSongConfig(
         keyboardDensity: 4,
         vocalDensity: 3,
         vocalHarmony: 'off',
+        patternPresets: createDefaultPartPresets(),
         enabledParts: createDefaultEnabledParts(),
         chords: ['Am', 'G', 'C', 'D'],
       },
@@ -1129,6 +1205,7 @@ export function createDefaultSongConfig(
         keyboardDensity: 4,
         vocalDensity: 3,
         vocalHarmony: 'off',
+        patternPresets: createDefaultPartPresets(),
         enabledParts: createDefaultEnabledParts(),
         chords: ['C', 'D', 'Em', 'G'],
       },
@@ -1332,7 +1409,9 @@ export function applyArrangementPresetToSong(
     kickDensity: s.kickDensity ?? 3,
     keyboardDensity: s.keyboardDensity ?? 4,
     vocalDensity: s.vocalDensity ?? 3,
-    enabledParts: s.enabledParts ?? createDefaultEnabledParts(),
+    vocalHarmony: s.vocalHarmony ?? 'off',
+    patternPresets: createDefaultPartPresets(nextSong.members),
+    enabledParts: s.enabledParts ? { ...s.enabledParts } : createDefaultEnabledParts(),
   }));
 
   const nextState = generateAllSections(nextSong, undefined, baseSeed, true);

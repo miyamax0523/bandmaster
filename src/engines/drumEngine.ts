@@ -47,7 +47,11 @@ export function generateDrumNotes(input: EngineInput): MidiNote[] {
   const sectionEnd = section.bars * TICKS_PER_BAR;
   const hatDensity = section.hatDensity ?? 3;
   const kickDensity = section.kickDensity ?? 3;
-  const drumPreset = song.members.drums.patternPreset ?? 'auto';
+  const drumPreset =
+    section.patternPresets?.drums ??
+    section.partPresets?.drums ??
+    song.members.drums.patternPreset ??
+    'auto';
   const notes: InternalDrumNote[] = [];
 
   // 1. Source resolution: Section Loop > Song Loop > Built-in Generator

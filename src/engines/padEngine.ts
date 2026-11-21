@@ -16,7 +16,11 @@ export function generatePadNotes(input: EngineInput): MidiNote[] {
   const rng = createSeededRng(seed);
   const sectionEnd = section.bars * TICKS_PER_BAR;
   const playStyle = song.members.pad.padStyle ?? 'Power';
-  const padPreset = song.members.pad.patternPreset ?? 'auto';
+  const padPreset =
+    section.patternPresets?.pad ??
+    section.partPresets?.pad ??
+    song.members.pad.patternPreset ??
+    'auto';
   const baseVel = section.energy === 'High' ? 84 : section.energy === 'Low' ? 58 : 72;
 
   const notes: MidiNote[] = [];

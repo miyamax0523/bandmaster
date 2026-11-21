@@ -200,7 +200,11 @@ export function generateBassNotes(input: EngineInput): MidiNote[] {
     .filter((n) => n.pitch === 36)
     .map((n) => n.startTick);
 
-  const bassPreset = song.members.bass.patternPreset ?? 'auto';
+  const bassPreset =
+    section.patternPresets?.bass ??
+    section.partPresets?.bass ??
+    song.members.bass.patternPreset ??
+    'auto';
   const notes: MidiNote[] = [];
 
   for (let bar = 0; bar < section.bars; bar++) {

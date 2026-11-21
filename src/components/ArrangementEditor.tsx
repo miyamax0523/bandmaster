@@ -127,6 +127,33 @@ export function ArrangementEditor({
   );
   const current = song.sections[currentIdx];
 
+  const [chordTextDraft, setChordTextDraft] = useState<string>(() =>
+    current ? current.chords.join(', ') : ''
+  );
+  const prevChordSyncRef = useRef<{ id: string; key: string }>({
+    id: current?.id ?? '',
+    key: current ? current.chords.join('|') : '',
+  });
+  const currentId = current?.id ?? '';
+  const currentChordKey = current ? current.chords.join('|') : '';
+  if (
+    current &&
+    (prevChordSyncRef.current.id !== currentId ||
+      prevChordSyncRef.current.key !== currentChordKey)
+  ) {
+    const draftParsed = chordTextDraft
+      .split(',')
+      .map((c) => c.trim())
+      .filter(Boolean);
+    if (
+      prevChordSyncRef.current.id !== currentId ||
+      draftParsed.join('|') !== currentChordKey
+    ) {
+      setChordTextDraft(current.chords.join(', '));
+    }
+    prevChordSyncRef.current = { id: currentId, key: currentChordKey };
+  }
+
   const swipeHandlers = useHorizontalSwipe(
     () => {
       if (currentIdx < song.sections.length - 1) {
@@ -542,9 +569,11 @@ export function ArrangementEditor({
             <span>小節ごとのコード（カンマ区切り・循環）</span>
             <input
               type="text"
-              value={current.chords.join(', ')}
+              value={chordTextDraft}
               onChange={(e) => {
-                const list = e.target.value
+                const rawText = e.target.value;
+                setChordTextDraft(rawText);
+                const list = rawText
                   .split(',')
                   .map((c) => c.trim())
                   .filter(Boolean);

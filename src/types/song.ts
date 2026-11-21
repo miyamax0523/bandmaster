@@ -22,7 +22,13 @@ export type BeatFeel = 'Straight' | 'Half-Time' | 'Bounce' | 'Driving';
 export type EnergyLevel = 'Low' | 'Mid' | 'High';
 export type DensityLevel = 1 | 2 | 3 | 4 | 5;
 export type KeyboardDensityLevel = 1 | 2 | 3 | 4 | 5 | 6 | 7;
-export type VocalHarmonyMode = 'off' | 'upper_3rd' | 'lower_3rd' | 'octave_up';
+export type VocalHarmonyMode =
+  | 'off'
+  | 'upper_3rd'
+  | 'lower_3rd'
+  | 'upper_5th'
+  | 'octave_up'
+  | 'octave_down';
 export type KickMode = 'acoustic' | '808';
 export type Bass808Behavior = 'octaveUp' | 'tacet' | 'normal';
 export type TakeStyle = 'A' | 'B' | 'C';
@@ -99,6 +105,18 @@ export function createDefaultEnabledParts(): Record<InstrumentType, boolean> {
   };
 }
 
+export function createDefaultPartPresets(
+  members?: Partial<Record<InstrumentType, MemberConfig>>
+): Record<InstrumentType, string> {
+  return {
+    drums: members?.drums?.patternPreset ?? 'auto',
+    bass: members?.bass?.patternPreset ?? 'auto',
+    keyboard: members?.keyboard?.patternPreset ?? 'auto',
+    pad: members?.pad?.patternPreset ?? 'auto',
+    vocal: members?.vocal?.patternPreset ?? 'auto',
+  };
+}
+
 export interface DrumLoopData {
   fileName: string;
   bars: number; // 1..4
@@ -162,6 +180,8 @@ export interface Section {
   keyboardDensity?: KeyboardDensityLevel; // 1..7 (default 4)
   vocalDensity?: DensityLevel; // 1..5 (default 3)
   vocalHarmony?: VocalHarmonyMode; // default 'off'
+  partPresets?: Partial<Record<InstrumentType, string>>;
+  patternPresets?: Partial<Record<InstrumentType, string>>;
   chords: string[];
   enabledParts?: Record<InstrumentType, boolean>;
   uploadedDrumLoop?: DrumLoopData;

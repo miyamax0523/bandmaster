@@ -966,6 +966,16 @@ input[type='range'] {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.density-segments--6 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+@media (min-width: 640px) {
+  .density-segments--6 {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+}
+
 .harmony-btn {
   font-size: 0.74rem;
   padding: 4px 2px;

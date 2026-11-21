@@ -292,7 +292,11 @@ export function generateVocalNotes(input: EngineInput): MidiNote[] {
   }
 
   // Mode B: Preset-based Vocal / Rap Generator
-  const preset = member.patternPreset ?? 'auto';
+  const preset =
+    section.patternPresets?.vocal ??
+    section.partPresets?.vocal ??
+    member.patternPreset ??
+    'auto';
   const keySemitone = noteNameToSemitone(song.key);
   const scalePcs = new Set(getScalePitchClasses(song.key, song.scale));
   const { minP: bandMin, maxP: bandMax } = computeContinuityRange(
@@ -1328,16 +1332,29 @@ export function generateVocalHarmonyNotes(
   return melodyNotes.map((n) => {
     let pitch = n.pitch;
     if (mode === 'octave_up') {
-      pitch = Math.min(88, n.pitch + 12);
+      pitch = n.pitch + 12;
+      while (pitch > 88) pitch -= 12;
+    } else if (mode === 'octave_down') {
+      pitch = n.pitch - 12;
+      while (pitch < 40) pitch += 12;
     } else {
       const snapped = nearestScalePitch(n.pitch, scalePcs, 24, 96);
       const idx = scaleGrid.indexOf(snapped);
+      const stepDelta =
+        mode === 'upper_3rd' ? 2 : mode === 'lower_3rd' ? -2 : 4; // upper_5th = +4 scale steps
       if (idx >= 0) {
-        const delta = mode === 'upper_3rd' ? 2 : -2;
-        const targetIdx = Math.max(0, Math.min(scaleGrid.length - 1, idx + delta));
+        const targetIdx = Math.max(
+          0,
+          Math.min(scaleGrid.length - 1, idx + stepDelta)
+        );
         pitch = scaleGrid[targetIdx];
       } else {
-        pitch = mode === 'upper_3rd' ? n.pitch + 4 : n.pitch - 4;
+        pitch =
+          mode === 'upper_3rd'
+            ? n.pitch + 4
+            : mode === 'lower_3rd'
+              ? n.pitch - 4
+              : n.pitch + 7;
       }
     }
 

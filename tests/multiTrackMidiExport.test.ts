@@ -111,7 +111,7 @@ describe('multiTrackMidiExport', () => {
     expect(res.ntrks).toBe(7); // Conductor + 6 empty tracks (Vocal Harmony omitted when off)
   });
 
-  it('adds an independent Vocal Harmony MIDI track only when at least one section enables harmony', () => {
+  it('adds an independent Vocal Harmony MIDI track only when at least one section enables harmony (e.g. upper_5th)', () => {
     const song = createDefaultSongConfig('rockBand');
     song.exportOnlyActiveTracks = true;
     song.members.drums.enabled = false;
@@ -120,13 +120,23 @@ describe('multiTrackMidiExport', () => {
     song.members.pad.enabled = false;
     song.sections = [
       {
+        id: 's0',
+        type: 'Verse',
+        name: 'Verse',
+        bars: 1,
+        energy: 'Mid',
+        kickMode: 'acoustic',
+        vocalHarmony: 'off',
+        chords: ['C'],
+      },
+      {
         id: 's1',
         type: 'Chorus',
         name: 'Chorus',
         bars: 1,
         energy: 'High',
         kickMode: 'acoustic',
-        vocalHarmony: 'upper_3rd',
+        vocalHarmony: 'upper_5th',
         chords: ['C'],
       },
     ];
@@ -137,6 +147,8 @@ describe('multiTrackMidiExport', () => {
     expect(res.trackNames).toEqual(['Conductor', 'Vocal', 'Vocal Harmony']);
     expect(parsed.ntrks).toBe(3);
     expect(parsed.tracks[2].name).toBe('Vocal Harmony');
-    expect(parsed.tracks[2].notes.length).toBe(parsed.tracks[1].notes.length);
+    // Only Chorus (s1, >= TICKS_PER_BAR) emits harmony notes
+    expect(parsed.tracks[2].notes.every((n) => n.startTick >= 1920)).toBe(true);
+    expect(parsed.tracks[2].notes.length).toBeGreaterThan(0);
   });
 });

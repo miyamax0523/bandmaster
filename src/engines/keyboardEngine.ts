@@ -63,7 +63,11 @@ export function generateKeyboardNotes(input: EngineInput): MidiNote[] {
   const rng = createSeededRng(seed);
   const sectionEnd = section.bars * TICKS_PER_BAR;
   const playStyle = song.members.keyboard.keyboardStyle ?? 'Rhythm Backing';
-  const kbPreset = song.members.keyboard.patternPreset ?? 'auto';
+  const kbPreset =
+    section.patternPresets?.keyboard ??
+    section.partPresets?.keyboard ??
+    song.members.keyboard.patternPreset ??
+    'auto';
   const keyboardDensity = input.keyboardDensity ?? section.keyboardDensity ?? 4;
   const baseVel = section.energy === 'High' ? 92 : section.energy === 'Low' ? 68 : 82;
 

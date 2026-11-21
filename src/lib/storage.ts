@@ -1,5 +1,6 @@
 import {
   createDefaultEnabledParts,
+  createDefaultPartPresets,
   CURRENT_ENGINE_VERSION,
   type InstrumentType,
   type MidiNote,
@@ -19,6 +20,7 @@ import {
 } from './bandState';
 
 export const STORAGE_SCHEMA_VERSION = 1;
+export const CURRENT_PROJECT_LOCAL_KEY = 'bandmaster_current_project_v1';
 export const PROJECT_SNAPSHOTS_KEY = 'bandmaster_project_snapshots_v1';
 export const MAX_PROJECT_SNAPSHOTS = 15;
 const DB_NAME = 'bandmaster_db';
@@ -95,9 +97,10 @@ function createIndexedDbBackend(): StorageBackend {
       return new Promise((resolve, reject) => {
         const tx = db.transaction(STORE_NAME, 'readwrite');
         const store = tx.objectStore(STORE_NAME);
-        const req = store.put(value, key);
-        req.onsuccess = () => resolve();
-        req.onerror = () => reject(req.error ?? new Error('IndexedDB put failed'));
+        tx.oncomplete = () => resolve();
+        tx.onabort = () => reject(tx.error ?? new Error('IndexedDB tx aborted'));
+        tx.onerror = () => reject(tx.error ?? new Error('IndexedDB put failed'));
+        store.put(value, key);
       });
     },
     async delete(key: string): Promise<void> {
@@ -105,10 +108,11 @@ function createIndexedDbBackend(): StorageBackend {
       return new Promise((resolve, reject) => {
         const tx = db.transaction(STORE_NAME, 'readwrite');
         const store = tx.objectStore(STORE_NAME);
-        const req = store.delete(key);
-        req.onsuccess = () => resolve();
-        req.onerror = () =>
-          reject(req.error ?? new Error('IndexedDB delete failed'));
+        tx.oncomplete = () => resolve();
+        tx.onabort = () => reject(tx.error ?? new Error('IndexedDB tx aborted'));
+        tx.onerror = () =>
+          reject(tx.error ?? new Error('IndexedDB delete failed'));
+        store.delete(key);
       });
     },
   };
@@ -185,7 +189,7 @@ export function hydrateProject(stored: StoredBandProject): {
   song: SongConfig;
   bandState: BandState;
 } {
-  const { song } = stored;
+  const song = deepCopyJson(stored.song);
   if (!song.members.vocal) {
     song.members.vocal = {
       enabled: true,
@@ -202,27 +206,49 @@ export function hydrateProject(stored: StoredBandProject): {
       };
     }
   }
-    // Drop legacy keyboardGlobalSequence from old saved data cleanly
-    delete (song as unknown as Record<string, unknown>).keyboardGlobalSequence;
+  // Drop legacy keyboardGlobalSequence from old saved data cleanly
+  delete (song as unknown as Record<string, unknown>).keyboardGlobalSequence;
 
   const cellsBySection: Record<string, SectionBandCells> = {};
+  const storedCells = stored.cellsBySection ?? {};
 
   for (let secIdx = 0; secIdx < song.sections.length; secIdx++) {
-    const rawSec = song.sections[secIdx];
+    const rawSec = song.sections[secIdx] as Section & {
+      chordProgression?: string | string[];
+    };
+    let restoredChords: string[];
+    if (Array.isArray(rawSec.chords)) {
+      restoredChords = [...rawSec.chords];
+    } else if (Array.isArray(rawSec.chordProgression)) {
+      restoredChords = [...rawSec.chordProgression];
+    } else if (typeof rawSec.chordProgression === 'string') {
+      restoredChords = rawSec.chordProgression
+        .split(',')
+        .map((c) => c.trim())
+        .filter(Boolean);
+    } else {
+      restoredChords = [];
+    }
+
     const section: Section = {
       ...rawSec,
+      chords: restoredChords,
       hatDensity: rawSec.hatDensity ?? 3,
       kickDensity: rawSec.kickDensity ?? 3,
       keyboardDensity: rawSec.keyboardDensity ?? 4,
       vocalDensity: rawSec.vocalDensity ?? 3,
       vocalHarmony: rawSec.vocalHarmony ?? 'off',
+      patternPresets: {
+        ...createDefaultPartPresets(song.members),
+        ...(rawSec.patternPresets ?? rawSec.partPresets ?? {}),
+      },
       enabledParts: {
         ...createDefaultEnabledParts(),
         ...rawSec.enabledParts,
       },
     };
     song.sections[secIdx] = section;
-    const storedSec = stored.cellsBySection[section.id];
+    const storedSec = storedCells[section.id];
     if (!storedSec) continue;
 
     const restored = {} as SectionBandCells;
@@ -286,6 +312,39 @@ export function hydrateProject(stored: StoredBandProject): {
     cellsBySection[section.id] = restored;
   }
 
+  for (let secIdx = 0; secIdx < song.sections.length; secIdx++) {
+    const section = song.sections[secIdx];
+    if (cellsBySection[section.id]) continue;
+    const emptyRestored = {} as SectionBandCells;
+    for (const inst of GENERATION_ORDER) {
+      const seeds = createSeedTriple(7100 + secIdx * 37 + inst.length);
+      const drumNotes =
+        inst === 'bass' && section.enabledParts?.drums !== false
+          ? getSelectedDrumNotes(emptyRestored)
+          : [];
+      const prevVocalAvgPitch =
+        inst === 'vocal' && secIdx > 0
+          ? getAverageVocalPitch(cellsBySection[song.sections[secIdx - 1].id])
+          : undefined;
+      emptyRestored[inst] = {
+        engineVersion: CURRENT_ENGINE_VERSION,
+        seeds,
+        selectedTake: 'A',
+        locked: false,
+        takes: generateCellTakes(
+          song,
+          section,
+          secIdx,
+          inst,
+          seeds,
+          drumNotes,
+          prevVocalAvgPitch
+        ),
+      };
+    }
+    cellsBySection[section.id] = emptyRestored;
+  }
+
   return {
     song,
     bandState: { cellsBySection },
@@ -304,6 +363,80 @@ function isQuotaExceededError(err: unknown): boolean {
   );
 }
 
+export function saveCurrentProjectSync(
+  song: SongConfig,
+  bandState: BandState
+): SaveResult {
+  try {
+    const payload = serializeProject(song, bandState);
+    const json = JSON.stringify(payload);
+    if (typeof globalThis.localStorage !== 'undefined') {
+      globalThis.localStorage.setItem(CURRENT_PROJECT_LOCAL_KEY, json);
+    } else {
+      memorySnapshotFallback.set(CURRENT_PROJECT_LOCAL_KEY, json);
+    }
+    return { ok: true };
+  } catch (err) {
+    if (isQuotaExceededError(err)) {
+      return {
+        ok: false,
+        quotaExceeded: true,
+        errorMessage:
+          'ストレージ容量上限（QuotaExceededError）に達したため保存できませんでした。既存データは保護されています。',
+      };
+    }
+    return {
+      ok: false,
+      errorMessage:
+        err instanceof Error ? err.message : '保存に失敗しました',
+    };
+  }
+}
+
+export function loadCurrentProjectSync(): {
+  song: SongConfig;
+  bandState: BandState;
+} | null {
+  let raw: string | null = null;
+  if (typeof globalThis.localStorage !== 'undefined') {
+    try {
+      raw = globalThis.localStorage.getItem(CURRENT_PROJECT_LOCAL_KEY);
+    } catch {
+      raw = memorySnapshotFallback.get(CURRENT_PROJECT_LOCAL_KEY) ?? null;
+    }
+  } else {
+    raw = memorySnapshotFallback.get(CURRENT_PROJECT_LOCAL_KEY) ?? null;
+  }
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<StoredBandProject>;
+    if (!parsed || typeof parsed !== 'object' || !parsed.song) {
+      return null;
+    }
+    if (
+      parsed.schemaVersion !== undefined &&
+      parsed.schemaVersion !== STORAGE_SCHEMA_VERSION
+    ) {
+      return null;
+    }
+    return hydrateProject({
+      schemaVersion: STORAGE_SCHEMA_VERSION,
+      updatedAt: parsed.updatedAt ?? Date.now(),
+      song: parsed.song,
+      cellsBySection: parsed.cellsBySection ?? {},
+    });
+  } catch {
+    return null;
+  }
+}
+
+export function loadCurrentProject(): {
+  song: SongConfig;
+  bandState: BandState;
+} | null {
+  return loadCurrentProjectSync();
+}
+
 export async function saveProject(
   song: SongConfig,
   bandState: BandState,
@@ -312,6 +445,9 @@ export async function saveProject(
 ): Promise<SaveResult> {
   try {
     const payload = serializeProject(song, bandState);
+    if (backend === getDefaultStorageBackend() && key === DEFAULT_RECORD_KEY) {
+      saveCurrentProjectSync(song, bandState);
+    }
     await backend.set(key, payload);
     return { ok: true };
   } catch (err) {
@@ -335,17 +471,36 @@ export async function loadProject(
   backend: StorageBackend = getDefaultStorageBackend(),
   key = DEFAULT_RECORD_KEY
 ): Promise<{ song: SongConfig; bandState: BandState } | null> {
+  if (backend === getDefaultStorageBackend() && key === DEFAULT_RECORD_KEY) {
+    const syncLoaded = loadCurrentProjectSync();
+    if (syncLoaded) {
+      return syncLoaded;
+    }
+  }
   const raw = await backend.get(key);
   if (!raw || typeof raw !== 'object') {
     return null;
   }
   const candidate = raw as Partial<StoredBandProject>;
-  if (candidate.schemaVersion !== STORAGE_SCHEMA_VERSION || !candidate.song || !candidate.cellsBySection) {
+  if (
+    (candidate.schemaVersion !== undefined &&
+      candidate.schemaVersion !== STORAGE_SCHEMA_VERSION) ||
+    !candidate.song
+  ) {
     // Safe initialization on schemaVersion mismatch
     await backend.delete(key);
     return null;
   }
-  return hydrateProject(candidate as StoredBandProject);
+  const hydrated = hydrateProject({
+    schemaVersion: STORAGE_SCHEMA_VERSION,
+    updatedAt: candidate.updatedAt ?? Date.now(),
+    song: candidate.song,
+    cellsBySection: candidate.cellsBySection ?? {},
+  });
+  if (backend === getDefaultStorageBackend() && key === DEFAULT_RECORD_KEY) {
+    saveCurrentProjectSync(hydrated.song, hydrated.bandState);
+  }
+  return hydrated;
 }
 
 export function createDebouncedProjectSaver(
@@ -366,6 +521,18 @@ export function createDebouncedProjectSaver(
     }, delayMs);
   };
 
+  const flushNow = async (song: SongConfig, bandState: BandState) => {
+    if (timer !== null) {
+      clearTimeout(timer);
+      timer = null;
+    }
+    if (backend === getDefaultStorageBackend()) {
+      saveCurrentProjectSync(song, bandState);
+    }
+    const res = await saveProject(song, bandState, backend);
+    onResult?.(res);
+  };
+
   const cancel = () => {
     if (timer !== null) {
       clearTimeout(timer);
@@ -373,7 +540,7 @@ export function createDebouncedProjectSaver(
     }
   };
 
-  return { scheduleSave, cancel };
+  return { scheduleSave, flushNow, cancel };
 }
 
 export interface SavedProjectSnapshot {

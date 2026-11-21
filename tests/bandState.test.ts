@@ -16,7 +16,9 @@ import {
   toggleSectionRiffOctaveUpOn808,
   updateSectionBars,
   updateSectionDrumDensity,
+  updateSectionKeyboardDensity,
   updateSectionKickMode,
+  updateSectionPartPreset,
   updateSectionVocalHarmony,
 } from '../src/lib/bandState';
 import { detectHorizontalSwipe } from '../src/lib/touchSwipe';
@@ -399,9 +401,11 @@ describe('bandState', () => {
       ],
     };
 
-    // 2 bars -> 4 bars loops 2x
+    // 2 bars -> 4 bars loops 2x and updates ONLY target section's patternPresets (not global member or section 0)
     const pasted4 = pastePartPhraseToSection(song, state, 's4', copiedKeyboard);
-    expect(pasted4.song.members.keyboard.patternPreset).toBe('fusion_comping');
+    expect(pasted4.song.sections[1].patternPresets?.keyboard).toBe('fusion_comping');
+    expect(pasted4.song.sections[0].patternPresets?.keyboard).not.toBe('fusion_comping');
+    expect(pasted4.song.members.keyboard.patternPreset).toBe('auto');
     expect(pasted4.bandState.cellsBySection.s4.keyboard.locked).toBe(true);
     expect(pasted4.bandState.cellsBySection.s4.keyboard.takes.A.map((n) => n.startTick)).toEqual([
       0,
@@ -446,5 +450,42 @@ describe('bandState', () => {
 
     const tracksOn = selectSongTracks(updated.song, updated.bandState);
     expect(tracksOn.vocalHarmony.length).toBe(tracksOn.vocal.length);
+  });
+
+  it('isolates per-section patternPreset, density, and vocalHarmony so switching sections never overwrites or bleeds', () => {
+    const base = createDefaultSongConfig('rockBand');
+    let state = generateAllSections(base, undefined, 300, false);
+
+    const sec1Id = base.sections[0].id; // Intro
+    const sec2Id = base.sections[1].id; // Aメロ
+
+    // Configure Section 1: Drums 'rock_drive', Keyboard density 2, Vocal harmony 'off'
+    let r = updateSectionPartPreset(base, state, sec1Id, 'drums', 'rock_drive');
+    r = updateSectionKeyboardDensity(r.song, r.bandState, sec1Id, 2);
+    const sec1HarmonySong = updateSectionVocalHarmony(r.song, sec1Id, 'off');
+    r = { song: sec1HarmonySong, bandState: r.bandState };
+
+    // Configure Section 2: Drums 'straight_16', Keyboard density 7, Vocal harmony 'upper_5th'
+    r = updateSectionPartPreset(r.song, r.bandState, sec2Id, 'drums', 'straight_16');
+    r = updateSectionKeyboardDensity(r.song, r.bandState, sec2Id, 7);
+    r = updateSectionVocalHarmony(r.song, r.bandState, sec2Id, 'upper_5th');
+
+    const finalSec1 = r.song.sections.find((s) => s.id === sec1Id)!;
+    const finalSec2 = r.song.sections.find((s) => s.id === sec2Id)!;
+
+    expect(finalSec1.patternPresets?.drums).toBe('rock_drive');
+    expect(finalSec1.keyboardDensity).toBe(2);
+    expect(finalSec1.vocalHarmony).toBe('off');
+
+    expect(finalSec2.patternPresets?.drums).toBe('straight_16');
+    expect(finalSec2.keyboardDensity).toBe(7);
+    expect(finalSec2.vocalHarmony).toBe('upper_5th');
+
+    // Global MEMBERS baseline remained untouched
+    expect(r.song.members.drums.patternPreset).toBe('auto');
+
+    // Mutating sec1's patternPresets object does not affect sec2
+    finalSec1.patternPresets!.drums = 'trap_active';
+    expect(finalSec2.patternPresets?.drums).toBe('straight_16');
   });
 });

@@ -47,7 +47,11 @@ interface BandmasterConsoleProps {
   copiedPhrase: CopiedPartPhrase | null;
   onCopyPartPhrase: (phrase: CopiedPartPhrase) => void;
   onPastePartPhrase: (targetSectionId: string, phrase: CopiedPartPhrase) => void;
-  onChangePatternPreset: (inst: InstrumentType, preset: string) => void;
+  onChangeSectionPatternPreset: (
+    sectionId: string,
+    inst: InstrumentType,
+    preset: string
+  ) => void;
   onToggleSectionPart: (sectionId: string, inst: InstrumentType) => void;
   onOpenVocalModal: (sectionId: string) => void;
   onClearSectionVocalMelody: (sectionId: string) => void;
@@ -78,7 +82,9 @@ const VOCAL_HARMONY_OPTIONS: Array<{ value: VocalHarmonyMode; label: string }> =
   { value: 'off', label: 'OFF' },
   { value: 'upper_3rd', label: '3度上' },
   { value: 'lower_3rd', label: '3度下' },
-  { value: 'octave_up', label: 'オクターブ' },
+  { value: 'upper_5th', label: '5度上' },
+  { value: 'octave_up', label: 'Oct上' },
+  { value: 'octave_down', label: 'Oct下' },
 ];
 
 export function BandmasterConsole({
@@ -98,7 +104,7 @@ export function BandmasterConsole({
   copiedPhrase,
   onCopyPartPhrase,
   onPastePartPhrase,
-  onChangePatternPreset,
+  onChangeSectionPatternPreset,
   onToggleSectionPart,
   onOpenVocalModal,
   onClearSectionVocalMelody,
@@ -213,12 +219,17 @@ export function BandmasterConsole({
         </button>
       </div>
 
-      <div className="console-cards" {...swipeHandlers}>
+      <div key={section.id} className="console-cards" {...swipeHandlers}>
         {INSTRUMENTS.map(({ key, label, icon }) => {
           const member = song.members[key];
           const cell = cells?.[key];
           if (!member || !cell) return null;
 
+          const sectionPreset =
+            section.patternPresets?.[key] ??
+            section.partPresets?.[key] ??
+            member.patternPreset ??
+            'auto';
           const sectionEnabled = isSectionPartEnabled(section, key);
           const effectivelyEnabled = member.enabled && sectionEnabled;
           const autoTacet = isAutoTacet(song, section, key);
@@ -356,9 +367,11 @@ export function BandmasterConsole({
                   <span>パターン</span>
                   <select
                     className="console-preset-select"
-                    value={member.patternPreset ?? 'auto'}
+                    value={sectionPreset}
                     disabled={!effectivelyEnabled || cell.locked}
-                    onChange={(e) => onChangePatternPreset(key, e.target.value)}
+                    onChange={(e) =>
+                      onChangeSectionPatternPreset(section.id, key, e.target.value)
+                    }
                   >
                     {PATTERN_PRESET_GROUPS[key].map((grp) => (
                       <optgroup key={grp.category} label={grp.category}>
@@ -489,7 +502,7 @@ export function BandmasterConsole({
                   <div className="density-row">
                     <span className="density-label">ハモリ</span>
                     <div
-                      className="density-segments density-segments--4"
+                      className="density-segments density-segments--6"
                       role="group"
                       aria-label="Vocal ハモリ"
                     >
@@ -527,7 +540,7 @@ export function BandmasterConsole({
                       sourceSectionId: section.id,
                       sourceSectionName: section.name,
                       sourceBars: section.bars,
-                      patternPreset: member.patternPreset ?? 'auto',
+                      patternPreset: sectionPreset,
                       notes: (cell.takes[takeKey] ?? []).map((n) => ({ ...n })),
                       unisonRiff:
                         key === 'bass' && section.unisonRiff

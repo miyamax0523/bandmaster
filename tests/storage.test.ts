@@ -3,12 +3,15 @@ import { createDefaultSongConfig, generateAllSections, toggleCellLock } from '..
 import {
   createMemoryStorageBackend,
   deleteProjectSnapshot,
+  hydrateProject,
   listProjectSnapshots,
+  loadCurrentProject,
   loadProject,
   loadProjectSnapshot,
   overwriteProjectSnapshot,
   MAX_PROJECT_SNAPSHOTS,
   renameProjectSnapshot,
+  saveCurrentProjectSync,
   saveProject,
   saveProjectSnapshot,
   serializeProject,
@@ -218,5 +221,52 @@ describe('storage', () => {
       deleteProjectSnapshot(s.id);
     }
     expect(listProjectSnapshots()).toEqual([]);
+  });
+
+  it('persists custom multi-section chord progressions immediately across simulated app restarts (loadCurrentProject & hydrateProject)', () => {
+    const song = createDefaultSongConfig('rockBand');
+    song.title = 'Restart Chord Check';
+    song.key = 'C';
+    song.scale = 'Major';
+    song.sections[0].chords = ['Fmaj7', 'G6', 'Em7', 'Am9'];
+    song.sections[0].bars = 4;
+    song.sections[1].chords = ['Dm7', 'G7', 'Cmaj7', 'A7'];
+    song.sections[1].bars = 8;
+    song.sections[2].chords = ['F#m7-5', 'Fm6', 'C/G'];
+    song.sections[3].chords = []; // explicitly cleared diatonic fallback
+
+    let state = generateAllSections(song, undefined, 919, false);
+    state = toggleCellLock(state, song.sections[0].id, 'keyboard');
+    const lockedNotesBeforeRestart = state.cellsBySection[song.sections[0].id].keyboard.takes.A.map(
+      (n) => ({ ...n })
+    );
+
+    // Synchronous autosave (what fires immediately on chord edit / visibilitychange / pagehide)
+    const saveRes = saveCurrentProjectSync(song, state);
+    expect(saveRes.ok).toBe(true);
+
+    // Simulate closing and restarting the PWA/browser
+    const restored = loadCurrentProject();
+    expect(restored).not.toBeNull();
+    expect(restored!.song.title).toBe('Restart Chord Check');
+    expect(restored!.song.key).toBe('C');
+    expect(restored!.song.scale).toBe('Major');
+    expect(restored!.song.sections[0].chords).toEqual(['Fmaj7', 'G6', 'Em7', 'Am9']);
+    expect(restored!.song.sections[0].bars).toBe(4);
+    expect(restored!.song.sections[1].chords).toEqual(['Dm7', 'G7', 'Cmaj7', 'A7']);
+    expect(restored!.song.sections[1].bars).toBe(8);
+    expect(restored!.song.sections[2].chords).toEqual(['F#m7-5', 'Fm6', 'C/G']);
+    expect(restored!.song.sections[3].chords).toEqual([]);
+    expect(restored!.bandState.cellsBySection[song.sections[0].id].keyboard.locked).toBe(true);
+    expect(restored!.bandState.cellsBySection[song.sections[0].id].keyboard.takes.A).toEqual(
+      lockedNotesBeforeRestart
+    );
+
+    // Verify legacy chordProgression string field migration in hydrateProject preserves custom chords
+    const legacySerialized = JSON.parse(JSON.stringify(serializeProject(song, state)));
+    delete legacySerialized.song.sections[0].chords;
+    legacySerialized.song.sections[0].chordProgression = 'Cmaj9, A7sus4, Dm9, G13';
+    const migrated = hydrateProject(legacySerialized);
+    expect(migrated.song.sections[0].chords).toEqual(['Cmaj9', 'A7sus4', 'Dm9', 'G13']);
   });
 });

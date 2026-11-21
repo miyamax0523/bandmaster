@@ -22,6 +22,7 @@ import {
   updateSectionDrumLoop,
   updateSectionKeyboardDensity,
   updateSectionKickMode,
+  updateSectionPartPreset,
   updateSectionVocalDensity,
   updateSectionVocalHarmony,
   type ArrangementPresetId,
@@ -31,10 +32,13 @@ import {
 import { transposeChords } from '../lib/chordUtils';
 import {
   createDebouncedProjectSaver,
+  loadCurrentProjectSync,
   loadProject,
+  saveCurrentProjectSync,
 } from '../lib/storage';
 import {
   createDefaultEnabledParts,
+  createDefaultPartPresets,
   type CopiedPartPhrase,
   type DensityLevel,
   type DrumLoopData,
@@ -52,19 +56,23 @@ import {
 import type { BandState } from '../types/track';
 
 export function useBandGenerator() {
-  const [song, setSong] = useState<SongConfig>(() =>
-    createDefaultSongConfig('rockBand')
+  const [initialLoaded] = useState(() => loadCurrentProjectSync());
+  const [song, setSong] = useState<SongConfig>(
+    () => initialLoaded?.song ?? createDefaultSongConfig('rockBand')
   );
   const [bandState, setBandState] = useState<BandState>(() =>
+    initialLoaded?.bandState ??
     generateAllSections(createDefaultSongConfig('rockBand'))
   );
   const [undoStack, setUndoStack] = useState<BandSnapshot[]>([]);
   const [storageWarning, setStorageWarning] = useState<string | null>(null);
-  const [isLoaded, setIsLoaded] = useState(false);
+  const [isLoaded, setIsLoaded] = useState(() => Boolean(initialLoaded));
 
   const saverRef = useRef<ReturnType<typeof createDebouncedProjectSaver> | null>(
     null
   );
+  const latestStateRef = useRef({ song, bandState, isLoaded });
+  latestStateRef.current = { song, bandState, isLoaded };
 
   useEffect(() => {
     saverRef.current = createDebouncedProjectSaver(500, undefined, (res) => {
@@ -76,20 +84,54 @@ export function useBandGenerator() {
     });
 
     let cancelled = false;
-    void loadProject().then((loaded) => {
-      if (cancelled) return;
-      if (loaded) {
-        setSong(loaded.song);
-        setBandState(loaded.bandState);
+    if (!initialLoaded) {
+      void loadProject().then((loaded) => {
+        if (cancelled) return;
+        if (loaded) {
+          setSong(loaded.song);
+          setBandState(loaded.bandState);
+        }
+        setIsLoaded(true);
+      });
+    } else {
+      // Ensure IndexedDB mirror matches synchronous localStorage state cleanly
+      void saverRef.current.flushNow(initialLoaded.song, initialLoaded.bandState);
+    }
+
+    const flushBeforeHideOrUnload = () => {
+      const curr = latestStateRef.current;
+      if (!curr.isLoaded) return;
+      saveCurrentProjectSync(curr.song, curr.bandState);
+      void saverRef.current?.flushNow(curr.song, curr.bandState);
+    };
+
+    const handleVisibilityChange = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+        flushBeforeHideOrUnload();
       }
-      setIsLoaded(true);
-    });
+    };
+
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+    }
+    if (typeof window !== 'undefined') {
+      window.addEventListener('pagehide', flushBeforeHideOrUnload);
+      window.addEventListener('beforeunload', flushBeforeHideOrUnload);
+    }
 
     return () => {
       cancelled = true;
+      flushBeforeHideOrUnload();
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+      }
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('pagehide', flushBeforeHideOrUnload);
+        window.removeEventListener('beforeunload', flushBeforeHideOrUnload);
+      }
       saverRef.current?.cancel();
     };
-  }, []);
+  }, [initialLoaded]);
 
   useEffect(() => {
     if (!isLoaded) return;
@@ -97,11 +139,24 @@ export function useBandGenerator() {
   }, [song, bandState, isLoaded]);
 
   const commitChange = useCallback(
-    (nextSong: SongConfig, nextState: BandState, recordUndo = true) => {
+    (
+      nextSong: SongConfig,
+      nextState: BandState,
+      recordUndo = true,
+      flushImmediately = false
+    ) => {
       if (recordUndo) {
         setUndoStack((prev) =>
           pushUndoSnapshot(prev, { song, bandState })
         );
+      }
+      latestStateRef.current = { song: nextSong, bandState: nextState, isLoaded: true };
+      const syncRes = saveCurrentProjectSync(nextSong, nextState);
+      if (!syncRes.ok && syncRes.errorMessage) {
+        setStorageWarning(syncRes.errorMessage);
+      }
+      if (flushImmediately) {
+        void saverRef.current?.flushNow(nextSong, nextState);
       }
       setSong(nextSong);
       setBandState(nextState);
@@ -113,8 +168,12 @@ export function useBandGenerator() {
     setUndoStack((prev) => {
       if (prev.length === 0) return prev;
       const last = prev[prev.length - 1];
-      setSong(cloneSongConfig(last.song));
-      setBandState(cloneBandState(last.bandState));
+      const nextS = cloneSongConfig(last.song);
+      const nextB = cloneBandState(last.bandState);
+      saveCurrentProjectSync(nextS, nextB);
+      void saverRef.current?.flushNow(nextS, nextB);
+      setSong(nextS);
+      setBandState(nextB);
       return prev.slice(0, -1);
     });
   }, []);
@@ -126,7 +185,7 @@ export function useBandGenerator() {
       const nextState = regenAll
         ? generateAllSections(nextSong, bandState, Date.now() & 0xffff, false)
         : bandState;
-      commitChange(nextSong, nextState, true);
+      commitChange(nextSong, nextState, true, true);
     },
     [song, bandState, commitChange]
   );
@@ -135,7 +194,7 @@ export function useBandGenerator() {
     (templateId: QuickTemplateId) => {
       const nextSong = createDefaultSongConfig(templateId);
       const nextState = generateAllSections(nextSong, undefined, Date.now() & 0xffff, true);
-      commitChange(nextSong, nextState, true);
+      commitChange(nextSong, nextState, true, true);
     },
     [commitChange]
   );
@@ -177,7 +236,28 @@ export function useBandGenerator() {
         instrument,
         (Date.now() & 0x7fffff) + 7
       );
-      commitChange(song, nextState, true);
+      const secIdx = song.sections.findIndex((s) => s.id === sectionId);
+      let nextSong = song;
+      if (secIdx !== -1) {
+        nextSong = cloneSongConfig(song);
+        const sec = nextSong.sections[secIdx];
+        const resolvedPreset =
+          sec.patternPresets?.[instrument] ??
+          sec.partPresets?.[instrument] ??
+          nextSong.members[instrument]?.patternPreset ??
+          'auto';
+        sec.patternPresets = {
+          ...createDefaultPartPresets(nextSong.members),
+          ...(sec.patternPresets ?? sec.partPresets ?? {}),
+          [instrument]: resolvedPreset,
+        };
+        sec.hatDensity = sec.hatDensity ?? 3;
+        sec.kickDensity = sec.kickDensity ?? 3;
+        sec.keyboardDensity = sec.keyboardDensity ?? 4;
+        sec.vocalDensity = sec.vocalDensity ?? 3;
+        sec.vocalHarmony = sec.vocalHarmony ?? 'off';
+      }
+      commitChange(nextSong, nextState, true);
     },
     [song, bandState, commitChange]
   );
@@ -219,6 +299,7 @@ export function useBandGenerator() {
       keyboardDensity: 4,
       vocalDensity: 3,
       vocalHarmony: 'off',
+      patternPresets: createDefaultPartPresets(nextSong.members),
       enabledParts: createDefaultEnabledParts(),
       chords: ['Em', 'C', 'G', 'D'],
     };
@@ -297,7 +378,7 @@ export function useBandGenerator() {
           { newSeeds: false }
         );
       }
-      commitChange(nextSong, nextState, true);
+      commitChange(nextSong, nextState, true, true);
     },
     [song, bandState, commitChange]
   );
@@ -305,7 +386,7 @@ export function useBandGenerator() {
   const changeSectionBars = useCallback(
     (sectionId: string, bars: number) => {
       const res = updateSectionBars(song, bandState, sectionId, bars);
-      commitChange(res.song, res.bandState, true);
+      commitChange(res.song, res.bandState, true, true);
     },
     [song, bandState, commitChange]
   );
@@ -441,6 +522,20 @@ export function useBandGenerator() {
     [song, bandState, commitChange]
   );
 
+  const changeSectionPartPreset = useCallback(
+    (sectionId: string, instrument: InstrumentType, preset: string) => {
+      const res = updateSectionPartPreset(
+        song,
+        bandState,
+        sectionId,
+        instrument,
+        preset
+      );
+      commitChange(res.song, res.bandState, true);
+    },
+    [song, bandState, commitChange]
+  );
+
   const pastePartPhrase = useCallback(
     (targetSectionId: string, copiedPhrase: CopiedPartPhrase) => {
       const res = pastePartPhraseToSection(
@@ -520,6 +615,7 @@ export function useBandGenerator() {
     changeSectionVocalDensity,
     changeSectionVocalHarmony,
     changeSectionKeyboardDensity,
+    changeSectionPartPreset,
     pastePartPhrase,
     loadSnapshotData,
     transposeSectionChords,
