@@ -30,6 +30,7 @@ export type VocalHarmonyMode =
   | 'octave_up'
   | 'octave_down';
 export type KickMode = 'acoustic' | '808';
+export type DrumAnticipationMode = 'sync' | 'keep';
 export type Bass808Behavior = 'octaveUp' | 'tacet' | 'normal';
 export type TakeStyle = 'A' | 'B' | 'C';
 export type InstrumentType = 'drums' | 'bass' | 'keyboard' | 'pad' | 'vocal';
@@ -183,6 +184,7 @@ export interface Section {
   bars: number; // 1..32
   energy: EnergyLevel;
   kickMode: KickMode;
+  drumAnticipationMode?: DrumAnticipationMode; // default 'sync'
   hatDensity?: DensityLevel; // 1..5 (default 3)
   kickDensity?: DensityLevel; // 1..5 (default 3)
   keyboardDensity?: KeyboardDensityLevel; // 1..7 (default 4)

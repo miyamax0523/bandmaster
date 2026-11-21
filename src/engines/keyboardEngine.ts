@@ -33,10 +33,15 @@ function buildKeyboardVoicing(
     if (intervalSet.has(4)) intervalSet.delete(4);
     intervalSet.add(2);
   }
-  if ((params.add7 || options?.forceFloating) && !intervalSet.has(10) && !intervalSet.has(11)) {
-    intervalSet.add(11);
+  if (
+    (params.add7 || options?.forceFloating) &&
+    !intervalSet.has(9) &&
+    !intervalSet.has(10) &&
+    !intervalSet.has(11)
+  ) {
+    intervalSet.add(intervalSet.has(6) ? 9 : 11);
   }
-  if (params.add9 || options?.forceFloating) {
+  if (params.add9 || (options?.forceFloating && !intervalSet.has(6))) {
     intervalSet.add(14);
   }
   if (options?.forceFloating && !intervalSet.has(2)) {
@@ -436,10 +441,15 @@ export function generateKeyboardNotes(input: EngineInput): MidiNote[] {
         }
       } else if (kbPreset === 'rock_power_riff') {
         const rootLow = fitPitchClassToRange(chord.rootSemitone, 48, 59);
+        const fifthIv = chord.intervals.includes(6)
+          ? 6
+          : chord.intervals.includes(8)
+            ? 8
+            : 7;
         const powerPair =
           keyboardDensity >= 6
-            ? [rootLow, rootLow + 7, rootLow + 12]
-            : [rootLow, rootLow + 7];
+            ? [rootLow, rootLow + fifthIv, rootLow + 12]
+            : [rootLow, rootLow + fifthIv];
         const riffSteps =
           keyboardDensity === 1
             ? [0]

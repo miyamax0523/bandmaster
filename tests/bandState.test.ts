@@ -16,6 +16,7 @@ import {
   toggleSectionPartEnabled,
   toggleSectionRiffOctaveUpOn808,
   updateSectionBars,
+  updateSectionDrumAnticipationMode,
   updateSectionDrumDensity,
   updateSectionKeyboardDensity,
   updateSectionKickMode,
@@ -525,5 +526,38 @@ describe('bandState', () => {
     // Mutating section 0's chords must not mutate section 1's chords
     updated.sections[0].chords[0].chord = 'Dm';
     expect(updated.sections[1].chords[0].chord).toBe('Am');
+  });
+
+  it('isolates drumAnticipationMode per section and regenerates unlocked drums on mode toggle', () => {
+    const base = createDefaultSongConfig('rockBand');
+    base.sections[0].bars = 2;
+    base.sections[0].chords = shiftChordBoundary(
+      createUniformChordTimeline(['Em', 'C'], 2),
+      1,
+      -0.5
+    );
+    const state = generateAllSections(base, undefined, 404, false);
+    const sec0Id = base.sections[0].id;
+    const sec1Id = base.sections[1].id;
+
+    // Switch section 0 to 'keep' -> section 1 remains 'sync'
+    const switched = updateSectionDrumAnticipationMode(base, state, sec0Id, 'keep');
+    expect(switched.song.sections[0].drumAnticipationMode).toBe('keep');
+    expect(switched.song.sections[1].drumAnticipationMode ?? 'sync').toBe('sync');
+
+    // Sync drums had crash @ 1680, keep drums no longer have forced crash @ 1680
+    const syncCrash1680 = state.cellsBySection[sec0Id].drums.takes.A.some(
+      (n) => n.pitch === 49 && n.startTick === 1680
+    );
+    const keepCrash1680 = switched.bandState.cellsBySection[sec0Id].drums.takes.A.some(
+      (n) => n.pitch === 49 && n.startTick === 1680
+    );
+    expect(syncCrash1680).toBe(true);
+    expect(keepCrash1680).toBe(false);
+
+    // Non-target section cells are preserved cleanly without side effects
+    expect(
+      switched.song.sections.find((s) => s.id === sec1Id)?.drumAnticipationMode ?? 'sync'
+    ).toBe('sync');
   });
 });

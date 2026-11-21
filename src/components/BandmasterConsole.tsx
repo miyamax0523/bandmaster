@@ -8,6 +8,7 @@ import type {
   ChordSlot,
   CopiedPartPhrase,
   DensityLevel,
+  DrumAnticipationMode,
   DrumLoopData,
   InstrumentType,
   KeyboardDensityLevel,
@@ -55,6 +56,10 @@ interface BandmasterConsoleProps {
     preset: string
   ) => void;
   onChangeSectionChordTimeline: (sectionId: string, slots: ChordSlot[]) => void;
+  onChangeSectionDrumAnticipationMode: (
+    sectionId: string,
+    mode: DrumAnticipationMode
+  ) => void;
   onCopyTimelineToAllSections: (sourceSectionId: string) => void;
   onToggleSectionPart: (sectionId: string, inst: InstrumentType) => void;
   onOpenVocalModal: (sectionId: string) => void;
@@ -110,6 +115,7 @@ export function BandmasterConsole({
   onPastePartPhrase,
   onChangeSectionPatternPreset,
   onChangeSectionChordTimeline,
+  onChangeSectionDrumAnticipationMode,
   onCopyTimelineToAllSections,
   onToggleSectionPart,
   onOpenVocalModal,
@@ -205,6 +211,7 @@ export function BandmasterConsole({
         song={song}
         section={section}
         onChangeSlots={onChangeSectionChordTimeline}
+        onChangeDrumAnticipationMode={onChangeSectionDrumAnticipationMode}
         onCopyTimelineToAllSections={onCopyTimelineToAllSections}
       />
 

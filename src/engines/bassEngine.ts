@@ -240,8 +240,13 @@ export function generateBassNotes(input: EngineInput): MidiNote[] {
       params.barHeadRootMax
     );
     const oct = headPitch + 12 <= params.rangeMax ? headPitch + 12 : headPitch;
+    const fifthIv = tickChord.intervals.includes(6)
+      ? 6
+      : tickChord.intervals.includes(8)
+        ? 8
+        : 7;
     const fifth = fitPitchClassToRange(
-      (tickChord.rootSemitone + 7) % 12,
+      (tickChord.rootSemitone + fifthIv) % 12,
       params.rangeMin,
       params.rangeMax
     );
@@ -489,8 +494,13 @@ export function generateBassNotes(input: EngineInput): MidiNote[] {
         return head + 12;
       }
       if (rng.chance(0.2)) {
+        const dynFifthIv = tickRoots.chord.intervals.includes(6)
+          ? 6
+          : tickRoots.chord.intervals.includes(8)
+            ? 8
+            : 7;
         return fitPitchClassToRange(
-          (tickRoots.chord.rootSemitone + 7) % 12,
+          (tickRoots.chord.rootSemitone + dynFifthIv) % 12,
           params.rangeMin,
           params.rangeMax
         );

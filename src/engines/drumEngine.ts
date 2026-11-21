@@ -1055,8 +1055,10 @@ export function generateDrumNotes(input: EngineInput): MidiNote[] {
   }
 
   // 3.5. Offbeat Chord Timeline Anticipation Sync (e.g. beat 4-and push):
+  // When drumAnticipationMode !== 'keep' ('sync' default):
   // Place Kick + Crash/OpenHH accent at `changeTick` and clear colliding kick in (changeTick, changeTick + 240]
-  if (!section.unisonRiff) {
+  const anticipationMode = section.drumAnticipationMode ?? 'sync';
+  if (!section.unisonRiff && anticipationMode !== 'keep') {
     const offbeatChanges = getTimelineBoundaryChanges(
       section.chords,
       section.bars,

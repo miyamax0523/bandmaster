@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { generateKeyboardNotes } from '../src/engines/keyboardEngine';
 import {
+  getDiatonicPaletteChords,
+  getSubstituteChordPalette,
+} from '../src/lib/chordPalette';
+import {
   createUniformChordTimeline,
   shiftChordBoundary,
 } from '../src/lib/chordTimeline';
@@ -257,5 +261,49 @@ describe('keyboardEngine', () => {
     expect(antNotes.length).toBeGreaterThan(0);
     expect(antNotes.every((n) => n.startTick + n.durationTicks > 1920)).toBe(true);
     expect(notes.some((n) => n.startTick === 1920)).toBe(false);
+  });
+
+  it('generates accurate voicings for dim modifier palette and substitute chords (passing dim, tritone sub, borrowed IVm)', () => {
+    const dimPalette = getDiatonicPaletteChords('A', 'Major', 'dim');
+    expect(dimPalette.every((c) => c.endsWith('dim7'))).toBe(true);
+    expect(dimPalette).toContain('C#dim7');
+
+    const subs = getSubstituteChordPalette('C', 'Major');
+    const subNames = subs.map((s) => s.chord);
+    expect(subNames).toContain('C#dim7'); // #Idim7
+    expect(subNames).toContain('F#dim7'); // #IVdim7
+    expect(subNames).toContain('Db7'); // bII7 tritone substitute
+    expect(subNames).toContain('Fm7'); // IVm7 borrowed chord
+    expect(subNames).toContain('Bb7'); // bVII7 borrowed chord
+
+    const song = createSong();
+    song.key = 'C';
+    song.scale = 'Major';
+    song.members.keyboard.patternPreset = 'whole_sustain';
+    const targetSec: Section = {
+      ...section,
+      bars: 4,
+      chords: createUniformChordTimeline(['F#dim7', 'Db7', 'Fm7', 'Bb7'], 4),
+    };
+    const notes = generateKeyboardNotes({
+      song,
+      section: targetSec,
+      sectionIndex: 0,
+      style: 'A',
+      seed: 1,
+      params: resolveInstrumentParams(song, targetSec, 'keyboard', 'A'),
+    });
+
+    // Bar 0: F#dim7 -> F#(6), A(9), C(0), D#(3)
+    const bar0Pcs = new Set(notes.filter((n) => n.startTick === 0).map((n) => n.pitch % 12));
+    expect([...bar0Pcs].sort((a, b) => a - b)).toEqual([0, 3, 6, 9]);
+
+    // Bar 1: Db7 -> Db(1), F(5), Ab(8), B(11)
+    const bar1Pcs = new Set(notes.filter((n) => n.startTick === 1920).map((n) => n.pitch % 12));
+    expect([...bar1Pcs].sort((a, b) => a - b)).toEqual([1, 5, 8, 11]);
+
+    // Bar 2: Fm7 -> F(5), Ab(8), C(0), Eb(3)
+    const bar2Pcs = new Set(notes.filter((n) => n.startTick === 3840).map((n) => n.pitch % 12));
+    expect([...bar2Pcs].sort((a, b) => a - b)).toEqual([0, 3, 5, 8]);
   });
 });

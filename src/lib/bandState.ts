@@ -11,6 +11,7 @@ import {
   type ChordSlot,
   type CopiedPartPhrase,
   type DensityLevel,
+  type DrumAnticipationMode,
   type DrumLoopData,
   type InstrumentType,
   type KeyboardDensityLevel,
@@ -90,6 +91,7 @@ export function cloneSection(sec: Section): Section {
   const clonedPresets = sec.patternPresets ?? sec.partPresets;
   return {
     ...sec,
+    drumAnticipationMode: sec.drumAnticipationMode ?? 'sync',
     vocalHarmony: sec.vocalHarmony ?? 'off',
     chords: normalizeSectionChords(sec.chords, sec.bars),
     patternPresets: clonedPresets
@@ -818,6 +820,56 @@ export function updateSectionChordTimeline(
     nextState.cellsBySection[sectionId],
     5800 + secIdx,
     { newSeeds: false, prevVocalAvgPitch }
+  );
+
+  return { song: nextSong, bandState: nextState };
+}
+
+export function updateSectionDrumAnticipationMode(
+  song: SongConfig,
+  sectionId: string,
+  mode: DrumAnticipationMode
+): SongConfig;
+export function updateSectionDrumAnticipationMode(
+  song: SongConfig,
+  bandState: BandState,
+  sectionId: string,
+  mode: DrumAnticipationMode
+): { song: SongConfig; bandState: BandState };
+export function updateSectionDrumAnticipationMode(
+  song: SongConfig,
+  bandStateOrSectionId: BandState | string,
+  sectionIdOrMode: string | DrumAnticipationMode,
+  maybeMode?: DrumAnticipationMode
+): SongConfig | { song: SongConfig; bandState: BandState } {
+  if (typeof bandStateOrSectionId === 'string') {
+    const sectionId = bandStateOrSectionId;
+    const mode = sectionIdOrMode as DrumAnticipationMode;
+    const nextSong = cloneSongConfig(song);
+    const secIdx = nextSong.sections.findIndex((s) => s.id === sectionId);
+    if (secIdx === -1) return song;
+    nextSong.sections[secIdx].drumAnticipationMode = mode;
+    return nextSong;
+  }
+
+  const bandState = bandStateOrSectionId;
+  const sectionId = sectionIdOrMode as string;
+  const mode = maybeMode ?? 'sync';
+  const nextSong = cloneSongConfig(song);
+  const secIdx = nextSong.sections.findIndex((s) => s.id === sectionId);
+  if (secIdx === -1) return { song, bandState };
+
+  const sec = nextSong.sections[secIdx];
+  sec.drumAnticipationMode = mode;
+
+  const nextState = cloneBandState(bandState);
+  nextState.cellsBySection[sectionId] = generateSectionCells(
+    nextSong,
+    sec,
+    secIdx,
+    nextState.cellsBySection[sectionId],
+    6100 + secIdx,
+    { newSeeds: false, instruments: ['drums', 'bass'] }
   );
 
   return { song: nextSong, bandState: nextState };

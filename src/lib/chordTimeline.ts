@@ -32,6 +32,8 @@ function snapHalfBeat(beats: number): number {
 
 /**
  * Converts a plain chord string array into a uniform timeline spanning `bars * 4` beats.
+ * Uses 4 beats (1 bar) as the base unit per chord by looping progressions whose length
+ * is shorter than `bars`, instead of stretching chords across 8+ beats by default.
  * Returns [] if `chordNames` is explicitly empty (signaling diatonic auto fallback).
  */
 export function createUniformChordTimeline(
@@ -44,7 +46,12 @@ export function createUniformChordTimeline(
     return [];
   }
 
-  const count = Math.min(chordNames.length, Math.max(1, totalBeats * 2));
+  const expandedNames =
+    chordNames.length < safeBars
+      ? Array.from({ length: safeBars }, (_, i) => chordNames[i % chordNames.length])
+      : chordNames;
+
+  const count = Math.min(expandedNames.length, Math.max(1, totalBeats * 2));
   const slots: ChordSlot[] = [];
   let cursor = 0;
 
@@ -64,7 +71,7 @@ export function createUniformChordTimeline(
     const dur = Math.max(0.5, snapHalfBeat(endBeat - cursor));
     slots.push({
       id: createChordSlotId('slot'),
-      chord: chordNames[i],
+      chord: expandedNames[i],
       startBeat: cursor,
       durationBeats: dur,
       anticipated: cursor % 1 !== 0,
@@ -385,6 +392,148 @@ export function updateChordName(
     ...next[targetIndex],
     chord: trimmed,
   };
+  return next;
+}
+
+function recalculateTimelinePositions(slots: ChordSlot[]): ChordSlot[] {
+  let cursor = 0;
+  return slots.map((slot) => {
+    const startBeat = snapHalfBeat(cursor);
+    const durationBeats = Math.max(0.5, snapHalfBeat(slot.durationBeats));
+    cursor = snapHalfBeat(startBeat + durationBeats);
+    return {
+      ...slot,
+      startBeat,
+      durationBeats,
+      anticipated: startBeat % 1 !== 0,
+    };
+  });
+}
+
+/**
+ * Sets `slots[targetIndex]`'s start beat (`targetIndex >= 1`) directly to a 0.5-beat aligned position,
+ * clamping adjacent slots to >= 0.5 beats and updating `anticipated`.
+ */
+export function setChordBoundaryBeat(
+  slots: readonly ChordSlot[],
+  targetIndex: number,
+  newStartBeat: number
+): ChordSlot[] {
+  if (targetIndex < 1 || targetIndex >= slots.length) {
+    return cloneChordSlots(slots);
+  }
+  const snapped = snapHalfBeat(newStartBeat);
+  const deltaBeats = snapHalfBeat(snapped - slots[targetIndex].startBeat);
+  return shiftChordBoundary(slots, targetIndex, deltaBeats);
+}
+
+/**
+ * Inserts a new chord block immediately after `slots[targetIndex]` without changing total beats.
+ * Splits 2.0 beats off when `durationBeats >= 3.0`, or flexibly borrows 0.5..1.0 beats from neighbors.
+ */
+export function insertChordAfter(
+  slots: readonly ChordSlot[],
+  targetIndex: number,
+  defaultChord?: string
+): ChordSlot[] {
+  const next = cloneChordSlots(slots);
+  if (next.length === 0) return next;
+  const safeIdx = Math.max(0, Math.min(next.length - 1, targetIndex));
+  const target = next[safeIdx];
+  const chordName = (defaultChord ?? target.chord).trim() || target.chord;
+
+  let newDuration = 0;
+  if (target.durationBeats >= 3.0) {
+    target.durationBeats = snapHalfBeat(target.durationBeats - 2.0);
+    newDuration = 2.0;
+  } else {
+    const desired = 1.0;
+    if (target.durationBeats >= 1.5) {
+      target.durationBeats = snapHalfBeat(target.durationBeats - 1.0);
+      newDuration = 1.0;
+    } else if (target.durationBeats >= 1.0) {
+      target.durationBeats = snapHalfBeat(target.durationBeats - 0.5);
+      newDuration += 0.5;
+    }
+
+    // Borrow remaining beats (up to 1.0 total) from adjacent slots, then wider donors
+    const candidateIndices: number[] = [];
+    if (safeIdx + 1 < next.length) candidateIndices.push(safeIdx + 1);
+    if (safeIdx - 1 >= 0) candidateIndices.push(safeIdx - 1);
+    for (let i = 0; i < next.length; i++) {
+      if (i !== safeIdx && !candidateIndices.includes(i)) {
+        candidateIndices.push(i);
+      }
+    }
+
+    for (const donorIdx of candidateIndices) {
+      if (newDuration >= desired) break;
+      const donor = next[donorIdx];
+      const available = snapHalfBeat(donor.durationBeats - 0.5);
+      if (available >= 0.5) {
+        const take = Math.min(available, snapHalfBeat(desired - newDuration));
+        donor.durationBeats = snapHalfBeat(donor.durationBeats - take);
+        newDuration = snapHalfBeat(newDuration + take);
+      }
+    }
+  }
+
+  if (newDuration < 0.5) {
+    return cloneChordSlots(slots);
+  }
+
+  const insertedSlot: ChordSlot = {
+    id: createChordSlotId('slot'),
+    chord: chordName,
+    startBeat: 0,
+    durationBeats: newDuration,
+    anticipated: false,
+  };
+  next.splice(safeIdx + 1, 0, insertedSlot);
+  return recalculateTimelinePositions(next);
+}
+
+/**
+ * Removes `slots[targetIndex]` and merges its duration into the preceding slot
+ * (or following slot if `targetIndex === 0`). Disabled when only 1 slot remains.
+ */
+export function removeChordSlot(
+  slots: readonly ChordSlot[],
+  targetIndex: number
+): ChordSlot[] {
+  if (slots.length <= 1 || targetIndex < 0 || targetIndex >= slots.length) {
+    return cloneChordSlots(slots);
+  }
+  const next = cloneChordSlots(slots);
+  const [removed] = next.splice(targetIndex, 1);
+  const absorbIdx = targetIndex > 0 ? targetIndex - 1 : 0;
+  next[absorbIdx].durationBeats = snapHalfBeat(
+    next[absorbIdx].durationBeats + removed.durationBeats
+  );
+  return recalculateTimelinePositions(next);
+}
+
+/**
+ * Swaps the chord name at `targetIndex` with its neighbor (`-1` or `1`).
+ */
+export function swapChordOrder(
+  slots: readonly ChordSlot[],
+  targetIndex: number,
+  direction: -1 | 1
+): ChordSlot[] {
+  const next = cloneChordSlots(slots);
+  const neighborIdx = targetIndex + direction;
+  if (
+    targetIndex < 0 ||
+    targetIndex >= next.length ||
+    neighborIdx < 0 ||
+    neighborIdx >= next.length
+  ) {
+    return next;
+  }
+  const tempChord = next[targetIndex].chord;
+  next[targetIndex] = { ...next[targetIndex], chord: next[neighborIdx].chord };
+  next[neighborIdx] = { ...next[neighborIdx], chord: tempChord };
   return next;
 }
 

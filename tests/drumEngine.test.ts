@@ -463,4 +463,52 @@ describe('drumEngine', () => {
     );
     expect(collidingKicks).toEqual([]);
   });
+
+  it('keeps original drum beat & downbeat kick (1920 ticks) untouched on offbeat chords when drumAnticipationMode is keep', () => {
+    const song = createSong('');
+    song.members.drums.patternPreset = 'four_on_floor';
+    const shifted = shiftChordBoundary(createUniformChordTimeline(['Em', 'C'], 2), 1, -0.5);
+
+    const syncSec = createSection({
+      bars: 2,
+      energy: 'High',
+      drumAnticipationMode: 'sync',
+      chords: shifted,
+    });
+    const keepSec = createSection({
+      bars: 2,
+      energy: 'High',
+      drumAnticipationMode: 'keep',
+      chords: shifted,
+    });
+
+    const syncNotes = generateDrumNotes({
+      song,
+      section: syncSec,
+      sectionIndex: 0,
+      style: 'A',
+      seed: 1,
+      params: resolveInstrumentParams(song, syncSec, 'drums', 'A'),
+    });
+    const keepNotes = generateDrumNotes({
+      song,
+      section: keepSec,
+      sectionIndex: 0,
+      style: 'A',
+      seed: 1,
+      params: resolveInstrumentParams(song, keepSec, 'drums', 'A'),
+    });
+
+    // sync mode punches crash + kick at 1680 and clears 1920 downbeat kick
+    expect(syncNotes.some((n) => n.pitch === GM_DRUM.CRASH && n.startTick === 1680)).toBe(true);
+    expect(
+      syncNotes.some((n) => n.pitch === GM_DRUM.KICK && n.startTick > 1680 && n.startTick <= 1920)
+    ).toBe(false);
+
+    // keep mode preserves four_on_floor downbeat kick at 1920 and avoids forced crash/kick punch at 1680
+    expect(keepNotes.some((n) => n.pitch === GM_DRUM.CRASH && n.startTick === 1680)).toBe(false);
+    expect(
+      keepNotes.some((n) => n.pitch === GM_DRUM.KICK && Math.abs(n.startTick - 1920) <= 15)
+    ).toBe(true);
+  });
 });

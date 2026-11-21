@@ -75,6 +75,11 @@ export function generatePadNotes(input: EngineInput): MidiNote[] {
     );
 
     const intervalSet = new Set<number>();
+    const fifthIv = chord.intervals.includes(6)
+      ? 6
+      : chord.intervals.includes(8)
+        ? 8
+        : 7;
     const isPlainTriad =
       chord.intervals.length === 3 &&
       chord.intervals[0] === 0 &&
@@ -91,14 +96,14 @@ export function generatePadNotes(input: EngineInput): MidiNote[] {
         if (chord.quality !== 'power') intervalSet.add(12);
       } else if (padPreset === 'analog_warm_drift') {
         for (const iv of chord.intervals) intervalSet.add(iv);
-        intervalSet.add(10);
+        if (!intervalSet.has(9) && !intervalSet.has(11)) intervalSet.add(10);
       } else if (padPreset === 'strings_ensemble') {
         for (const iv of chord.intervals) {
           intervalSet.add(iv);
           intervalSet.add(iv + 12);
         }
-        intervalSet.add(7);
-        intervalSet.add(19);
+        intervalSet.add(fifthIv);
+        intervalSet.add(fifthIv + 12);
         intervalSet.add(24);
       } else if (padPreset === 'choir_open_voicing') {
         // Wide spread open voicing: low root, 5th + 12, 3rd + 24 (transparent wide spacing)
@@ -108,7 +113,7 @@ export function generatePadNotes(input: EngineInput): MidiNote[] {
             ? 4
             : 2;
         intervalSet.add(0);
-        intervalSet.add(19); // 5th an octave+fifth above root
+        intervalSet.add(fifthIv + 12); // 5th an octave+fifth above root
         intervalSet.add(third + 24); // 3rd two octaves above root
       } else if (padPreset === 'shimmer_arp_pad') {
         for (const iv of chord.intervals) intervalSet.add(iv);
@@ -119,25 +124,27 @@ export function generatePadNotes(input: EngineInput): MidiNote[] {
         intervalSet.add(14);
       } else if (padPreset === 'dark_cinematic') {
         intervalSet.add(0);
-        intervalSet.add(7);
+        intervalSet.add(fifthIv);
         if (chord.intervals.includes(3)) intervalSet.add(3);
         intervalSet.add(12);
       } else if (padPreset === 'floating_9th') {
         for (const iv of chord.intervals) intervalSet.add(iv);
-        intervalSet.add(2);
-        if (!intervalSet.has(10) && !intervalSet.has(11)) intervalSet.add(11);
+        if (!intervalSet.has(6)) intervalSet.add(2);
+        if (!intervalSet.has(9) && !intervalSet.has(10) && !intervalSet.has(11)) {
+          intervalSet.add(11);
+        }
         intervalSet.add(14);
         intervalSet.add(12);
       } else if (padPreset === 'fifth_drone') {
         intervalSet.add(0);
-        intervalSet.add(7);
+        intervalSet.add(fifthIv);
         intervalSet.add(12);
       } else if (padPreset === 'octave_layer') {
         for (const iv of chord.intervals) {
           intervalSet.add(iv);
           intervalSet.add(iv + 12);
         }
-        intervalSet.add(19);
+        intervalSet.add(fifthIv + 12);
       }
     } else if (playStyle === 'Dark Ambient') {
       for (const iv of chord.intervals) {
@@ -293,7 +300,7 @@ export function generatePadNotes(input: EngineInput): MidiNote[] {
     if (padPreset === 'shimmer_arp_pad') {
       const highShimmerPool = [
         rootMidi + 24,
-        rootMidi + 19,
+        rootMidi + fifthIv + 12,
         rootMidi + (chord.intervals.includes(3) ? 27 : 28),
         rootMidi + 26,
       ].filter((p) => p >= 64 && p <= 88);

@@ -366,4 +366,29 @@ describe('bassEngine', () => {
     expect((changeNote?.startTick ?? 0) + (changeNote?.durationTicks ?? 0)).toBeGreaterThan(1920);
     expect(notes.some((n) => n.startTick === 1920)).toBe(false);
   });
+
+  it('uses diminished fifth (b5) rather than natural fifth on dim / dim7 / m7b5 substitute chords', () => {
+    const song = createSong({ patternPreset: 'melodic_walk' });
+    song.key = 'C';
+    song.scale = 'Major';
+    const section = createSection({
+      bars: 2,
+      energy: 'Mid',
+      chords: createUniformChordTimeline(['F#dim7', 'Bm7b5'], 2),
+    });
+    const notes = generateBassNotes({
+      song,
+      section,
+      sectionIndex: 0,
+      style: 'A',
+      seed: 1,
+      params: resolveInstrumentParams(song, section, 'bass', 'A'),
+    });
+
+    // F#dim7 (F#=6): no natural 5th C#(1) should be forced on beat 3/4, only chord tones / approach
+    const bar0Pcs = new Set(notes.filter((n) => n.startTick < 1920).map((n) => n.pitch % 12));
+    expect(bar0Pcs.has(6)).toBe(true); // F# root
+    // Natural fifth of F# is C# (1) - should not appear as fifth on F#dim7 in melodic_walk
+    expect(bar0Pcs.has(1)).toBe(false);
+  });
 });

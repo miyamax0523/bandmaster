@@ -225,6 +225,7 @@ export function hydrateProject(stored: StoredBandProject): {
 
     const section: Section = {
       ...rawSec,
+      drumAnticipationMode: rawSec.drumAnticipationMode ?? 'sync',
       chords: restoredChords,
       hatDensity: rawSec.hatDensity ?? 3,
       kickDensity: rawSec.kickDensity ?? 3,

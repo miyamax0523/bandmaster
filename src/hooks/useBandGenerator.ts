@@ -20,6 +20,7 @@ import {
   toggleSectionRiffOctaveUpOn808,
   updateSectionBars,
   updateSectionChordTimeline,
+  updateSectionDrumAnticipationMode,
   updateSectionDrumDensity,
   updateSectionDrumLoop,
   updateSectionKeyboardDensity,
@@ -570,6 +571,19 @@ export function useBandGenerator() {
     [song, bandState, commitChange]
   );
 
+  const changeSectionDrumAnticipationMode = useCallback(
+    (sectionId: string, mode: 'sync' | 'keep') => {
+      const res = updateSectionDrumAnticipationMode(
+        song,
+        bandState,
+        sectionId,
+        mode
+      );
+      commitChange(res.song, res.bandState, true, true);
+    },
+    [song, bandState, commitChange]
+  );
+
   const copyTimelineToAllSections = useCallback(
     (sourceSectionId: string) => {
       const src = song.sections.find((s) => s.id === sourceSectionId);
@@ -641,6 +655,7 @@ export function useBandGenerator() {
     changeSectionKeyboardDensity,
     changeSectionPartPreset,
     changeSectionChordTimeline,
+    changeSectionDrumAnticipationMode,
     copyTimelineToAllSections,
     pastePartPhrase,
     loadSnapshotData,

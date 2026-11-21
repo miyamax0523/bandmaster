@@ -50,6 +50,7 @@ export function App() {
     changeSectionKeyboardDensity,
     changeSectionPartPreset,
     changeSectionChordTimeline,
+    changeSectionDrumAnticipationMode,
     copyTimelineToAllSections,
     pastePartPhrase,
     loadSnapshotData,
@@ -225,6 +226,7 @@ export function App() {
               onPastePartPhrase={pastePartPhrase}
               onChangeSectionPatternPreset={changeSectionPartPreset}
               onChangeSectionChordTimeline={changeSectionChordTimeline}
+              onChangeSectionDrumAnticipationMode={changeSectionDrumAnticipationMode}
               onCopyTimelineToAllSections={copyTimelineToAllSections}
               onToggleSectionPart={toggleSectionPart}
               onOpenVocalModal={(id) => setVocalModalSectionId(id)}

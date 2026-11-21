@@ -235,12 +235,14 @@ describe('storage', () => {
     song.key = 'C';
     song.scale = 'Major';
     song.sections[0].bars = 4;
+    song.sections[0].drumAnticipationMode = 'keep';
     song.sections[0].chords = shiftChordBoundary(
       createUniformChordTimeline(['Fmaj7', 'G6', 'Em7', 'Am9'], 4),
       1,
       -0.5
     );
     song.sections[1].bars = 8;
+    song.sections[1].drumAnticipationMode = 'sync';
     song.sections[1].chords = updateChordName(
       splitChordSlot(createUniformChordTimeline(['Dm7', 'G7', 'Cmaj7', 'A7'], 8), 0),
       1,
@@ -266,6 +268,8 @@ describe('storage', () => {
     expect(restored!.song.title).toBe('Restart Chord Check');
     expect(restored!.song.key).toBe('C');
     expect(restored!.song.scale).toBe('Major');
+    expect(restored!.song.sections[0].drumAnticipationMode).toBe('keep');
+    expect(restored!.song.sections[1].drumAnticipationMode).toBe('sync');
     expect(restored!.song.sections[0].chords.map((c) => c.chord)).toEqual([
       'Fmaj7',
       'G6',
@@ -281,21 +285,32 @@ describe('storage', () => {
       'G7',
       'Cmaj7',
       'A7',
+      'Dm7',
+      'G7',
+      'Cmaj7',
+      'A7',
     ]);
     expect(restored!.song.sections[1].bars).toBe(8);
-    expect(restored!.song.sections[2].chords.map((c) => c.chord)).toEqual(['F#m7-5', 'Fm6', 'C/G']);
+    expect(restored!.song.sections[2].chords.map((c) => c.chord)).toEqual([
+      'F#m7-5',
+      'Fm6',
+      'C/G',
+      'F#m7-5',
+    ]);
     expect(restored!.song.sections[3].chords).toEqual([]);
     expect(restored!.bandState.cellsBySection[song.sections[0].id].keyboard.locked).toBe(true);
     expect(restored!.bandState.cellsBySection[song.sections[0].id].keyboard.takes.A).toEqual(
       lockedNotesBeforeRestart
     );
 
-    // Verify legacy chordProgression string field & legacy string[] chords migration in hydrateProject
+    // Verify legacy chordProgression string field, legacy string[] chords, and legacy undefined drumAnticipationMode migration
     const legacySerialized = JSON.parse(JSON.stringify(serializeProject(song, state)));
     delete legacySerialized.song.sections[0].chords;
+    delete legacySerialized.song.sections[0].drumAnticipationMode;
     legacySerialized.song.sections[0].chordProgression = 'Cmaj9, A7sus4, Dm9, G13';
     legacySerialized.song.sections[1].chords = ['Dm7', 'G7'];
     const migrated = hydrateProject(legacySerialized);
+    expect(migrated.song.sections[0].drumAnticipationMode).toBe('sync');
     expect(migrated.song.sections[0].chords.map((c) => c.chord)).toEqual([
       'Cmaj9',
       'A7sus4',
@@ -304,6 +319,15 @@ describe('storage', () => {
     ]);
     expect(migrated.song.sections[0].chords[0].startBeat).toBe(0);
     expect(migrated.song.sections[0].chords[1].startBeat).toBe(4);
-    expect(migrated.song.sections[1].chords.map((c) => c.chord)).toEqual(['Dm7', 'G7']);
+    expect(migrated.song.sections[1].chords.map((c) => c.chord)).toEqual([
+      'Dm7',
+      'G7',
+      'Dm7',
+      'G7',
+      'Dm7',
+      'G7',
+      'Dm7',
+      'G7',
+    ]);
   });
 });

@@ -4,11 +4,15 @@ import {
   createUniformChordTimeline,
   describeChordRhythm,
   getActiveChordAtTick,
+  insertChordAfter,
   mergeChordWithPrev,
   normalizeSectionChords,
+  removeChordSlot,
   resizeTimelineToBars,
+  setChordBoundaryBeat,
   shiftChordBoundary,
   splitChordSlot,
+  swapChordOrder,
   updateChordName,
 } from '../src/lib/chordTimeline';
 import { TICKS_PER_BEAT } from '../src/types/song';
@@ -121,5 +125,69 @@ describe('chordTimeline', () => {
     expect(randomPick.reduce((sum, s) => sum + s.durationBeats, 0)).toBe(16);
     expect(randomPick.every((s) => s.durationBeats >= 0.5)).toBe(true);
     expect(describeChordRhythm(randomPick, 4).modeId).not.toBe('even');
+  });
+
+  it('expands short progressions to 4-beat-per-bar looped slots on 8-bar sections and supports insert/remove/swap/slide boundary moves', () => {
+    // 8 bars (32 beats) with 4 chords -> 8 slots x 4 beats each (2 loops), not 4 x 8 beats
+    const eightBarSlots = createUniformChordTimeline(['Em', 'C', 'G', 'D'], 8);
+    expect(eightBarSlots.length).toBe(8);
+    expect(eightBarSlots.map((s) => s.chord)).toEqual([
+      'Em',
+      'C',
+      'G',
+      'D',
+      'Em',
+      'C',
+      'G',
+      'D',
+    ]);
+    expect(eightBarSlots.every((s) => s.durationBeats === 4)).toBe(true);
+
+    // insertChordAfter on >= 3.0 beat slot splits off 2.0 beats cleanly
+    const twoBar = createUniformChordTimeline(['Am', 'F'], 2); // 0..4, 4..8
+    const insertedFrom4 = insertChordAfter(twoBar, 0, 'G');
+    expect(insertedFrom4.map((s) => [s.chord, s.startBeat, s.durationBeats])).toEqual([
+      ['Am', 0, 2],
+      ['G', 2, 2],
+      ['F', 4, 4],
+    ]);
+
+    // insertChordAfter on <= 2.5 beat slot borrows from neighbor keeping total = 8 & min >= 0.5
+    const tight = insertChordAfter(insertedFrom4, 0, 'Dm');
+    expect(tight.length).toBe(4);
+    expect(tight.reduce((sum, s) => sum + s.durationBeats, 0)).toBe(8);
+    expect(tight.every((s) => s.durationBeats >= 0.5)).toBe(true);
+
+    // removeChordSlot merges duration into previous (or next when removing index 0)
+    const removedMid = removeChordSlot(insertedFrom4, 1);
+    expect(removedMid.map((s) => [s.chord, s.startBeat, s.durationBeats])).toEqual([
+      ['Am', 0, 4],
+      ['F', 4, 4],
+    ]);
+    const removedHead = removeChordSlot(insertedFrom4, 0);
+    expect(removedHead.map((s) => [s.chord, s.startBeat, s.durationBeats])).toEqual([
+      ['G', 0, 4],
+      ['F', 4, 4],
+    ]);
+    // 1-slot timeline cannot be deleted
+    const single = createUniformChordTimeline(['C'], 1);
+    expect(removeChordSlot(single, 0).length).toBe(1);
+
+    // swapChordOrder swaps chord names with adjacent neighbor
+    const swapped = swapChordOrder(insertedFrom4, 0, 1);
+    expect(swapped.map((s) => s.chord)).toEqual(['G', 'Am', 'F']);
+
+    // setChordBoundaryBeat sets direct 0.5-beat aligned drag target, clamps >= 0.5 & updates anticipated
+    const slid = setChordBoundaryBeat(twoBar, 1, 2.5);
+    expect(slid[0].durationBeats).toBe(2.5);
+    expect(slid[1].startBeat).toBe(2.5);
+    expect(slid[1].durationBeats).toBe(5.5);
+    expect(slid[1].anticipated).toBe(true);
+
+    const slidClamp = setChordBoundaryBeat(twoBar, 1, 0);
+    expect(slidClamp[0].durationBeats).toBe(0.5);
+    expect(slidClamp[1].startBeat).toBe(0.5);
+    expect(slidClamp[1].durationBeats).toBe(7.5);
+    expect(slidClamp[1].anticipated).toBe(true);
   });
 });
