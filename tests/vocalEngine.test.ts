@@ -452,4 +452,145 @@ describe('vocalEngine', () => {
     const oct = generateVocalHarmonyNotes(melody, 'C', 'Major', 'octave_up');
     expect(oct.map((n) => n.pitch)).toEqual([76, 79, 88]); // capped at 88
   });
+
+  it('produces predominantly stepwise arch contours without extreme zigzag jumps across melody presets', () => {
+    const scalePcs = new Set(getScalePitchClasses('E', 'Minor'));
+    const fullScaleGrid: number[] = [];
+    for (let p = VOCAL_MIN_PITCH; p <= VOCAL_MAX_PITCH; p++) {
+      if (scalePcs.has(p % 12)) fullScaleGrid.push(p);
+    }
+
+    const melodyPresets = [
+      'melody_pop',
+      'melody_soar_long',
+      'melody_syncopated_hook',
+      'melody_ballad',
+      'melody_alt_minor',
+      'melody_alt_soar',
+      'melody_grunge_drag',
+      'melody_britpop_catchy',
+      'melody_metalcore_chorus',
+      'melody_emo_screamo',
+    ];
+
+    for (const preset of melodyPresets) {
+      const song = createDefaultSongConfig('rockBand');
+      song.members.vocal.patternPreset = preset;
+      const section = createSection({
+        bars: 4,
+        vocalDensity: 3,
+        chords: ['Em', 'C', 'G', 'D'],
+      });
+      const notes = generateVocalNotes({
+        song,
+        section,
+        sectionIndex: 0,
+        style: 'A',
+        seed: 2026,
+        params: resolveInstrumentParams(song, section, 'vocal', 'A'),
+      });
+
+      let stepwiseCount = 0;
+      let totalTransitions = 0;
+      const stepDiffs: number[] = [];
+      for (let i = 1; i < notes.length; i++) {
+        const prevIdx = fullScaleGrid.indexOf(notes[i - 1].pitch);
+        const currIdx = fullScaleGrid.indexOf(notes[i].pitch);
+        const diff = currIdx - prevIdx;
+        stepDiffs.push(diff);
+        totalTransitions++;
+        if (Math.abs(diff) <= 2) {
+          stepwiseCount++;
+        }
+      }
+
+      // Majority (> 50%) of intervals must be smooth stepwise (<= 2 scale steps)
+      expect(stepwiseCount).toBeGreaterThan(totalTransitions * 0.5);
+
+      // No consecutive extreme reverse zigzag leaps (>= +3 immediately followed by <= -3 or vice versa)
+      for (let i = 1; i < stepDiffs.length; i++) {
+        const extremeZigzag =
+          (stepDiffs[i - 1] >= 3 && stepDiffs[i] <= -3) ||
+          (stepDiffs[i - 1] <= -3 && stepDiffs[i] >= 3);
+        expect(extremeZigzag).toBe(false);
+      }
+    }
+  });
+
+  it('includes inter-phrase breath rests and >= 960-tick sustained long tones with A->A\' motif repetition over 4 bars', () => {
+    const sustainedMelodyPresets = [
+      'melody_pop',
+      'melody_soar_long',
+      'melody_syncopated_hook',
+      'melody_ballad',
+      'melody_alt_soar',
+      'melody_grunge_drag',
+      'melody_britpop_catchy',
+      'melody_metalcore_chorus',
+      'melody_emo_screamo',
+    ];
+
+    for (const preset of sustainedMelodyPresets) {
+      const song = createDefaultSongConfig('rockBand');
+      song.members.vocal.patternPreset = preset;
+      const section = createSection({
+        bars: 4,
+        vocalDensity: 3,
+        chords: ['Em', 'C', 'G', 'D'],
+      });
+      const notes = generateVocalNotes({
+        song,
+        section,
+        sectionIndex: 0,
+        style: 'A',
+        seed: 99,
+        params: resolveInstrumentParams(song, section, 'vocal', 'A'),
+      });
+
+      // Has sustained long tone (>= 960 ticks)
+      expect(notes.some((n) => n.durationTicks >= 960)).toBe(true);
+
+      // Has breath rest gap (>= 240 ticks) between notes or before barline phrase break
+      let hasBreathRest = false;
+      for (let i = 0; i + 1 < notes.length; i++) {
+        const gap = notes[i + 1].startTick - (notes[i].startTick + notes[i].durationTicks);
+        if (gap >= 240) {
+          hasBreathRest = true;
+          break;
+        }
+      }
+      expect(hasBreathRest).toBe(true);
+    }
+
+    // Check A -> A' rhythm skeleton inheritance between bar 0 and bar 2
+    const popSong = createDefaultSongConfig('rockBand');
+    popSong.members.vocal.patternPreset = 'melody_pop';
+    const popSec = createSection({ bars: 4, vocalDensity: 3, chords: ['Em', 'C', 'G', 'D'] });
+    const popNotes = generateVocalNotes({
+      song: popSong,
+      section: popSec,
+      sectionIndex: 0,
+      style: 'A',
+      seed: 42,
+      params: resolveInstrumentParams(popSong, popSec, 'vocal', 'A'),
+    });
+    const bar0Onsets = popNotes
+      .filter((n) => n.startTick < TICKS_PER_BAR)
+      .map((n) => n.startTick);
+    const bar2Onsets = popNotes
+      .filter((n) => n.startTick >= 2 * TICKS_PER_BAR && n.startTick < 3 * TICKS_PER_BAR)
+      .map((n) => n.startTick - 2 * TICKS_PER_BAR);
+    expect(bar2Onsets).toEqual(bar0Onsets);
+  });
+
+  it('keeps all preset labels concise (<= 20 chars) and assigned a group across all instruments', () => {
+    for (const groups of Object.values(PATTERN_PRESET_GROUPS)) {
+      for (const grp of groups) {
+        for (const opt of grp.options) {
+          expect(opt.group).toBe(grp.category);
+          expect(opt.label.length).toBeLessThanOrEqual(20);
+        }
+      }
+    }
+  });
 });

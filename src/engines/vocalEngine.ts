@@ -610,12 +610,16 @@ export function generateVocalNotes(input: EngineInput): MidiNote[] {
             channel: TRACK_CHANNELS.vocal,
           });
         }
-        // Sustained melodic sing tail starting at beat 3
+        // Sustained melodic sing tail starting at beat 3 with arch expression & breath space
+        const singPitch = bar % 2 === 1 ? rapFifth : rapThird;
+        const singVel = clampVelocity(
+          bar % 2 === 1 ? Math.min(110, baseVel + 8) : Math.max(76, baseVel - 4)
+        );
         notes.push({
-          pitch: bar % 2 === 1 ? rapFifth : rapThird,
-          velocity: clampVelocity(baseVel + 8),
+          pitch: singPitch,
+          velocity: singVel,
           startTick: barStart + 960,
-          durationTicks: isPhraseEndBar ? 840 : 760,
+          durationTicks: isPhraseEndBar ? 720 : 840,
           channel: TRACK_CHANNELS.vocal,
         });
       } else if (preset === 'rap_cinematic_burst') {
@@ -708,11 +712,53 @@ export function generateVocalNotes(input: EngineInput): MidiNote[] {
     return enforceMonophonicAndClip(notes, sectionEnd);
   }
 
-  // Melody presets (strict scale conformance + chord tone landing + smooth continuity)
+  // Melody presets (Melodic Soul: A->A' 2-bar motif, stepwise arch + 1 climax leap, breath rests, velocity curve)
   const pentOffsets =
     song.scale === 'Major' ? [0, 2, 4, 7, 9] : [0, 3, 5, 7, 10];
   const pentPcs = new Set(pentOffsets.map((o) => (keySemitone + o) % 12));
   const pentGrid = buildScaleGrid(pentPcs, bandMin, bandMax);
+  const fullSoulGrid = buildScaleGrid(scalePcs, bandMin, bandMax);
+  const soulGridBase =
+    preset === 'melody_alt_minor' || preset === 'melody_britpop_catchy'
+      ? pentGrid.length >= 4
+        ? pentGrid
+        : fullSoulGrid
+      : fullSoulGrid.length > 0
+        ? fullSoulGrid
+        : scaleNotes;
+  const soulGrid =
+    soulGridBase.length > 0
+      ? soulGridBase
+      : [nearestScalePitch(60, scalePcs, VOCAL_MIN_PITCH, VOCAL_MAX_PITCH)];
+
+  const findGridIdx = (targetPitch: number): number => {
+    let bestIdx = 0;
+    let bestDist = Infinity;
+    for (let i = 0; i < soulGrid.length; i++) {
+      const d = Math.abs(soulGrid[i] - targetPitch);
+      if (d < bestDist) {
+        bestDist = d;
+        bestIdx = i;
+      }
+    }
+    return bestIdx;
+  };
+
+  const velocityArc = (
+    gridIdx: number,
+    isPeak: boolean,
+    isBreathTail: boolean
+  ): number => {
+    const ratio =
+      soulGrid.length <= 1 ? 0.5 : gridIdx / Math.max(1, soulGrid.length - 1);
+    if (isBreathTail) {
+      return clampVelocity(Math.round(74 + ratio * 10)); // 74..84 gentle release before breath
+    }
+    if (isPeak) {
+      return clampVelocity(Math.round(94 + ratio * 18)); // 94..112 emotional peak
+    }
+    return clampVelocity(Math.round(86 + ratio * 20)); // 86..106 expressive arch body
+  };
 
   const initialAnchor = fitPitchClassToRange(
     keySemitone,
@@ -721,43 +767,12 @@ export function generateVocalNotes(input: EngineInput): MidiNote[] {
   );
   let prevPitch = nearestScalePitch(initialAnchor, scalePcs, bandMin, bandMax);
 
-  for (let bar = 0; bar < section.bars; bar++) {
-    const barStart = bar * TICKS_PER_BAR;
-    const chord = resolveChordForBar(
-      section.chords,
-      bar,
-      song.key,
-      song.scale
-    );
-    const chordTones = getScaleChordTones(chord, scalePcs, bandMin, bandMax);
-    const barRoot = nearestScalePitch(
-      fitPitchClassToRange(chord.rootSemitone, bandMin, Math.min(bandMin + 9, bandMax)),
-      scalePcs,
-      bandMin,
-      bandMax
-    );
-    const isPhraseEnd = bar % 2 === 1 || bar === section.bars - 1;
-
-    const chooseMelodyPitch = (isStrongBeat: boolean, isEndNote: boolean): number => {
-      if (isEndNote) {
-        return pickClosestFromList(prevPitch, chordTones);
-      }
-      if (isStrongBeat || rng.chance(0.65)) {
-        // Land smoothly on chord tone within <= 5 semitones if possible
-        const closeChordTones = chordTones.filter(
-          (p) => Math.abs(p - prevPitch) <= 5
-        );
-        if (closeChordTones.length > 0) {
-          return rng.pick(closeChordTones);
-        }
-        return pickClosestFromList(prevPitch, chordTones);
-      }
-      const step = rng.pick([-2, -1, 1, 2]);
-      return nearestScalePitch(prevPitch + step, scalePcs, bandMin, bandMax);
-    };
-
-    // 0. jrock_anticipation: beat 4-and (1680) anticipation into next chord & tie across barline
-    if (preset === 'jrock_anticipation') {
+  // Special mode: jrock_anticipation retains explicit barline-tie syncopation across all 5 parts
+  if (preset === 'jrock_anticipation') {
+    for (let bar = 0; bar < section.bars; bar++) {
+      const barStart = bar * TICKS_PER_BAR;
+      const chord = resolveChordForBar(section.chords, bar, song.key, song.scale);
+      const chordTones = getScaleChordTones(chord, scalePcs, bandMin, bandMax);
       const bodyOffsets =
         bar === 0
           ? vocalDensity <= 2
@@ -771,20 +786,26 @@ export function generateVocalNotes(input: EngineInput): MidiNote[] {
               ? [480, 720, 960, 1200, 1440]
               : [480, 960, 1200];
 
+      let currIdx = findGridIdx(prevPitch);
       for (let i = 0; i < bodyOffsets.length; i++) {
         const off = bodyOffsets[i];
-        const pitch = chooseMelodyPitch(off % 480 === 0, false);
+        const step = i === 0 ? 0 : rng.pick([0, 1, 1, -1]);
+        currIdx = Math.max(0, Math.min(soulGrid.length - 1, currIdx + step));
+        const pitch =
+          off === 0
+            ? pickClosestFromList(soulGrid[currIdx], chordTones)
+            : soulGrid[currIdx];
+        currIdx = findGridIdx(pitch);
         prevPitch = pitch;
         notes.push({
           pitch,
-          velocity: clampVelocity(baseVel + (off === 0 ? 6 : 0) + rng.nextInt(-3, 3)),
+          velocity: velocityArc(currIdx, false, false),
           startTick: barStart + off,
           durationTicks: vocalDensity >= 4 ? 200 : 380,
           channel: TRACK_CHANNELS.vocal,
         });
       }
 
-      // Anticipate next chord's chord tone (strictly inside Key/Scale) at barStart + 1680 and tie across barline
       const antTick = barStart + 1680;
       if (antTick < sectionEnd) {
         const nextChord = resolveChordForBar(
@@ -793,35 +814,91 @@ export function generateVocalNotes(input: EngineInput): MidiNote[] {
           song.key,
           song.scale
         );
-        const nextChordTones = getScaleChordTones(nextChord, scalePcs, bandMin, bandMax);
+        const nextChordTones = getScaleChordTones(
+          nextChord,
+          scalePcs,
+          bandMin,
+          bandMax
+        );
         const antPitch = pickClosestFromList(prevPitch + 2, nextChordTones);
+        const antIdx = findGridIdx(antPitch);
         prevPitch = antPitch;
         notes.push({
           pitch: antPitch,
-          velocity: clampVelocity(baseVel + 8),
+          velocity: velocityArc(antIdx, true, false),
           startTick: antTick,
           durationTicks: 700,
           channel: TRACK_CHANNELS.vocal,
         });
       }
-      continue;
     }
+    return enforceMonophonicAndClip(notes, sectionEnd);
+  }
 
-    // 1. melody_call_response: 4-bar cycle -> bars 0..1 sing, bars 2..3 sparse/rest
+  // Melodic Soul 2-bar (A -> A') motif state
+  let motifAOnsets: number[] | null = null;
+  let motifAStepDeltas: number[] | null = null;
+  let currIdx = findGridIdx(prevPitch);
+
+  const selectFrontOnsets = (): number[] => {
+    if (vocalDensity === 1) return [0, 960];
+    if (vocalDensity === 2) return [0, 480, 960, 1440];
+    if (vocalDensity === 4) {
+      if (preset === 'melody_syncopated_hook') {
+        return [0, 120, 360, 600, 840, 960, 1200, 1560];
+      }
+      return [0, 240, 360, 480, 720, 960, 1200, 1440];
+    }
+    if (vocalDensity === 5) {
+      return [0, 120, 240, 360, 480, 600, 720, 840, 960, 1080, 1200, 1320, 1440, 1560];
+    }
+    // vocalDensity === 3
+    if (preset === 'melody_ballad' || (preset === 'auto' && section.energy === 'Low')) {
+      return [0, 480, 960];
+    }
+    if (preset === 'melody_emo_screamo') {
+      return [0, 480, 960];
+    }
+    if (preset === 'melody_syncopated_hook') {
+      return [0, 360, 720, 1200, 1560];
+    }
+    if (preset === 'melody_grunge_drag') {
+      return [0, 270, 510, 990, 1470];
+    }
+    if (preset === 'melody_staccato_rock') {
+      return [0, 240, 480, 960, 1200, 1440];
+    }
+    if (style === 'B') {
+      return [0, 480, 720, 960, 1200];
+    }
+    return [0, 240, 480, 720, 960, 1200];
+  };
+
+  for (let bar = 0; bar < section.bars; bar++) {
+    const barStart = bar * TICKS_PER_BAR;
+    const chord = resolveChordForBar(section.chords, bar, song.key, song.scale);
+    const chordTones = getScaleChordTones(chord, scalePcs, bandMin, bandMax);
+    const barRoot = nearestScalePitch(
+      fitPitchClassToRange(chord.rootSemitone, bandMin, Math.min(bandMin + 9, bandMax)),
+      scalePcs,
+      bandMin,
+      bandMax
+    );
+    const barRootIdx = findGridIdx(barRoot);
+
+    // Preserve 4-bar call & response breathing structure
     if (preset === 'melody_call_response') {
       const cyclePos = bar % 4;
       if (cyclePos === 3) {
-        // Last bar of response stays completely open rest (instrument space)
         continue;
       }
       if (cyclePos === 2) {
-        // Bar 3: subtle 1-note resolving echo only at beat 1 (if density >= 3)
         if (vocalDensity >= 3) {
-          const pitch = pickClosestFromList(prevPitch, chordTones);
-          prevPitch = pitch;
+          const echoPitch = pickClosestFromList(soulGrid[currIdx], chordTones);
+          currIdx = findGridIdx(echoPitch);
           notes.push({
-            pitch,
-            velocity: clampVelocity(baseVel - 12),
+            pitch: echoPitch,
+            velocity: velocityArc(currIdx, false, true),
             startTick: barStart,
             durationTicks: 480,
             channel: TRACK_CHANNELS.vocal,
@@ -831,458 +908,236 @@ export function generateVocalNotes(input: EngineInput): MidiNote[] {
       }
     }
 
-    // 2. melody_soar_long: Sustained whole/dotted-half long tones on bars 2 & 4 (gate >= 95%)
-    if (preset === 'melody_soar_long') {
-      if (isPhraseEnd || section.bars === 1) {
-        const pitch = pickClosestFromList(prevPitch + 2, chordTones);
-        prevPitch = pitch;
-        if (vocalDensity >= 4 && section.bars > 1) {
-          const leadPitch = nearestScalePitch(pitch - 2, scalePcs, bandMin, bandMax);
-          notes.push({
-            pitch: leadPitch,
-            velocity: clampVelocity(baseVel - 4),
-            startTick: barStart,
-            durationTicks: 440,
-            channel: TRACK_CHANNELS.vocal,
-          });
-          notes.push({
-            pitch,
-            velocity: clampVelocity(baseVel + 6),
-            startTick: barStart + 480,
-            durationTicks: 1400, // ~97% of remaining 1440 ticks
-            channel: TRACK_CHANNELS.vocal,
-          });
-        } else {
-          notes.push({
-            pitch,
-            velocity: clampVelocity(baseVel + 6),
-            startTick: barStart,
-            durationTicks: 1860, // ~97% of 1920 ticks
-            channel: TRACK_CHANNELS.vocal,
-          });
-        }
-        continue;
-      }
-    }
+    const phraseIndex = Math.floor(bar / 2);
+    const isPhraseAPrime = phraseIndex % 2 === 1;
+    const isPhraseFrontBar = bar % 2 === 0 && section.bars > 1;
 
-    // 3. melody_staccato_rock: Short crisp rock articulation (40-55% gate) + rests
-    if (preset === 'melody_staccato_rock') {
-      const steps =
-        vocalDensity === 1
-          ? [0, 960]
-          : vocalDensity === 2
-            ? [0, 480, 960]
-            : vocalDensity >= 4
-              ? [0, 240, 480, 600, 720, 960, 1200, 1440, 1560]
-              : [0, 240, 480, 960, 1200, 1440];
-      for (let i = 0; i < steps.length; i++) {
-        const off = steps[i];
-        if (vocalDensity <= 3 && isPhraseEnd && off >= 1440) continue;
-        const pitch = chooseMelodyPitch(off % 480 === 0, i === steps.length - 1);
-        prevPitch = pitch;
-        // Calculate grid step toward next hit (240 or 480) and apply ~45% gate time (40..55%)
-        const nextOff = i + 1 < steps.length ? steps[i + 1] : TICKS_PER_BAR;
-        const stepSpan = Math.min(480, Math.max(120, nextOff - off));
-        const staccatoDur = Math.max(55, Math.round(stepSpan * 0.46));
+    if (isPhraseFrontBar) {
+      // Bar 0 (Motif A) or Bar 2 (Motif A' inheriting A's rhythm skeleton)
+      const onsets: number[] =
+        isPhraseAPrime && motifAOnsets ? [...motifAOnsets] : selectFrontOnsets();
+      const deltas: number[] = [];
+
+      // Start smoothly on chord tone within <= 2 scale steps of current position
+      const startChordPitch = pickClosestFromList(barRoot, chordTones);
+      const startChordIdx = findGridIdx(startChordPitch);
+      if (bar === 0) {
+        currIdx =
+          preset === 'melody_grunge_drag'
+            ? Math.min(soulGrid.length - 1, startChordIdx + 2)
+            : startChordIdx;
+      } else {
+        const diff = startChordIdx - currIdx;
+        const clampedStep = Math.max(-2, Math.min(2, diff));
+        currIdx = Math.max(0, Math.min(soulGrid.length - 1, currIdx + clampedStep));
+      }
+
+      for (let i = 0; i < onsets.length; i++) {
+        const off = onsets[i];
+        let delta: number;
+        if (i === 0) {
+          delta = 0;
+        } else if (isPhraseAPrime && motifAStepDeltas && i < motifAStepDeltas.length) {
+          // Inherit motif A's stepwise contour with mild upper lift in A'
+          delta = motifAStepDeltas[i];
+          if (i === onsets.length - 1 && delta <= 0) {
+            delta = 1;
+          }
+        } else if (preset === 'melody_grunge_drag') {
+          delta = i % 3 === 0 ? 1 : -1;
+        } else if (preset === 'melody_emo_screamo') {
+          delta = i % 2 === 1 ? 1 : 0; // Calm subdued opening bar
+        } else if (preset === 'melody_britpop_catchy') {
+          delta = i % 3 === 0 ? -1 : 1;
+        } else {
+          // Arch rise: predominantly 0 or +1/+2 stepwise, gentle step-down only when near ceiling
+          const nearTop = currIdx >= soulGrid.length - 2;
+          delta = nearTop ? -1 : rng.pick([1, 1, 0, 2, -1]);
+        }
+
+        // Strict anti-zigzag guard: never exceed ±2 steps in phrase front
+        delta = Math.max(-2, Math.min(2, delta));
+        deltas.push(delta);
+
+        currIdx = Math.max(0, Math.min(soulGrid.length - 1, currIdx + delta));
+        const pitch = soulGrid[currIdx];
+        const nextOff = i + 1 < onsets.length ? onsets[i + 1] : TICKS_PER_BAR;
+        const rawGap = Math.max(100, nextOff - off);
+
+        let dur: number;
+        if (preset === 'melody_staccato_rock') {
+          dur = Math.max(55, Math.min(220, Math.round(rawGap * 0.46)));
+        } else if (vocalDensity === 1) {
+          dur = Math.min(900, rawGap - 40);
+        } else if (vocalDensity === 2) {
+          dur = Math.min(440, rawGap - 30);
+        } else if (vocalDensity >= 5) {
+          dur = Math.min(110, rawGap - 10);
+        } else {
+          dur = Math.max(100, Math.min(rawGap - 20, i === onsets.length - 1 ? 420 : rawGap - 20));
+        }
+
+        const isLastSingleBar = section.bars === 1 && i === onsets.length - 1;
         notes.push({
           pitch,
-          velocity: clampVelocity(baseVel + (off % 480 === 0 ? 8 : 0) + rng.nextInt(-3, 4)),
-          startTick: barStart + off,
-          durationTicks: staccatoDur,
-          channel: TRACK_CHANNELS.vocal,
-        });
-      }
-      continue;
-    }
-
-    if (preset === 'melody_alt_soar') {
-      const highOctRoot = nearestScalePitch(
-        barRoot + 12,
-        scalePcs,
-        bandMin,
-        Math.min(VOCAL_MAX_PITCH, Math.max(bandMax, bandMin + 12))
-      );
-      const soarSteps =
-        vocalDensity === 1
-          ? [
-              { off: 0, dur: 900, high: false },
-              { off: 960, dur: 880, high: true },
-            ]
-          : vocalDensity === 2
-            ? [
-                { off: 0, dur: 440, high: false },
-                { off: 480, dur: 440, high: false },
-                { off: 960, dur: 880, high: true },
-              ]
-            : vocalDensity === 3
-              ? [
-                  { off: 0, dur: 420, high: false },
-                  { off: 480, dur: 220, high: false },
-                  { off: 720, dur: 220, high: true },
-                  { off: 960, dur: 840, high: true },
-                ]
-              : [
-                  { off: 0, dur: 220, high: false },
-                  { off: 240, dur: 220, high: false },
-                  { off: 480, dur: 220, high: true },
-                  { off: 720, dur: 220, high: true },
-                  { off: 960, dur: 420, high: true },
-                  { off: 1440, dur: 400, high: true },
-                ];
-      for (const slot of soarSteps) {
-        const pitch = slot.high
-          ? pickClosestFromList(highOctRoot, chordTones.length > 0 ? [...chordTones, highOctRoot] : [highOctRoot])
-          : barRoot;
-        const safePitch = nearestScalePitch(pitch, scalePcs, VOCAL_MIN_PITCH, VOCAL_MAX_PITCH);
-        prevPitch = nearestScalePitch(safePitch, scalePcs, bandMin, bandMax);
-        notes.push({
-          pitch: safePitch,
-          velocity: clampVelocity(baseVel + (slot.high ? 10 : -2) + rng.nextInt(-3, 3)),
-          startTick: barStart + slot.off,
-          durationTicks: slot.dur,
-          channel: TRACK_CHANNELS.vocal,
-        });
-      }
-      continue;
-    }
-
-    if (preset === 'melody_grunge_drag') {
-      const dragOffsets =
-        vocalDensity === 1
-          ? [0, 990]
-          : vocalDensity === 2
-            ? [0, 510, 990]
-            : vocalDensity === 3
-              ? [0, 270, 510, 990, 1470]
-              : [0, 270, 510, 750, 990, 1230, 1470];
-      let walkPitch = nearestScalePitch(
-        barRoot + 5,
-        scalePcs,
-        bandMin,
-        bandMax
-      );
-      for (let i = 0; i < dragOffsets.length; i++) {
-        const off = dragOffsets[i];
-        const idx = scaleNotes.indexOf(nearestScalePitch(walkPitch, scalePcs, 52, 72));
-        const descIdx = Math.max(0, (idx >= 0 ? idx : 4) - (i === 0 ? 0 : 1));
-        walkPitch = nearestScalePitch(scaleNotes[descIdx] ?? barRoot, scalePcs, bandMin, bandMax);
-        prevPitch = walkPitch;
-        const nextOff = i + 1 < dragOffsets.length ? dragOffsets[i + 1] : TICKS_PER_BAR;
-        const dur = Math.max(120, Math.min(460, nextOff - off - 20));
-        notes.push({
-          pitch: walkPitch,
-          velocity: clampVelocity(baseVel - 4 + (off === 0 ? 6 : 0) + rng.nextInt(-4, 3)),
+          velocity: velocityArc(
+            currIdx,
+            preset !== 'melody_emo_screamo' && i === onsets.length - 1 && vocalDensity >= 3,
+            preset === 'melody_emo_screamo' || isLastSingleBar
+          ),
           startTick: barStart + off,
           durationTicks: dur,
           channel: TRACK_CHANNELS.vocal,
         });
       }
+
+      if (!isPhraseAPrime) {
+        motifAOnsets = onsets;
+        motifAStepDeltas = deltas;
+      }
+      prevPitch = soulGrid[currIdx];
       continue;
     }
 
-    if (preset === 'melody_britpop_catchy') {
-      const grid = pentGrid.length > 0 ? pentGrid : scaleNotes;
-      const hookOffsets =
+    // Phrase Tail / Climax Bar (bar 1, bar 3, ... OR single-bar fallback)
+    // 1. Staccato Rock: crisp articulation + 1 climax leap + 480-tick breath rest at beat 4
+    if (preset === 'melody_staccato_rock') {
+      const tailSteps =
         vocalDensity === 1
           ? [0, 960]
           : vocalDensity === 2
-            ? [0, 480, 960, 1440]
-            : vocalDensity === 3
-              ? [0, 240, 480, 720, 960, 1200, 1440]
-              : vocalDensity === 4
-                ? [0, 240, 480, 720, 960, 1080, 1200, 1440, 1680]
-                : [0, 120, 240, 480, 600, 720, 960, 1080, 1200, 1440, 1680];
-      const baseIdx = Math.max(
-        0,
-        grid.reduce(
-          (bestIdx, p, idx) =>
-            Math.abs(p - barRoot) < Math.abs(grid[bestIdx] - barRoot) ? idx : bestIdx,
-          0
-        )
-      );
-      const contour = [0, 2, 1, 3, 2, 1, 0, 2, 4, 2, 0];
-      for (let i = 0; i < hookOffsets.length; i++) {
-        const off = hookOffsets[i];
-        const stepOffset = contour[i % contour.length];
-        const targetIdx = Math.min(grid.length - 1, baseIdx + stepOffset);
-        const pitch = grid[targetIdx] ?? barRoot;
-        prevPitch = pitch;
-        notes.push({
-          pitch,
-          velocity: clampVelocity(baseVel + (off % 480 === 0 ? 6 : 0) + rng.nextInt(-3, 3)),
-          startTick: barStart + off,
-          durationTicks: vocalDensity <= 2 ? 380 : 200,
-          channel: TRACK_CHANNELS.vocal,
-        });
-      }
-      continue;
-    }
-
-    if (preset === 'melody_metalcore_chorus') {
-      const chorusSlots =
-        vocalDensity === 1
-          ? [
-              { off: 0, dur: 900, high: false },
-              { off: 960, dur: 880, high: true },
-            ]
-          : vocalDensity === 2
-            ? [
-                { off: 0, dur: 680, high: false },
-                { off: 720, dur: 220, high: true },
-                { off: 960, dur: 880, high: true },
-              ]
-            : vocalDensity === 3
-              ? [
-                  { off: 0, dur: 660, high: false },
-                  { off: 720, dur: 220, high: false },
-                  { off: 960, dur: 660, high: true },
-                  { off: 1680, dur: 220, high: true },
-                ]
-              : [
-                  { off: 0, dur: 420, high: false },
-                  { off: 480, dur: 220, high: false },
-                  { off: 720, dur: 220, high: true },
-                  { off: 960, dur: 420, high: true },
-                  { off: 1440, dur: 220, high: true },
-                  { off: 1680, dur: 220, high: true },
-                ];
-      const peakFloor = Math.min(bandMax, Math.max(bandMin + 4, bandMax - 3));
-      const highChordTones = chordTones.filter((p) => p >= peakFloor);
-      const topTone =
-        highChordTones[highChordTones.length - 1] ??
-        nearestScalePitch(bandMax, scalePcs, bandMin, bandMax);
-      for (let i = 0; i < chorusSlots.length; i++) {
-        const slot = chorusSlots[i];
-        const pitch = slot.high ? topTone : barRoot;
-        prevPitch = pitch;
-        notes.push({
-          pitch,
-          velocity: clampVelocity(baseVel + (slot.high ? 12 : 4)),
-          startTick: barStart + slot.off,
-          durationTicks: slot.dur,
-          channel: TRACK_CHANNELS.vocal,
-        });
-      }
-      continue;
-    }
-
-    if (preset === 'melody_emo_screamo') {
-      const isShoutBar = bar % 2 === 1;
-      if (!isShoutBar) {
-        const quietOffs =
-          vocalDensity <= 2 ? [0, 960] : [0, 480, 960, 1440];
-        for (const off of quietOffs) {
-          const pitch = nearestScalePitch(
-            Math.min(bandMin + 4, barRoot),
-            scalePcs,
-            bandMin,
-            bandMax
-          );
-          prevPitch = pitch;
-          notes.push({
-            pitch,
-            velocity: clampVelocity(baseVel - 18 + rng.nextInt(-3, 3)),
-            startTick: barStart + off,
-            durationTicks: vocalDensity <= 2 ? 760 : 380,
-            channel: TRACK_CHANNELS.vocal,
-          });
+            ? [0, 480, 960]
+            : vocalDensity >= 4
+              ? [0, 120, 240, 480, 720, 960, 1200]
+              : [0, 240, 480, 960, 1200];
+      const leapStep = isPhraseAPrime ? 4 : 3;
+      for (let i = 0; i < tailSteps.length; i++) {
+        const off = tailSteps[i];
+        if (i === 0) {
+          currIdx = Math.min(soulGrid.length - 1, currIdx + leapStep); // Single expressive leap up
+        } else {
+          currIdx = Math.max(0, currIdx - 1); // Stepwise arch descent
         }
-      } else {
-        const shoutOffs =
-          vocalDensity === 1
-            ? [0, 960]
-            : vocalDensity === 2
-              ? [0, 480, 960, 1440]
-              : vocalDensity === 3
-                ? [0, 240, 480, 720, 960, 1200, 1440]
-                : [0, 120, 240, 360, 480, 720, 840, 960, 1200, 1440, 1680];
-        const highCeil = Math.min(VOCAL_MAX_PITCH, bandMax + 2);
-        const shoutPitchA = nearestScalePitch(highCeil - 2, scalePcs, bandMin, highCeil);
-        const shoutPitchB = nearestScalePitch(highCeil, scalePcs, bandMin, highCeil);
-        for (let i = 0; i < shoutOffs.length; i++) {
-          const off = shoutOffs[i];
-          const pitch = i % 3 === 1 ? shoutPitchB : shoutPitchA;
-          prevPitch = nearestScalePitch(pitch, scalePcs, bandMin, bandMax);
-          notes.push({
-            pitch,
-            velocity: clampVelocity(baseVel + 16 + rng.nextInt(-2, 4)),
-            startTick: barStart + off,
-            durationTicks: vocalDensity <= 2 ? 380 : 170,
-            channel: TRACK_CHANNELS.vocal,
-          });
-        }
-      }
-      continue;
-    }
-
-    // 4. melody_ballad OR low density (1..2) auto/long sustained phrasing
-    if (
-      preset === 'melody_ballad' ||
-      (preset === 'auto' && section.energy === 'Low') ||
-      vocalDensity <= 2
-    ) {
-      const slots =
-        vocalDensity === 1
-          ? [{ off: 0, dur: isPhraseEnd ? 1820 : 1400 }]
-          : vocalDensity === 2
-            ? [
-                { off: 0, dur: 900 },
-                { off: 960, dur: isPhraseEnd ? 840 : 900 },
-              ]
-            : style === 'C'
-              ? [
-                  { off: 0, dur: 900 },
-                  { off: 960, dur: 440 },
-                  { off: 1440, dur: 420 },
-                ]
-              : [
-                  { off: 0, dur: 920 },
-                  { off: 960, dur: isPhraseEnd ? 760 : 880 },
-                ];
-      for (let i = 0; i < slots.length; i++) {
-        const slot = slots[i];
-        const pitch =
-          i === 0
-            ? barRoot
-            : pickClosestFromList(prevPitch, chordTones);
-        prevPitch = nearestScalePitch(pitch, scalePcs, bandMin, bandMax);
+        const nextOff = i + 1 < tailSteps.length ? tailSteps[i + 1] : 1440;
+        const span = Math.min(480, Math.max(120, nextOff - off));
+        const staccatoDur = Math.max(55, Math.min(220, Math.round(span * 0.46)));
+        const isLast = i === tailSteps.length - 1;
         notes.push({
-          pitch: prevPitch,
-          velocity: clampVelocity(baseVel - 4 + rng.nextInt(-4, 4)),
-          startTick: barStart + slot.off,
-          durationTicks: slot.dur,
-          channel: TRACK_CHANNELS.vocal,
-        });
-      }
-      continue;
-    }
-
-    // 5. melody_alt_minor: Low-centered minor pentatonic strictly inside Key/Scale
-    if (preset === 'melody_alt_minor') {
-      const grid = pentGrid.length > 0 ? pentGrid : scaleNotes;
-      const offs =
-        vocalDensity >= 4
-          ? [0, 120, 240, 480, 720, 840, 960, 1200, 1440, 1560]
-          : style === 'B'
-            ? [0, 480, 720, 960, 1440]
-            : style === 'C'
-              ? [0, 240, 480, 720, 960, 1200, 1440]
-              : [0, 240, 720, 960, 1440];
-      for (let i = 0; i < offs.length; i++) {
-        const off = offs[i];
-        if (vocalDensity <= 3 && isPhraseEnd && off >= 1440) continue;
-        const nearestIdx = grid.reduce(
-          (bestIdx, p, idx) =>
-            Math.abs(p - prevPitch) < Math.abs(grid[bestIdx] - prevPitch)
-              ? idx
-              : bestIdx,
-          0
-        );
-        const delta =
-          i === 0
-            ? rng.pick([0, 1])
-            : isPhraseEnd && i === offs.length - 2
-              ? -1
-              : rng.pick([-1, 0, 1, 2]);
-        const nextIdx = Math.min(
-          grid.length - 1,
-          Math.max(0, nearestIdx + delta)
-        );
-        const pitch = nearestScalePitch(
-          grid[nextIdx] ?? prevPitch,
-          scalePcs,
-          bandMin,
-          bandMax
-        );
-        prevPitch = pitch;
-        notes.push({
-          pitch,
-          velocity: clampVelocity(
-            baseVel + (off % 960 === 0 ? 5 : -4) + rng.nextInt(-4, 4)
-          ),
+          pitch: soulGrid[currIdx],
+          velocity: velocityArc(currIdx, i === 0, isLast),
           startTick: barStart + off,
-          durationTicks:
-            vocalDensity >= 4
-              ? 110
-              : isPhraseEnd && i === offs.length - 2
-                ? 420
-                : 220,
+          durationTicks: staccatoDur,
           channel: TRACK_CHANNELS.vocal,
         });
       }
+      prevPitch = soulGrid[currIdx];
       continue;
     }
 
-    // 6. melody_syncopated_hook: Anticipating beats with syncopated 8th/16th hooks
-    if (preset === 'melody_syncopated_hook') {
-      const syncSteps =
-        vocalDensity >= 4
-          ? [0, 120, 360, 600, 840, 960, 1200, 1320, 1560, 1800]
-          : style === 'B'
-            ? [0, 360, 840, 1320, 1560]
-            : style === 'C'
-              ? [0, 240, 360, 720, 840, 1200, 1560, 1800]
-              : [0, 360, 720, 1200, 1560];
-      for (let i = 0; i < syncSteps.length; i++) {
-        const off = syncSteps[i];
-        if (vocalDensity <= 3 && isPhraseEnd && off >= 1680) continue;
-        const pitch = chooseMelodyPitch(
-          off === 0 || off === 360 || off === 840,
-          i === syncSteps.length - 1
-        );
-        prevPitch = pitch;
-        notes.push({
-          pitch,
-          velocity: clampVelocity(
-            baseVel + (off % 480 === 360 ? 7 : 0) + rng.nextInt(-3, 4)
-          ),
-          startTick: barStart + off,
-          durationTicks: vocalDensity >= 4 ? 110 : 210,
-          channel: TRACK_CHANNELS.vocal,
-        });
-      }
-      continue;
-    }
-
-    // 7. Default melody_pop / auto / melody_soar_long bars 0 & 2 / melody_call_response call bars
-    const baseSteps =
-      vocalDensity === 4
-        ? [0, 240, 360, 480, 720, 960, 1080, 1200, 1440, 1680]
-        : vocalDensity === 5
-          ? [0, 120, 240, 360, 480, 600, 720, 840, 960, 1200, 1320, 1440, 1680]
-          : style === 'B'
-            ? [0, 480, 720, 960, 1200, 1440]
-            : style === 'C'
-              ? [0, 240, 480, 720, 960, 1200, 1440, 1680]
-              : [0, 240, 480, 960, 1200, 1440];
-
-    for (let i = 0; i < baseSteps.length; i++) {
-      const off = baseSteps[i];
-      if (vocalDensity <= 3 && isPhraseEnd && off >= 1440) continue;
-      if (vocalDensity <= 3 && i > 0 && rng.chance(0.14)) continue;
-
-      const pitch = chooseMelodyPitch(
-        off === 0 || off === 960,
-        i === baseSteps.length - 1 || (isPhraseEnd && off >= 1200)
-      );
-      prevPitch = pitch;
-
-      const dur =
-        vocalDensity >= 4
-          ? 110
-          : i === baseSteps.length - 1 || (isPhraseEnd && off >= 1200)
-            ? 420
-            : 215;
+    // 2. Single soaring long tone (melody_soar_long) -> >= 1400 ticks AND 480 ticks breath rest
+    if (preset === 'melody_soar_long') {
+      const leapSize = isPhraseAPrime ? 4 : 3;
+      const climaxGoalIdx = Math.min(soulGrid.length - 1, currIdx + leapSize);
+      const climaxPitch = pickClosestFromList(soulGrid[climaxGoalIdx], chordTones);
+      currIdx = findGridIdx(climaxPitch);
+      prevPitch = climaxPitch;
       notes.push({
-        pitch,
-        velocity: clampVelocity(
-          baseVel + (off % 960 === 0 ? 6 : -2) + rng.nextInt(-4, 4)
-        ),
+        pitch: climaxPitch,
+        velocity: velocityArc(currIdx, true, false),
+        startTick: barStart,
+        durationTicks: 1440, // >= 1400 ticks long tone + 480 ticks breath rest before next bar
+        channel: TRACK_CHANNELS.vocal,
+      });
+      continue;
+    }
+
+    // 3. Standard Melodic Soul Tail: climax upward leap (+3..+5 steps), stepwise settle, >= 960 sustain, 360..480 breath rest
+    const leapSteps =
+      preset === 'melody_alt_soar' || preset === 'melody_metalcore_chorus' || preset === 'melody_emo_screamo'
+        ? isPhraseAPrime
+          ? 5
+          : 4
+        : isPhraseAPrime
+          ? 4
+          : 3;
+
+    // Climax peak index (one expressive leap upward from current contour)
+    const peakIdx = Math.min(soulGrid.length - 1, Math.max(currIdx + 2, barRootIdx + leapSteps));
+
+    if (vocalDensity === 1) {
+      // Sustained single long tone with 480-tick breath rest
+      currIdx = isPhraseAPrime
+        ? peakIdx
+        : findGridIdx(pickClosestFromList(soulGrid[Math.min(soulGrid.length - 1, barRootIdx + 2)], chordTones));
+      prevPitch = soulGrid[currIdx];
+      notes.push({
+        pitch: prevPitch,
+        velocity: velocityArc(currIdx, isPhraseAPrime, !isPhraseAPrime),
+        startTick: barStart,
+        durationTicks: 1440, // 1440 >= 960, leaves 480 tick breath rest
+        channel: TRACK_CHANNELS.vocal,
+      });
+      continue;
+    }
+
+    const pickupOffsets =
+      vocalDensity === 2
+        ? [0]
+        : vocalDensity === 3
+          ? preset === 'melody_syncopated_hook'
+            ? [0, 360]
+            : [0, 240]
+          : [0, 120, 240, 360];
+
+    for (let i = 0; i < pickupOffsets.length; i++) {
+      const off = pickupOffsets[i];
+      if (i === 0) {
+        // The emotional climax leap
+        currIdx = peakIdx;
+      } else {
+        // Gentle stepwise descent after the peak
+        currIdx = Math.max(0, currIdx - 1);
+      }
+      const nextOff = i + 1 < pickupOffsets.length ? pickupOffsets[i + 1] : 480;
+      const dur = vocalDensity >= 4 ? Math.min(110, nextOff - off - 10) : Math.max(100, nextOff - off - 20);
+      notes.push({
+        pitch: soulGrid[currIdx],
+        velocity: velocityArc(currIdx, i === 0, false),
         startTick: barStart + off,
         durationTicks: dur,
         channel: TRACK_CHANNELS.vocal,
       });
     }
+
+    // Long sustained landing note (beat 2 -> 1560, durationTicks = 1080 >= 960, leaving 360-tick breath rest 1560..1920)
+    // In Phrase A, resolve stepwise down toward chord root/3rd; in Phrase A', lift higher onto 3rd/5th climax resolution!
+    const landingCandidates = chordTones.filter((p) => {
+      const gIdx = findGridIdx(p);
+      return isPhraseAPrime ? gIdx >= barRootIdx + 2 : gIdx <= currIdx;
+    });
+    const resolvedTarget =
+      landingCandidates.length > 0
+        ? pickClosestFromList(
+            soulGrid[Math.max(0, Math.min(soulGrid.length - 1, currIdx - (isPhraseAPrime ? 0 : 1)))],
+            landingCandidates
+          )
+        : soulGrid[Math.max(0, currIdx - 1)];
+    // Keep transition from peak to landing smooth (step down by 1..2 scale steps if needed)
+    const desiredIdx = findGridIdx(resolvedTarget);
+    if (Math.abs(desiredIdx - currIdx) > 2) {
+      currIdx = Math.max(0, Math.min(soulGrid.length - 1, currIdx + (desiredIdx > currIdx ? 1 : -1)));
+    } else {
+      currIdx = desiredIdx;
+    }
+    prevPitch = soulGrid[currIdx];
+
+    notes.push({
+      pitch: prevPitch,
+      velocity: velocityArc(currIdx, false, true), // Breath-tail softening (74..84)
+      startTick: barStart + 480,
+      durationTicks: 1080, // >= 960 ticks long tone; leaves 360 ticks breath rest [1560..1920]
+      channel: TRACK_CHANNELS.vocal,
+    });
   }
 
   return enforceMonophonicAndClip(notes, sectionEnd);
