@@ -894,7 +894,7 @@ export function applyTimelineToAllSections(
   const nextSong = cloneSongConfig(song);
 
   for (const sec of nextSong.sections) {
-    sec.chords = resizeTimelineToBars(cloneChordSlots(sourceSlots), sec.bars);
+    sec.chords = resizeTimelineToBars(cloneChordSlots(sourceSlots, true), sec.bars);
   }
 
   if (isSongOnly) {
@@ -1133,6 +1133,7 @@ export function duplicateSectionInSong(
   const copy = cloneSection(nextSong.sections[secIdx]);
   copy.id = newId;
   copy.name = `${copy.name} (Copy)`;
+  copy.chords = cloneChordSlots(copy.chords, true);
   nextSong.sections.splice(secIdx + 1, 0, copy);
 
   const nextState = cloneBandState(bandState);

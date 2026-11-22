@@ -54,7 +54,6 @@ export function App() {
     copyTimelineToAllSections,
     pastePartPhrase,
     loadSnapshotData,
-    transposeSectionChords,
   } = useBandGenerator();
 
   // Tab 4: BANDMASTER CONSOLE is initial default tab
@@ -192,7 +191,6 @@ export function App() {
               onChangeSectionBars={changeSectionBars}
               onChangeSectionKickMode={changeSectionKickMode}
               onChangeSectionDrumLoop={changeSectionDrumLoop}
-              onTransposeSectionChords={transposeSectionChords}
               onToggleSectionPart={toggleSectionPart}
               onToggleRiff808Octave={toggleSectionRiff808Octave}
               onClearRiff={(id) => changeSectionRiff(id, undefined)}

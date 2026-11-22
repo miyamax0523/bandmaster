@@ -32,10 +32,7 @@ import {
   type BandSnapshot,
   type QuickTemplateId,
 } from '../lib/bandState';
-import {
-  createUniformChordTimeline,
-  transposeChordTimeline,
-} from '../lib/chordTimeline';
+import { createUniformChordTimeline } from '../lib/chordTimeline';
 import {
   createDebouncedProjectSaver,
   loadCurrentProjectSync,
@@ -594,19 +591,6 @@ export function useBandGenerator() {
     [song, bandState, commitChange]
   );
 
-  const transposeSectionChords = useCallback(
-    (sectionId: string, semitones: number) => {
-      const sec = song.sections.find((s) => s.id === sectionId);
-      if (!sec) return;
-      updateSectionProps(
-        sectionId,
-        { chords: transposeChordTimeline(sec.chords, semitones) },
-        true
-      );
-    },
-    [song, updateSectionProps]
-  );
-
   const applyArrangementPreset = useCallback(
     (presetId: ArrangementPresetId) => {
       const res = applyArrangementPresetToSong(
@@ -659,6 +643,5 @@ export function useBandGenerator() {
     copyTimelineToAllSections,
     pastePartPhrase,
     loadSnapshotData,
-    transposeSectionChords,
   };
 }

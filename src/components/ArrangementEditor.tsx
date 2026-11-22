@@ -4,16 +4,9 @@ import {
   type ArrangementPresetId,
 } from '../lib/bandState';
 import {
-  createUniformChordTimeline,
   describeChordRhythm,
   resolveEffectiveTimeline,
-  updateChordName,
 } from '../lib/chordTimeline';
-import {
-  applySuffixToChord,
-  getChordPalette,
-  type ChordPaletteMode,
-} from '../lib/chordUtils';
 import { extractDrumLoopFromMidi } from '../lib/midiParser';
 import { isSectionPartEnabled } from '../lib/noteSelector';
 import { useHorizontalSwipe } from '../lib/touchSwipe';
@@ -49,7 +42,6 @@ interface ArrangementEditorProps {
   onChangeSectionBars: (id: string, bars: number) => void;
   onChangeSectionKickMode: (id: string, mode: KickMode) => void;
   onChangeSectionDrumLoop: (id: string, loop?: DrumLoopData) => void;
-  onTransposeSectionChords: (id: string, semitones: number) => void;
   onToggleSectionPart: (id: string, inst: InstrumentType) => void;
   onToggleRiff808Octave: (id: string, val?: boolean) => void;
   onClearRiff: (id: string) => void;
@@ -72,16 +64,6 @@ const ARRANGEMENT_PRESETS: Array<{ id: ArrangementPresetId; label: string }> = [
   { id: 'fourPart', label: '王道4部 (Intro / A / B / サビ)' },
   { id: 'full', label: 'フル構成 (Intro / A / B / サビ / C / Outro)' },
 ];
-
-const PALETTE_MODES: Array<{ id: ChordPaletteMode; label: string }> = [
-  { id: 'triad', label: '基本' },
-  { id: 'seventh', label: 'M7 / m7' },
-  { id: 'ninth', label: 'M9 / m9' },
-  { id: 'add9sus', label: 'add9 / sus' },
-  { id: 'power', label: '5 (パワー)' },
-];
-
-const SUFFIX_CONVERTERS = ['M7', 'M9', 'add9', 'm7', 'm9', 'sus2', 'sus4', '5'] as const;
 
 const SECTION_PART_CHIPS: Array<{
   key: InstrumentType;
@@ -113,7 +95,6 @@ export function ArrangementEditor({
   onChangeSectionBars,
   onChangeSectionKickMode,
   onChangeSectionDrumLoop,
-  onTransposeSectionChords,
   onToggleSectionPart,
   onToggleRiff808Octave,
   onClearRiff,
@@ -122,7 +103,6 @@ export function ArrangementEditor({
   onClearVocalMelody,
 }: ArrangementEditorProps) {
   const [midiError, setMidiError] = useState<string | null>(null);
-  const [paletteMode, setPaletteMode] = useState<ChordPaletteMode>('triad');
   const [draggingIdx, setDraggingIdx] = useState<number | null>(null);
   const dragIndexRef = useRef<number | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
@@ -132,33 +112,6 @@ export function ArrangementEditor({
     song.sections.findIndex((s) => s.id === selectedSectionId)
   );
   const current = song.sections[currentIdx];
-
-  const [chordTextDraft, setChordTextDraft] = useState<string>(() =>
-    current ? current.chords.map((c) => c.chord).join(', ') : ''
-  );
-  const prevChordSyncRef = useRef<{ id: string; key: string }>({
-    id: current?.id ?? '',
-    key: current ? current.chords.map((c) => c.chord).join('|') : '',
-  });
-  const currentId = current?.id ?? '';
-  const currentChordKey = current ? current.chords.map((c) => c.chord).join('|') : '';
-  if (
-    current &&
-    (prevChordSyncRef.current.id !== currentId ||
-      prevChordSyncRef.current.key !== currentChordKey)
-  ) {
-    const draftParsed = chordTextDraft
-      .split(',')
-      .map((c) => c.trim())
-      .filter(Boolean);
-    if (
-      prevChordSyncRef.current.id !== currentId ||
-      draftParsed.join('|') !== currentChordKey
-    ) {
-      setChordTextDraft(current.chords.map((c) => c.chord).join(', '));
-    }
-    prevChordSyncRef.current = { id: currentId, key: currentChordKey };
-  }
 
   const swipeHandlers = useHorizontalSwipe(
     () => {
@@ -175,7 +128,6 @@ export function ArrangementEditor({
 
   if (!current) return null;
 
-  const paletteChords = getChordPalette(song.key, song.scale, paletteMode);
   const { totalBars, formattedDuration } = getSongDurationSummary(song);
 
   const handleSectionDrumUpload = async (e: ChangeEvent<HTMLInputElement>) => {
@@ -304,7 +256,7 @@ export function ArrangementEditor({
         ))}
       </div>
 
-      <div className="section-chords-overview" aria-label="セクション別コード概要">
+      <div className="section-chords-overview" aria-label="セクション別コード概要（表示のみ・編集はCONSOLEタブ）">
         {song.sections.map((sec, idx) => {
           const slots = resolveEffectiveTimeline(
             sec.chords,
@@ -315,11 +267,9 @@ export function ArrangementEditor({
           const totalBeats = Math.max(4, sec.bars * 4);
           const rhythm = describeChordRhythm(slots, sec.bars);
           return (
-            <button
+            <div
               key={sec.id}
-              type="button"
               className={`section-overview-row ${sec.id === current.id ? 'active' : ''}`}
-              onClick={() => onSelectSection(sec.id)}
             >
               <div className="overview-top-line">
                 <span className="overview-name">
@@ -328,6 +278,20 @@ export function ArrangementEditor({
                 <span className={`overview-rhythm-tag mode-${rhythm.modeId}`}>
                   {rhythm.badgeIcon} {rhythm.label}
                 </span>
+              </div>
+              <div className="overview-badges" aria-label={`${sec.name}のコード進行バッジ`}>
+                {slots.map((slot) => {
+                  const isAnt = Boolean(slot.anticipated || slot.startBeat % 1 !== 0);
+                  return (
+                    <span
+                      key={slot.id}
+                      className={`chord-slot-badge ${isAnt ? 'is-anticipated' : ''}`}
+                    >
+                      {isAnt ? '⚡' : ''}
+                      {slot.chord}
+                    </span>
+                  );
+                })}
               </div>
               <div
                 className="overview-mini-bar"
@@ -341,7 +305,7 @@ export function ArrangementEditor({
                   const pct = (slot.durationBeats / totalBeats) * 100;
                   return (
                     <span
-                      key={slot.id}
+                      key={`bar-${slot.id}`}
                       className={`mini-rhythm-seg ${isAnt ? 'is-anticipated' : ''}`}
                       style={{ width: `${pct}%` }}
                       title={`${slot.chord} (${slot.durationBeats}拍)`}
@@ -352,7 +316,7 @@ export function ArrangementEditor({
                   );
                 })}
               </div>
-            </button>
+            </div>
           );
         })}
       </div>
@@ -600,127 +564,6 @@ export function ArrangementEditor({
                 })}
               </div>
             </div>
-          </div>
-        </section>
-
-        <section className="panel">
-          <div className="panel-header-row">
-            <h3 className="panel-title">コード進行</h3>
-            <div className="btn-group">
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => onTransposeSectionChords(current.id, -1)}
-              >
-                -1 半音
-              </button>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => onTransposeSectionChords(current.id, 1)}
-              >
-                +1 半音
-              </button>
-            </div>
-          </div>
-
-          <details className="memo-details">
-            <summary>テキスト直接編集（カンマ区切り・補助用）</summary>
-            <label className="field" style={{ marginTop: 8 }}>
-              <span>小節ごとのコード（カンマ区切り・循環）</span>
-              <input
-                type="text"
-                value={chordTextDraft}
-                onChange={(e) => {
-                  const rawText = e.target.value;
-                  setChordTextDraft(rawText);
-                  const list = rawText
-                    .split(',')
-                    .map((c) => c.trim())
-                    .filter(Boolean);
-                  onUpdateSectionProps(
-                    current.id,
-                    { chords: createUniformChordTimeline(list, current.bars) },
-                    true
-                  );
-                }}
-              />
-            </label>
-          </details>
-
-          <div className="palette-label">ワンタップコードパレット（末尾に追加）:</div>
-          <div className="chip-list palette-mode-tabs" role="group" aria-label="パレット表示モード">
-            {PALETTE_MODES.map((m) => (
-              <button
-                key={m.id}
-                type="button"
-                className={`chip-btn ${paletteMode === m.id ? 'chip-active' : ''}`}
-                onClick={() => setPaletteMode(m.id)}
-              >
-                {m.label}
-              </button>
-            ))}
-          </div>
-
-          <div className="chip-list">
-            {paletteChords.map((ch) => (
-              <button
-                key={ch}
-                type="button"
-                className="chip-btn"
-                onClick={() => {
-                  const nextStrings = [...current.chords.map((c) => c.chord), ch];
-                  onUpdateSectionProps(
-                    current.id,
-                    { chords: createUniformChordTimeline(nextStrings, current.bars) },
-                    true
-                  );
-                }}
-              >
-                +{ch}
-              </button>
-            ))}
-            <button
-              type="button"
-              className="chip-btn chip-clear"
-              onClick={() =>
-                onUpdateSectionProps(current.id, { chords: [] }, true)
-              }
-            >
-              クリア(自動ダイアトニック)
-            </button>
-          </div>
-
-          <div className="palette-label">
-            末尾コードのクオリティ変換
-            {current.chords.length > 0
-              ? `（対象: ${current.chords[current.chords.length - 1].chord}）:`
-              : '（コード未入力）:'}
-          </div>
-          <div className="chip-list">
-            {SUFFIX_CONVERTERS.map((suf) => (
-              <button
-                key={suf}
-                type="button"
-                className="chip-btn chip-suffix"
-                disabled={current.chords.length === 0}
-                onClick={() => {
-                  if (current.chords.length === 0) return;
-                  const lastIdx = current.chords.length - 1;
-                  const nextChord = applySuffixToChord(
-                    current.chords[lastIdx].chord,
-                    suf
-                  );
-                  onUpdateSectionProps(
-                    current.id,
-                    { chords: updateChordName(current.chords, lastIdx, nextChord) },
-                    true
-                  );
-                }}
-              >
-                {suf}
-              </button>
-            ))}
           </div>
         </section>
 

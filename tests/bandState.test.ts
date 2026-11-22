@@ -16,6 +16,7 @@ import {
   toggleSectionPartEnabled,
   toggleSectionRiffOctaveUpOn808,
   updateSectionBars,
+  updateSectionChordTimeline,
   updateSectionDrumAnticipationMode,
   updateSectionDrumDensity,
   updateSectionKeyboardDensity,
@@ -559,5 +560,42 @@ describe('bandState', () => {
     expect(
       switched.song.sections.find((s) => s.id === sec1Id)?.drumAnticipationMode ?? 'sync'
     ).toBe('sync');
+  });
+
+  it('updates only a single slot on updateSectionChordTimeline without mutating sibling slots or other sections', () => {
+    const base = createDefaultSongConfig('rockBand');
+    const targetSecId = base.sections[1].id; // 8-bar verse
+    base.sections[1].chords = createUniformChordTimeline(
+      ['Dmaj7', 'C#m7', 'F#m7', 'A'],
+      8
+    );
+    const otherSecChordsBefore = base.sections[0].chords.map((c) => c.chord);
+    const state = generateAllSections(base, undefined, 505, false);
+
+    // Edit strictly slot index 4 -> Bm7
+    const nextSlots = updateChordName(base.sections[1].chords, 4, 'Bm7');
+    const res = updateSectionChordTimeline(base, state, targetSecId, nextSlots);
+
+    expect(res.song.sections[1].chords.map((c) => c.chord)).toEqual([
+      'Dmaj7',
+      'C#m7',
+      'F#m7',
+      'A',
+      'Bm7',
+      'C#m7',
+      'F#m7',
+      'A',
+    ]);
+    // Sibling section remains untouched
+    expect(res.song.sections[0].chords.map((c) => c.chord)).toEqual(
+      otherSecChordsBefore
+    );
+
+    // Duplicating a section issues brand-new non-overlapping ChordSlot IDs
+    const dup = duplicateSectionInSong(res.song, res.bandState, targetSecId, 'dup-sec');
+    const srcIds = new Set(dup.song.sections[1].chords.map((c) => c.id));
+    const dupSec = dup.song.sections.find((s) => s.id === 'dup-sec')!;
+    expect(dupSec.chords.every((c) => !srcIds.has(c.id))).toBe(true);
+    expect(new Set(dupSec.chords.map((c) => c.id)).size).toBe(dupSec.chords.length);
   });
 });

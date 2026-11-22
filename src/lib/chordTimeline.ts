@@ -19,11 +19,24 @@ export function createChordSlotId(prefix = 'cs'): string {
   return `${prefix}-${slotIdCounter}-${Math.random().toString(36).slice(2, 6)}`;
 }
 
-export function cloneChordSlots(slots: readonly ChordSlot[]): ChordSlot[] {
-  return slots.map((s) => ({
-    ...s,
-    anticipated: s.anticipated ?? s.startBeat % 1 !== 0,
-  }));
+export function cloneChordSlots(
+  slots: readonly ChordSlot[],
+  ensureFreshIds = false
+): ChordSlot[] {
+  const seen = new Set<string>();
+  return slots.map((s) => {
+    const rawId = typeof s.id === 'string' ? s.id.trim() : '';
+    const id =
+      ensureFreshIds || !rawId || seen.has(rawId)
+        ? createChordSlotId('slot')
+        : rawId;
+    seen.add(id);
+    return {
+      ...s,
+      id,
+      anticipated: s.anticipated ?? s.startBeat % 1 !== 0,
+    };
+  });
 }
 
 function snapHalfBeat(beats: number): number {
@@ -102,6 +115,7 @@ export function normalizeSectionChords(
       const safeBars = Math.max(1, Math.round(bars));
       const totalBeats = safeBars * 4;
       const cloned: ChordSlot[] = [];
+      const seenIds = new Set<string>();
       let expectedBeat = 0;
       for (const item of rawChords as Partial<ChordSlot>[]) {
         const startBeat = snapHalfBeat(
@@ -117,8 +131,11 @@ export function normalizeSectionChords(
               : 4
           )
         );
+        const rawId = typeof item.id === 'string' ? item.id.trim() : '';
+        const id = rawId && !seenIds.has(rawId) ? rawId : createChordSlotId('slot');
+        seenIds.add(id);
         cloned.push({
-          id: typeof item.id === 'string' && item.id ? item.id : createChordSlotId('slot'),
+          id,
           chord: typeof item.chord === 'string' && item.chord.trim() ? item.chord.trim() : 'Em',
           startBeat,
           durationBeats,

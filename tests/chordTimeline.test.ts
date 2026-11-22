@@ -190,4 +190,61 @@ describe('chordTimeline', () => {
     expect(slidClamp[1].durationBeats).toBe(7.5);
     expect(slidClamp[1].anticipated).toBe(true);
   });
+
+  it('guarantees mutually unique IDs on 8-bar looped timelines and isolates single-slot updates without overwriting sibling slots', () => {
+    const eightBar = createUniformChordTimeline(
+      ['Dmaj7', 'C#m7', 'F#m7', 'A'],
+      8
+    );
+    expect(eightBar.length).toBe(8);
+    expect(new Set(eightBar.map((s) => s.id)).size).toBe(8);
+
+    // Updating slot index 1 (or 4) to Bm7 must preserve all other 7 slots intact
+    const afterEditIdx1 = updateChordName(eightBar, 1, 'Bm7');
+    expect(afterEditIdx1.map((s) => s.chord)).toEqual([
+      'Dmaj7',
+      'Bm7',
+      'F#m7',
+      'A',
+      'Dmaj7',
+      'C#m7',
+      'F#m7',
+      'A',
+    ]);
+    expect(afterEditIdx1.map((s) => s.durationBeats)).toEqual(
+      eightBar.map((s) => s.durationBeats)
+    );
+
+    const afterEditIdx4 = updateChordName(afterEditIdx1, 4, 'Gmaj7');
+    expect(afterEditIdx4.map((s) => s.chord)).toEqual([
+      'Dmaj7',
+      'Bm7',
+      'F#m7',
+      'A',
+      'Gmaj7',
+      'C#m7',
+      'F#m7',
+      'A',
+    ]);
+
+    // After splitChordSlot & insertChordAfter, updating a single slot keeps unique IDs and never spreads to neighbors
+    const split = splitChordSlot(eightBar, 0);
+    expect(new Set(split.map((s) => s.id)).size).toBe(9);
+    const updatedSplit = updateChordName(split, 1, 'E7');
+    expect(updatedSplit[0].chord).toBe('Dmaj7');
+    expect(updatedSplit[1].chord).toBe('E7');
+    expect(updatedSplit[2].chord).toBe('C#m7');
+
+    const inserted = insertChordAfter(updatedSplit, 2, 'G#dim7');
+    expect(new Set(inserted.map((s) => s.id)).size).toBe(10);
+    const updatedInserted = updateChordName(inserted, 3, 'C#7');
+    expect(updatedInserted[2].chord).toBe('C#m7');
+    expect(updatedInserted[3].chord).toBe('C#7');
+    expect(updatedInserted[4].chord).toBe('F#m7');
+
+    // normalizeSectionChords deduplicates legacy/corrupted duplicate IDs safely
+    const duplicatedInput = eightBar.map((s) => ({ ...s, id: 'dup-id' }));
+    const deduplicated = normalizeSectionChords(duplicatedInput, 8);
+    expect(new Set(deduplicated.map((s) => s.id)).size).toBe(8);
+  });
 });
