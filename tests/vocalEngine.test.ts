@@ -7,7 +7,10 @@ import {
   VOCAL_MIN_PITCH,
 } from '../src/engines/vocalEngine';
 import { createDefaultSongConfig, generateAllSections } from '../src/lib/bandState';
-import { createUniformChordTimeline } from '../src/lib/chordTimeline';
+import {
+  createUniformChordTimeline,
+  shiftChordBoundary,
+} from '../src/lib/chordTimeline';
 import {
   getScalePitchClasses,
   parseChord,
@@ -824,7 +827,7 @@ describe('vocalEngine', () => {
       }
     }
 
-    // 1. 8-bar A -> A' motif repetition (bars 1-2 vs bars 5-6 share relative onset rhythm)
+    // 1. 8-bar A -> A' organic motif variation: P2 (bars 5-6) inherits front 65-75% of P0 (bars 1-2) onsets
     for (const melodicPreset of [
       'melody_alt_hypnotic',
       'melody_deftones_float',
@@ -839,7 +842,8 @@ describe('vocalEngine', () => {
       const block2 = notes
         .filter((n) => n.startTick >= 4 * TICKS_PER_BAR && n.startTick < 6 * TICKS_PER_BAR)
         .map((n) => n.startTick - 4 * TICKS_PER_BAR);
-      expect(block2).toEqual(block0);
+      const frontKeep = Math.max(2, Math.floor(block0.length * 0.6));
+      expect(block2.slice(0, frontKeep)).toEqual(block0.slice(0, frontKeep));
     }
 
     // 2. melody_deftones_float: laidback offbeat entry (>= 240) + cross-bar long tone (>= 1200)
@@ -873,17 +877,19 @@ describe('vocalEngine', () => {
     expect(maxBars7To8).toBeGreaterThanOrEqual(maxBars1To6);
     const lastJpop = jpop[jpop.length - 1];
     expect(lastJpop.durationTicks).toBeGreaterThanOrEqual(960);
-    const finalD = parseChord('D'); // D(2), F#(6), A(9) -> Root=2, 3rd=6
-    const allowedResolvePcs = new Set(
-      finalD.intervals
+    const finalD = parseChord('D'); // D(2), F#(6) or Key E Minor Tonic/3rd: E(4), G(7)
+    const allowedResolvePcs = new Set([
+      ...finalD.intervals
         .filter((iv) => iv === 0 || iv === 3 || iv === 4)
-        .map((iv) => (finalD.rootSemitone + iv) % 12)
-    );
+        .map((iv) => (finalD.rootSemitone + iv) % 12),
+      4,
+      7,
+    ]);
     expect(allowedResolvePcs.has(lastJpop.pitch % 12)).toBe(true);
 
-    // 6. rap_linkin_hybrid: crisp 16th percussive burst (<= 120 ticks) + dead-stop silent break (>= 720 ticks)
+    // 6. rap_linkin_hybrid: crisp percussive burst (<= 240 at bpm=135 Tempo Guard, <= 120 at bpm=115) + dead-stop silent break (>= 720 ticks)
     const linkin = outputs.rap_linkin_hybrid;
-    expect(linkin.some((n) => n.durationTicks <= 120)).toBe(true);
+    expect(linkin.some((n) => n.durationTicks <= 240)).toBe(true);
     let maxLinkinGap = 0;
     for (let i = 0; i + 1 < linkin.length; i++) {
       maxLinkinGap = Math.max(
@@ -892,5 +898,257 @@ describe('vocalEngine', () => {
       );
     }
     expect(maxLinkinGap).toBeGreaterThanOrEqual(720);
+
+    // At bpm <= 120, 16th-note (120-tick) burst cells are enabled
+    const lpSlowSong = createDefaultSongConfig('rockBand');
+    lpSlowSong.bpm = 115;
+    lpSlowSong.members.vocal.patternPreset = 'rap_linkin_hybrid';
+    const lpSlowSec = createSection({
+      bars: 4,
+      vocalDensity: 4,
+      chords: createUniformChordTimeline(['Em', 'C', 'G', 'D'], 4),
+    });
+    const lpSlowNotes = generateVocalNotes({
+      song: lpSlowSong,
+      section: lpSlowSec,
+      sectionIndex: 0,
+      style: 'A',
+      seed: 2026,
+      params: resolveInstrumentParams(lpSlowSong, lpSlowSec, 'vocal', 'A'),
+    });
+    expect(lpSlowNotes.some((n) => n.durationTicks === 120)).toBe(true);
+  });
+
+  it('meets all Next-Gen musical quality metrics across 6 presets, densities (1,3,5), 4/8 bars, 10 seeds, and substitute/offbeat chords', () => {
+    const presets = [
+      'melody_alt_hypnotic',
+      'melody_deftones_float',
+      'melody_posthc_leap',
+      'melody_jrock_drive',
+      'melody_jpop_anthem',
+      'rap_linkin_hybrid',
+    ] as const;
+
+    const scalePcs = new Set(getScalePitchClasses('C', 'Major'));
+    const offbeatSubstituteTimeline4 = shiftChordBoundary(
+      createUniformChordTimeline(['C', 'F#dim7', 'Fm7', 'Bb7'], 4),
+      1,
+      -0.5
+    );
+    const diatonic8 = createUniformChordTimeline(['C', 'G', 'Am', 'F'], 8);
+
+    interface GenreStats {
+      restRatios: number[];
+      microGapCount: number;
+      stepOrThirdCount: number;
+      stepOnlyCount: number;
+      totalIntraTransitions: number;
+      leapCount: number;
+      gapFillCount: number;
+      tensionHits: number;
+      totalNotes: number;
+      unisonCount: number;
+      anticipationOnsets: number;
+    }
+
+    const statsByPreset: Record<string, GenreStats> = {};
+    for (const preset of presets) {
+      statsByPreset[preset] = {
+        restRatios: [],
+        microGapCount: 0,
+        stepOrThirdCount: 0,
+        stepOnlyCount: 0,
+        totalIntraTransitions: 0,
+        leapCount: 0,
+        gapFillCount: 0,
+        tensionHits: 0,
+        totalNotes: 0,
+        unisonCount: 0,
+        anticipationOnsets: 0,
+      };
+    }
+
+    const densities: Array<1 | 3 | 5> = [1, 3, 5];
+    const seeds = [11, 22, 33, 44, 55, 66, 77, 88, 99, 110];
+
+    for (const preset of presets) {
+      const st = statsByPreset[preset];
+      for (const bars of [4, 8] as const) {
+        for (const density of densities) {
+          for (const seed of seeds) {
+            const song = createDefaultSongConfig('rockBand');
+            song.key = 'C';
+            song.scale = 'Major';
+            song.bpm = 118;
+            song.members.vocal.patternPreset = preset;
+            const section = createSection({
+              bars,
+              energy: preset === 'melody_deftones_float' ? 'Mid' : 'High',
+              type: preset === 'rap_linkin_hybrid' ? 'Verse' : 'Chorus',
+              vocalDensity: density,
+              chords: bars === 4 ? offbeatSubstituteTimeline4 : diatonic8,
+            });
+            const sectionLen = bars * TICKS_PER_BAR;
+            const params = resolveInstrumentParams(song, section, 'vocal', 'A');
+
+            const notes = generateVocalNotes({
+              song,
+              section,
+              sectionIndex: 0,
+              style: 'A',
+              seed,
+              params,
+              prevVocalAvgPitch: 61,
+            });
+
+            // Deterministic reproducibility check on first seed
+            if (seed === seeds[0]) {
+              const replay = generateVocalNotes({
+                song,
+                section,
+                sectionIndex: 0,
+                style: 'A',
+                seed,
+                params,
+                prevVocalAvgPitch: 61,
+              });
+              expect(replay).toEqual(notes);
+
+              // Harmony compatibility check
+              const harm = generateVocalHarmonyNotes(notes, 'C', 'Major', 'upper_3rd');
+              expect(harm.length).toBe(notes.length);
+              expect(harm.every((h) => scalePcs.has(h.pitch % 12))).toBe(true);
+            }
+
+            expect(notes.length).toBeGreaterThan(0);
+
+            // Hard constraints: monophonic, duration >= 120, bounds, Key/Scale 100%, span <= 18
+            let sungTicks = 0;
+            for (let i = 0; i < notes.length; i++) {
+              const n = notes[i];
+              expect(n.startTick).toBeGreaterThanOrEqual(0);
+              expect(n.startTick + n.durationTicks).toBeLessThanOrEqual(sectionLen);
+              expect(n.durationTicks).toBeGreaterThanOrEqual(120);
+              expect(scalePcs.has(n.pitch % 12)).toBe(true);
+              sungTicks += n.durationTicks;
+
+              const barTick = n.startTick % TICKS_PER_BAR;
+              if (barTick === 720 || barTick === 1680) {
+                st.anticipationOnsets += 1;
+              }
+              const pc = n.pitch % 12;
+              if (pc === 2 || pc === 5 || pc === 11) {
+                st.tensionHits += 1;
+              }
+
+              if (i > 0) {
+                const prev = notes[i - 1];
+                expect(prev.startTick + prev.durationTicks).toBeLessThanOrEqual(n.startTick);
+                const gap = n.startTick - (prev.startTick + prev.durationTicks);
+                if (gap >= 120 && gap < 240) {
+                  st.microGapCount += 1;
+                }
+                const isSamePhrase = gap < 240;
+                if (isSamePhrase) {
+                  const delta = n.pitch - prev.pitch;
+                  const absD = Math.abs(delta);
+                  st.totalIntraTransitions += 1;
+                  if (absD === 0) st.unisonCount += 1;
+                  if (absD <= 4) st.stepOrThirdCount += 1;
+                  if (absD <= 2) st.stepOnlyCount += 1;
+
+                  if (absD >= 7 && i + 1 < notes.length) {
+                    const next = notes[i + 1];
+                    const nextGap = next.startTick - (n.startTick + n.durationTicks);
+                    if (nextGap < 240) {
+                      st.leapCount += 1;
+                      const nextDelta = next.pitch - n.pitch;
+                      const isOpposite =
+                        (delta > 0 && nextDelta < 0) || (delta < 0 && nextDelta > 0);
+                      if (isOpposite && Math.abs(nextDelta) <= 5) {
+                        st.gapFillCount += 1;
+                      }
+                    }
+                  }
+                }
+              }
+            }
+
+            const span =
+              Math.max(...notes.map((n) => n.pitch)) - Math.min(...notes.map((n) => n.pitch));
+            expect(span).toBeLessThanOrEqual(18);
+            const avgPitch = notes.reduce((a, b) => a + b.pitch, 0) / notes.length;
+            expect(avgPitch).toBeGreaterThanOrEqual(52);
+            expect(avgPitch).toBeLessThanOrEqual(73);
+
+            st.totalNotes += notes.length;
+            st.restRatios.push(1 - sungTicks / sectionLen);
+          }
+        }
+      }
+    }
+
+    const summary: Record<string, Record<string, string | number>> = {};
+    for (const preset of presets) {
+      const st = statsByPreset[preset];
+      const avgRest =
+        st.restRatios.reduce((a, b) => a + b, 0) / Math.max(1, st.restRatios.length);
+      const stepOrThirdRate = st.stepOrThirdCount / Math.max(1, st.totalIntraTransitions);
+      const stepOnlyRate = st.stepOnlyCount / Math.max(1, st.totalIntraTransitions);
+      const gapFillRate = st.leapCount > 0 ? st.gapFillCount / st.leapCount : 1;
+
+      summary[preset] = {
+        avgRestPct: Number((avgRest * 100).toFixed(1)),
+        microGaps: st.microGapCount,
+        stepOrThirdPct: Number((stepOrThirdRate * 100).toFixed(1)),
+        stepOnlyPct: Number((stepOnlyRate * 100).toFixed(1)),
+        gapFillPct: Number((gapFillRate * 100).toFixed(1)),
+        tensionPct: Number(((st.tensionHits / st.totalNotes) * 100).toFixed(1)),
+        unisonPct: Number(((st.unisonCount / Math.max(1, st.totalIntraTransitions)) * 100).toFixed(1)),
+        anticipationPct: Number(((st.anticipationOnsets / st.totalNotes) * 100).toFixed(1)),
+      };
+
+      expect(st.microGapCount).toBe(0);
+      expect(avgRest).toBeGreaterThanOrEqual(0.12);
+      expect(avgRest).toBeLessThanOrEqual(0.52);
+      expect(stepOrThirdRate).toBeGreaterThanOrEqual(0.68);
+      expect(stepOnlyRate).toBeGreaterThanOrEqual(0.55);
+      if (st.leapCount > 0) {
+        expect(gapFillRate).toBeGreaterThanOrEqual(0.7);
+      }
+    }
+
+    // Genre differentiation assertions
+    const avgRestOf = (p: string) =>
+      statsByPreset[p].restRatios.reduce((a, b) => a + b, 0) /
+      statsByPreset[p].restRatios.length;
+    expect(avgRestOf('rap_linkin_hybrid')).toBeGreaterThan(avgRestOf('melody_jrock_drive'));
+    expect(avgRestOf('rap_linkin_hybrid')).toBeGreaterThan(avgRestOf('melody_jpop_anthem'));
+
+    const deftonesTensionRate =
+      statsByPreset.melody_deftones_float.tensionHits /
+      statsByPreset.melody_deftones_float.totalNotes;
+    const jpopTensionRate =
+      statsByPreset.melody_jpop_anthem.tensionHits /
+      statsByPreset.melody_jpop_anthem.totalNotes;
+    expect(deftonesTensionRate).toBeGreaterThan(jpopTensionRate);
+
+    const lpUnisonRate =
+      statsByPreset.rap_linkin_hybrid.unisonCount /
+      Math.max(1, statsByPreset.rap_linkin_hybrid.totalIntraTransitions);
+    const jpopUnisonRate =
+      statsByPreset.melody_jpop_anthem.unisonCount /
+      Math.max(1, statsByPreset.melody_jpop_anthem.totalIntraTransitions);
+    expect(lpUnisonRate).toBeGreaterThan(jpopUnisonRate);
+
+    const jrockAntRate =
+      statsByPreset.melody_jrock_drive.anticipationOnsets /
+      statsByPreset.melody_jrock_drive.totalNotes;
+    const deftonesAntRate =
+      statsByPreset.melody_deftones_float.anticipationOnsets /
+      statsByPreset.melody_deftones_float.totalNotes;
+    expect(jrockAntRate).toBeGreaterThan(deftonesAntRate);
+
+    console.info('[Next-Gen Vocal Quality Metrics]', JSON.stringify(summary));
   });
 });

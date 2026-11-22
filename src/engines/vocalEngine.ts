@@ -16,6 +16,25 @@ import {
 } from '../lib/chordUtils';
 import { createSeededRng } from '../lib/random';
 import type { EngineInput } from './types';
+import {
+  GENRE_VOCAL_GRAMMARS,
+  VOCAL_RHYTHM_CELLS,
+  type GenreVocalGrammar,
+  type PhrasePlan,
+  type PhraseRole,
+  type RhythmCell,
+  type SyllableSlot,
+} from './vocalRhythmCells';
+
+export {
+  GENRE_VOCAL_GRAMMARS,
+  VOCAL_RHYTHM_CELLS,
+  type GenreVocalGrammar,
+  type PhrasePlan,
+  type PhraseRole,
+  type RhythmCell,
+  type SyllableSlot,
+};
 
 export const VOCAL_MIN_PITCH = 48; // C3
 export const VOCAL_MAX_PITCH = 76; // E5
@@ -47,6 +66,7 @@ export interface MelodyStyleProfile {
   leapSemitoneTarget: number; // emotional climax leap target in semitones
   tensionLandingWeight: number; // 0..1 weight for 7th/9th/11th vs Root/3rd/5th
   energyOctaveShift: Record<EnergyLevel, number>; // semitone bias per energy
+  grammar: GenreVocalGrammar;
 }
 
 export const MELODY_STYLE_PROFILES: Record<MelodyStyleProfileId, MelodyStyleProfile> = {
@@ -63,6 +83,7 @@ export const MELODY_STYLE_PROFILES: Record<MelodyStyleProfileId, MelodyStyleProf
     leapSemitoneTarget: 9,
     tensionLandingWeight: 0.78,
     energyOctaveShift: { Low: -2, Mid: 0, High: 3 },
+    grammar: GENRE_VOCAL_GRAMMARS.alt_hypnotic,
   },
   deftones_float: {
     id: 'deftones_float',
@@ -77,6 +98,7 @@ export const MELODY_STYLE_PROFILES: Record<MelodyStyleProfileId, MelodyStyleProf
     leapSemitoneTarget: 12,
     tensionLandingWeight: 0.88,
     energyOctaveShift: { Low: -2, Mid: 0, High: 4 },
+    grammar: GENRE_VOCAL_GRAMMARS.deftones_float,
   },
   posthc_leap: {
     id: 'posthc_leap',
@@ -91,6 +113,7 @@ export const MELODY_STYLE_PROFILES: Record<MelodyStyleProfileId, MelodyStyleProf
     leapSemitoneTarget: 12,
     tensionLandingWeight: 0.52,
     energyOctaveShift: { Low: 0, Mid: 2, High: 5 },
+    grammar: GENRE_VOCAL_GRAMMARS.posthc_leap,
   },
   jrock_drive: {
     id: 'jrock_drive',
@@ -105,6 +128,7 @@ export const MELODY_STYLE_PROFILES: Record<MelodyStyleProfileId, MelodyStyleProf
     leapSemitoneTarget: 7,
     tensionLandingWeight: 0.35,
     energyOctaveShift: { Low: -1, Mid: 1, High: 4 },
+    grammar: GENRE_VOCAL_GRAMMARS.jrock_drive,
   },
   jpop_anthem: {
     id: 'jpop_anthem',
@@ -119,6 +143,7 @@ export const MELODY_STYLE_PROFILES: Record<MelodyStyleProfileId, MelodyStyleProf
     leapSemitoneTarget: 8,
     tensionLandingWeight: 0.15,
     energyOctaveShift: { Low: -1, Mid: 1, High: 4 },
+    grammar: GENRE_VOCAL_GRAMMARS.jpop_anthem,
   },
   linkin_hybrid: {
     id: 'linkin_hybrid',
@@ -133,6 +158,7 @@ export const MELODY_STYLE_PROFILES: Record<MelodyStyleProfileId, MelodyStyleProf
     leapSemitoneTarget: 2,
     tensionLandingWeight: 0.2,
     energyOctaveShift: { Low: -2, Mid: 0, High: 2 },
+    grammar: GENRE_VOCAL_GRAMMARS.linkin_hybrid,
   },
 };
 
@@ -523,7 +549,7 @@ export function generateVocalNotes(input: EngineInput): MidiNote[] {
               'sparse_punchline',
             ]);
 
-  const isRapPreset = preset.startsWith('rap_');
+  const isRapPreset = preset.startsWith('rap_') && preset !== 'rap_linkin_hybrid';
   if (isRapPreset) {
     // Prepare deterministic 2-bar motif for rap_hook_chant
     const hookVariant = rng.nextInt(0, 2);
@@ -1076,7 +1102,7 @@ export function generateVocalNotes(input: EngineInput): MidiNote[] {
   }
 
   // =========================================================================
-  // 6-Style Analyzed Melodic DNA Engine (A -> A' Macro Motif + Tail Twist)
+  // Next-Gen 6-Stage Vocal Melody Architecture
   // =========================================================================
   const DNA_PRESET_MAP: Partial<Record<string, MelodyStyleProfileId>> = {
     melody_alt_hypnotic: 'alt_hypnotic',
@@ -1084,476 +1110,789 @@ export function generateVocalNotes(input: EngineInput): MidiNote[] {
     melody_posthc_leap: 'posthc_leap',
     melody_jrock_drive: 'jrock_drive',
     melody_jpop_anthem: 'jpop_anthem',
+    rap_linkin_hybrid: 'linkin_hybrid',
   };
   const dnaProfileId = DNA_PRESET_MAP[preset];
   if (dnaProfileId) {
     const profile = MELODY_STYLE_PROFILES[dnaProfileId];
-    const energyBias =
+    const grammar = profile.grammar;
+    const isChorusSection =
+      section.type === 'Chorus' || section.energy === 'High';
+    const coupling = isChorusSection
+      ? grammar.harmonicCouplingChorus
+      : grammar.harmonicCouplingVerse;
+
+    // Singable range clamped within max 16 semitones & connected smoothly to prevVocalAvgPitch
+    const energyShift =
       prevVocalAvgPitch !== undefined
         ? 0
         : profile.energyOctaveShift[section.energy];
-    const extraHeadroom =
-      prevVocalAvgPitch !== undefined
-        ? 0
-        : dnaProfileId === 'posthc_leap' || dnaProfileId === 'deftones_float'
-          ? 4
-          : dnaProfileId === 'jpop_anthem'
-            ? 3
-            : 2;
-    const styleMin = Math.max(
-      VOCAL_MIN_PITCH,
-      Math.min(VOCAL_MAX_PITCH - 10, bandMin + Math.min(0, energyBias))
-    );
-    const styleMax = Math.min(
-      VOCAL_MAX_PITCH,
-      Math.max(styleMin + 10, bandMax + Math.max(0, energyBias) + extraHeadroom)
-    );
-    const dnaGridBase = buildScaleGrid(scalePcs, styleMin, styleMax);
-    const dnaGrid =
-      dnaGridBase.length > 0
-        ? dnaGridBase
+    const rawMinP =
+      dnaProfileId === 'linkin_hybrid'
+        ? Math.max(VOCAL_MIN_PITCH, bandMin - 2)
+        : Math.max(VOCAL_MIN_PITCH, Math.min(VOCAL_MAX_PITCH - 12, bandMin + Math.min(0, energyShift)));
+    const rawMaxP =
+      dnaProfileId === 'linkin_hybrid'
+        ? Math.min(VOCAL_MAX_PITCH, rawMinP + 10)
+        : Math.min(
+            VOCAL_MAX_PITCH,
+            Math.max(
+              rawMinP + 10,
+              Math.min(
+                rawMinP + 15,
+                bandMax + Math.max(0, energyShift) + (dnaProfileId === 'posthc_leap' || dnaProfileId === 'deftones_float' ? 3 : 2)
+              )
+            )
+          );
+    const scalePitchesBase = buildScaleGrid(scalePcs, rawMinP, rawMaxP);
+    const scalePitches =
+      scalePitchesBase.length > 0
+        ? scalePitchesBase
         : [nearestScalePitch(60, scalePcs, VOCAL_MIN_PITCH, VOCAL_MAX_PITCH)];
+    const minPitchBound = scalePitches[0];
+    const maxPitchBound = scalePitches[scalePitches.length - 1];
 
-    const findDnaIdx = (targetPitch: number): number => {
-      let bestIdx = 0;
-      let bestDist = Infinity;
-      for (let i = 0; i < dnaGrid.length; i++) {
-        const d = Math.abs(dnaGrid[i] - targetPitch);
-        if (d < bestDist) {
-          bestDist = d;
-          bestIdx = i;
-        }
-      }
-      return bestIdx;
-    };
+    const pentOffsets =
+      song.scale === 'Major' ? [0, 2, 4, 7, 9] : [0, 3, 5, 7, 10];
+    const pentPcs = new Set(pentOffsets.map((o) => (keySemitone + o) % 12));
 
-    const pickLandingPitch = (
-      chord: ParsedChord,
-      nearPitch: number,
-      preferTension: boolean,
-      preferRootOrThirdOnly = false
-    ): number => {
-      const rootAndThirdPcs = new Set<number>();
-      for (const iv of chord.intervals) {
-        if (iv === 0 || iv === 3 || iv === 4) {
-          const pc = (chord.rootSemitone + iv) % 12;
-          if (scalePcs.has(pc)) rootAndThirdPcs.add(pc);
-        }
-      }
-      const tensionPcs = new Set<number>();
-      for (const ext of [10, 11, 14, 17]) {
-        const pc = (chord.rootSemitone + ext) % 12;
-        if (scalePcs.has(pc)) tensionPcs.add(pc);
-      }
-
-      if (preferRootOrThirdOnly && rootAndThirdPcs.size > 0) {
-        const candidates = dnaGrid.filter((p) => rootAndThirdPcs.has(p % 12));
-        if (candidates.length > 0) return pickClosestFromList(nearPitch, candidates);
-      }
-      if (preferTension && tensionPcs.size > 0) {
-        const candidates = dnaGrid.filter((p) => tensionPcs.has(p % 12));
-        if (candidates.length > 0) return pickClosestFromList(nearPitch, candidates);
-      }
-      const buckets = getDiatonicGuideToneBuckets(chord, scalePcs, styleMin, styleMax);
-      return pickClosestFromList(
-        nearPitch,
-        preferTension ? buckets.questionTones : buckets.stableTones
+    // -----------------------------------------------------------------------
+    // Step 1: Phrase & Breath Macro-Planner
+    // -----------------------------------------------------------------------
+    const planPhrases = (): PhrasePlan[] => {
+      const plans: PhrasePlan[] = [];
+      const baseBreathMid = Math.round(
+        ((grammar.targetRestRatio[0] + grammar.targetRestRatio[1]) * 0.5) * 1920
       );
-    };
+      const densityAdj = (3 - vocalDensity) * 90;
+      const defaultBreath = Math.max(
+        240,
+        Math.min(960, Math.round((baseBreathMid + densityAdj) / 120) * 120)
+      );
 
-    type DnaRole = 'word' | 'peak' | 'tail' | 'pickup';
-    interface DnaSlot {
-      localTick: number;
-      durationTicks: number;
-      role: DnaRole;
-    }
-
-    const buildDnaRhythm = (
-      blockBars: number,
-      isFinalBlock: boolean
-    ): DnaSlot[] => {
-      if (blockBars === 1) {
-        if (dnaProfileId === 'deftones_float') {
-          return [
-            { localTick: 240, durationTicks: 220, role: 'word' },
-            { localTick: 480, durationTicks: 1080, role: 'tail' },
-          ];
+      if (section.bars === 8) {
+        const roles: PhraseRole[] = [
+          'statement',
+          'antecedent',
+          'variation',
+          'consequent',
+        ];
+        const peaks = [3, 5, 8, 6];
+        const ratios = [0.65, 0.72, 0.85, 0.28];
+        for (let p = 0; p < 4; p++) {
+          const startTick = p * 3840;
+          const endTick = startTick + 3840;
+          plans.push({
+            phraseId: p,
+            startTick,
+            endTick,
+            singEndTick: endTick - defaultBreath,
+            role: roles[p],
+            peakOffsetSemitones: peaks[p],
+            peakPositionRatio: ratios[p],
+            motifSourcePhraseId: p === 2 ? 0 : p === 3 ? 1 : undefined,
+          });
         }
+        return plans;
+      }
+
+      if (section.bars === 4) {
         return [
-          { localTick: profile.laidbackEntry ? 240 : 0, durationTicks: 210, role: 'word' },
-          { localTick: 480, durationTicks: 220, role: 'peak' },
-          { localTick: 720, durationTicks: 840, role: 'tail' },
+          {
+            phraseId: 0,
+            startTick: 0,
+            endTick: 3840,
+            singEndTick: 3840 - defaultBreath,
+            role: 'statement',
+            peakOffsetSemitones: 4,
+            peakPositionRatio: 0.65,
+          },
+          {
+            phraseId: 1,
+            startTick: 3840,
+            endTick: 7680,
+            singEndTick: 7680 - defaultBreath,
+            role: 'consequent',
+            peakOffsetSemitones: 7,
+            peakPositionRatio: 0.38,
+          },
         ];
       }
 
-      const slots: DnaSlot[] = [];
-
-      if (dnaProfileId === 'alt_hypnotic') {
-        const bar0 =
-          vocalDensity === 1
-            ? [0, 960]
-            : vocalDensity === 2
-              ? [0, 480, 960, 1440]
-              : vocalDensity === 3
-                ? [0, 240, 480, 720, 960, 1440]
-                : [0, 240, 480, 720, 960, 1200, 1440, 1680];
-        for (let i = 0; i < bar0.length; i++) {
-          const t = bar0[i];
-          const nextT = i + 1 < bar0.length ? bar0[i + 1] : TICKS_PER_BAR;
-          slots.push({
-            localTick: t,
-            durationTicks: Math.max(110, Math.min(360, nextT - t - 20)),
-            role: 'word',
-          });
-        }
-        if (isFinalBlock) {
-          slots.push({ localTick: TICKS_PER_BAR, durationTicks: 210, role: 'word' });
-          slots.push({ localTick: TICKS_PER_BAR + 240, durationTicks: 1200, role: 'tail' });
-        } else {
-          slots.push({ localTick: TICKS_PER_BAR, durationTicks: 220, role: 'word' });
-          slots.push({ localTick: TICKS_PER_BAR + 240, durationTicks: 220, role: 'word' });
-          slots.push({ localTick: TICKS_PER_BAR + 480, durationTicks: 960, role: 'tail' });
-        }
-        return slots;
-      }
-
-      if (dnaProfileId === 'deftones_float') {
-        // Laidback offbeat entry (beat 1-and / beat 2), then cross-bar soaring long tone (1440 ticks)
-        const bar0 =
-          vocalDensity <= 2
-            ? [480, 1440]
-            : vocalDensity === 3
-              ? [240, 720, 1200]
-              : [240, 480, 720, 1200];
-        for (let i = 0; i < bar0.length; i++) {
-          const t = bar0[i];
-          const nextT = i + 1 < bar0.length ? bar0[i + 1] : 1680;
-          slots.push({
-            localTick: t,
-            durationTicks: Math.max(180, Math.min(440, nextT - t - 25)),
-            role: 'word',
-          });
-        }
-        // Cross-bar soaring long tone starting at 1680 (beat 4-and) and holding across barline to 3120 (1440 ticks)
-        slots.push({
-          localTick: 1680,
-          durationTicks: isFinalBlock ? 1560 : 1440,
-          role: 'tail',
-        });
-        return slots;
-      }
-
-      if (dnaProfileId === 'posthc_leap') {
-        // Beat 1 rest -> offbeat pickup, cross-bar high leap sustain, staircase descent
-        const bar0 =
-          vocalDensity <= 2
-            ? [240, 960]
-            : vocalDensity === 3
-              ? [240, 480, 960, 1200]
-              : [240, 480, 720, 960, 1200, 1440];
-        for (let i = 0; i < bar0.length; i++) {
-          const t = bar0[i];
-          const nextT = i + 1 < bar0.length ? bar0[i + 1] : 1680;
-          slots.push({
-            localTick: t,
-            durationTicks: Math.max(130, Math.min(340, nextT - t - 20)),
-            role: 'word',
-          });
-        }
-        // High leap tied across barline (1680 -> 2640 = 960 ticks), then staircase descent
-        slots.push({
-          localTick: 1680,
-          durationTicks: 960,
-          role: 'peak',
-        });
-        slots.push({
-          localTick: TICKS_PER_BAR + 720,
-          durationTicks: 220,
-          role: 'word',
-        });
-        slots.push({
-          localTick: TICKS_PER_BAR + 960,
-          durationTicks: isFinalBlock ? 600 : 480,
-          role: 'tail',
-        });
-        return slots;
-      }
-
-      if (dnaProfileId === 'jrock_drive') {
-        // Energetic 8th/16th drive + beat 4-and pickup + crisp stop rest
-        const bar0 =
-          vocalDensity === 1
-            ? [0, 960]
-            : vocalDensity === 2
-              ? [0, 480, 960, 1680]
-              : vocalDensity === 3
-                ? [0, 240, 480, 720, 960, 1440, 1680]
-                : [0, 120, 240, 480, 720, 960, 1200, 1440, 1680];
-        for (let i = 0; i < bar0.length; i++) {
-          const t = bar0[i];
-          const nextT = i + 1 < bar0.length ? bar0[i + 1] : TICKS_PER_BAR;
-          const isPickup = t === 1680;
-          slots.push({
-            localTick: t,
-            durationTicks: isPickup ? 440 : Math.max(95, Math.min(220, nextT - t - 25)),
-            role: isPickup ? 'pickup' : 'word',
-          });
-        }
-        // Crisp stop after bar 1 beat 3, leaving >= 480 tick stop rest
-        slots.push({
-          localTick: TICKS_PER_BAR + 240,
-          durationTicks: 210,
-          role: 'peak',
-        });
-        slots.push({
-          localTick: TICKS_PER_BAR + 480,
-          durationTicks: isFinalBlock ? 840 : 600,
-          role: 'tail',
-        });
-        return slots;
-      }
-
-      // jpop_anthem: 8th-note lyric melody + golden 2-3 beat (960..1200) long tone tail
-      const bar0 =
-        vocalDensity === 1
-          ? [0, 960]
-          : vocalDensity === 2
-            ? [0, 480, 960, 1440]
-            : vocalDensity === 3
-              ? [0, 240, 480, 720, 960, 1440]
-              : vocalDensity === 4
-                ? [0, 240, 480, 720, 960, 1200, 1440, 1680]
-                : [0, 120, 240, 480, 720, 960, 1080, 1200, 1440, 1680];
-      for (let i = 0; i < bar0.length; i++) {
-        const t = bar0[i];
-        const nextT = i + 1 < bar0.length ? bar0[i + 1] : TICKS_PER_BAR;
-        slots.push({
-          localTick: t,
-          durationTicks: Math.max(105, Math.min(360, nextT - t - 20)),
-          role: 'word',
+      const totalBlocks = Math.ceil(section.bars / 2);
+      for (let p = 0; p < totalBlocks; p++) {
+        const startTick = p * 3840;
+        const endTick = Math.min(sectionEnd, startTick + 3840);
+        const span = endTick - startTick;
+        const breath = Math.min(Math.max(240, Math.floor(span * 0.22 / 120) * 120), defaultBreath);
+        const role: PhraseRole =
+          p === totalBlocks - 1
+            ? 'consequent'
+            : p === 0
+              ? 'statement'
+              : p % 2 === 1
+                ? 'antecedent'
+                : 'variation';
+        plans.push({
+          phraseId: p,
+          startTick,
+          endTick,
+          singEndTick: Math.max(startTick + 480, endTick - breath),
+          role,
+          peakOffsetSemitones: role === 'consequent' ? 6 : 4,
+          peakPositionRatio: role === 'consequent' ? 0.35 : 0.65,
+          motifSourcePhraseId: role === 'variation' && p >= 2 ? 0 : undefined,
         });
       }
-      slots.push({
-        localTick: TICKS_PER_BAR,
-        durationTicks: 220,
-        role: 'peak',
-      });
-      slots.push({
-        localTick: TICKS_PER_BAR + 240,
-        durationTicks: 220,
-        role: 'word',
-      });
-      slots.push({
-        localTick: TICKS_PER_BAR + 480,
-        durationTicks: isFinalBlock ? 1080 : 960,
-        role: 'tail',
-      });
+      return plans;
+    };
+
+    const phrases = planPhrases();
+
+    // -----------------------------------------------------------------------
+    // Step 2: Human Syllable Rhythm Cell Selection & BPM Tempo Guard
+    // -----------------------------------------------------------------------
+    const bpm = song.bpm ?? 120;
+    const selectAndScaleRhythmCell = (phrase: PhrasePlan): SyllableSlot[] => {
+      const phraseLen = (phrase.endTick - phrase.startTick) >= 3840 ? 3840 : 1920;
+      const genreCells = VOCAL_RHYTHM_CELLS.filter(
+        (c) =>
+          c.lengthTicks === phraseLen &&
+          c.genres.includes(dnaProfileId) &&
+          (bpm > 120 ? !c.hasSixteenths : true)
+      );
+      const densityMatched = genreCells.filter(
+        (c) =>
+          vocalDensity >= c.densityRange[0] && vocalDensity <= c.densityRange[1]
+      );
+      const cellPool =
+        densityMatched.length > 0
+          ? densityMatched
+          : genreCells.length > 0
+            ? genreCells
+            : VOCAL_RHYTHM_CELLS.filter((c) => c.lengthTicks === phraseLen);
+
+      const chosenCell = rng.pick(cellPool);
+      let slots: SyllableSlot[] = chosenCell.slots.map((s) => ({ ...s }));
+
+      // Density 1..2 thinning: drop weak stress===0 slots into previous note
+      if (vocalDensity <= 2 && slots.length > 4) {
+        const thinned: SyllableSlot[] = [];
+        for (let i = 0; i < slots.length; i++) {
+          const s = slots[i];
+          if (
+            s.stress === 0 &&
+            thinned.length > 0 &&
+            slots.length - (i - thinned.length) > 4
+          ) {
+            thinned[thinned.length - 1].baseDuration += s.baseDuration;
+          } else {
+            thinned.push(s);
+          }
+        }
+        slots = thinned;
+      }
+
+      // Density 4..5 enrichment: split at most 1 non-final long tone (>= 720) into two 8ths
+      if (vocalDensity >= 4 && slots.length < 11) {
+        for (let i = 0; i < slots.length - 1; i++) {
+          if (slots[i].baseDuration >= 720) {
+            const half = Math.max(240, Math.floor(slots[i].baseDuration / 2 / 120) * 120);
+            const rem = slots[i].baseDuration - half;
+            if (half >= 240 && rem >= 240) {
+              slots[i].baseDuration = half;
+              slots.splice(i + 1, 0, {
+                offsetTick: slots[i].offsetTick + half,
+                baseDuration: rem,
+                stress: 0,
+              });
+              break;
+            }
+          }
+        }
+      }
+
+      // Enforce human note count window [3, 14] and respect singEndTick breath window
+      const singSpan = Math.max(480, phrase.singEndTick - phrase.startTick);
+      slots = slots.filter((s) => s.offsetTick < singSpan).slice(0, 14);
+      if (slots.length < 3) {
+        slots = [
+          { offsetTick: 0, baseDuration: 480, stress: 2 as const },
+          { offsetTick: 480, baseDuration: 480, stress: 1 as const },
+          { offsetTick: 960, baseDuration: Math.max(240, Math.min(720, singSpan - 960)), stress: 2 as const },
+        ].filter((s) => s.offsetTick < singSpan);
+      }
+
       return slots;
     };
 
-    const totalBlocks = Math.ceil(section.bars / 2);
-    let motifA1Rhythm: DnaSlot[] | null = null;
-    let motifA1Deltas: number[] | null = null;
+    // -----------------------------------------------------------------------
+    // Step 5 Helper: Organic Motif Variation (P2 <- P0, P3 <- P1)
+    // -----------------------------------------------------------------------
+    const applyMotifVariation = (
+      sourceSlots: readonly SyllableSlot[],
+      phrase: PhrasePlan
+    ): SyllableSlot[] => {
+      const singSpan = Math.max(480, phrase.singEndTick - phrase.startTick);
+      const keepRatio = 0.65 + rng.next() * 0.1; // 65%..75% inheritance
+      const keepCount = Math.max(
+        2,
+        Math.min(sourceSlots.length - 1, Math.round(sourceSlots.length * keepRatio))
+      );
+      const inherited = sourceSlots.slice(0, keepCount).map((s) => ({ ...s }));
+      const tailSource = sourceSlots.slice(keepCount).map((s) => ({ ...s }));
 
-    // Starting anchor inside lower-middle register of dnaGrid so leaps have room
-    const firstChord = getActiveChordAtTick(
+      if (tailSource.length === 0) {
+        return inherited.filter((s) => s.offsetTick < singSpan);
+      }
+
+      const op = rng.pick(['long_hold', 'eighth_climb', 'beat4_syncopate'] as const);
+      if (op === 'long_hold') {
+        const last = tailSource[tailSource.length - 1];
+        last.baseDuration = Math.max(last.baseDuration, Math.min(1200, singSpan - last.offsetTick));
+        return [...inherited, last].filter((s) => s.offsetTick < singSpan);
+      }
+      if (op === 'eighth_climb' && tailSource.length >= 1) {
+        const anchor = tailSource[0];
+        const nextTick = anchor.offsetTick + 240;
+        if (nextTick + 240 <= singSpan) {
+          return [
+            ...inherited,
+            { ...anchor, baseDuration: 240, stress: 1 },
+            {
+              offsetTick: nextTick,
+              baseDuration: Math.max(240, Math.min(960, singSpan - nextTick)),
+              stress: 2,
+              leapSlot: anchor.leapSlot,
+            },
+          ];
+        }
+      }
+      // 'beat4_syncopate': anticipate final tail note -240 ticks earlier
+      const tailOut = tailSource.map((s, idx) => {
+        if (idx === tailSource.length - 1 && s.offsetTick >= 480) {
+          const prevEnd =
+            idx > 0
+              ? tailSource[idx - 1].offsetTick + 240
+              : inherited[inherited.length - 1].offsetTick + 240;
+          if (s.offsetTick - 240 >= prevEnd) {
+            return {
+              ...s,
+              offsetTick: s.offsetTick - 240,
+              baseDuration: s.baseDuration + 240,
+              isAnticipation: true,
+            };
+          }
+        }
+        return s;
+      });
+      return [...inherited, ...tailOut].filter((s) => s.offsetTick < singSpan);
+    };
+
+    // -----------------------------------------------------------------------
+    // Step 3: Melodic Arch Curve
+    // -----------------------------------------------------------------------
+    const basePitchCenter = (() => {
+      if (prevVocalAvgPitch !== undefined && !Number.isNaN(prevVocalAvgPitch)) {
+        const shift = section.energy === 'High' ? 3 : section.energy === 'Low' ? -1 : 1;
+        return Math.min(
+          maxPitchBound - 2,
+          Math.max(minPitchBound + 2, Math.round(prevVocalAvgPitch) + shift)
+        );
+      }
+      const mid = (minPitchBound + maxPitchBound) / 2;
+      const eShift = section.energy === 'High' ? 2 : section.energy === 'Low' ? -2 : 0;
+      return Math.min(maxPitchBound - 2, Math.max(minPitchBound + 2, Math.round(mid + eShift)));
+    })();
+
+    const computeTargetArchPitch = (
+      absTick: number,
+      phrase: PhrasePlan
+    ): number => {
+      const sectionRatio = Math.min(1, Math.max(0, absTick / Math.max(1, sectionEnd)));
+      const phraseSpan = Math.max(1, phrase.singEndTick - phrase.startTick);
+      const localRatio = Math.min(
+        1,
+        Math.max(0, (absTick - phrase.startTick) / phraseSpan)
+      );
+
+      // Macro section curve: peaks at ~0.72..0.82 (Bar 6-7 on 8-bar) or ~0.68 (Bar 3 on 4-bar)
+      const climaxPos = section.bars >= 8 ? 0.78 : 0.68;
+      const macroRise =
+        sectionRatio <= climaxPos
+          ? (sectionRatio / climaxPos) * 4.5
+          : 4.5 * (1 - (sectionRatio - climaxPos) / Math.max(0.01, 1 - climaxPos)) * 0.7;
+
+      // Local phrase arch shaped by grammar.archShape
+      let localArc = 0;
+      if (grammar.archShape === 'flat_low') {
+        localArc = localRatio > 0.75 ? 2.5 : Math.sin(localRatio * Math.PI) * 1.5;
+      } else if (grammar.archShape === 'soar_drop') {
+        localArc =
+          localRatio < phrase.peakPositionRatio
+            ? (localRatio / Math.max(0.1, phrase.peakPositionRatio)) * phrase.peakOffsetSemitones * 0.6
+            : phrase.peakOffsetSemitones * 0.6 * (1 - (localRatio - phrase.peakPositionRatio) * 0.55);
+      } else if (grammar.archShape === 'late_climb') {
+        localArc = localRatio * phrase.peakOffsetSemitones * 0.65;
+      } else if (grammar.archShape === 'tight_burst') {
+        localArc = localRatio < 0.5 ? 1.0 : -0.5;
+      } else {
+        // classic_arch
+        localArc = Math.sin(localRatio * Math.PI) * (phrase.peakOffsetSemitones * 0.55);
+      }
+
+      return Math.min(
+        maxPitchBound,
+        Math.max(minPitchBound, basePitchCenter - 1.5 + macroRise + localArc)
+      );
+    };
+
+    // -----------------------------------------------------------------------
+    // Step 4: Weighted Gravity & Harmony Pitch Solver
+    // -----------------------------------------------------------------------
+    const solveNextPitch = (ctx: {
+      absTick: number;
+      slot: SyllableSlot;
+      isFinalNoteOfPhrase: boolean;
+      phrase: PhrasePlan;
+      prevPitch: number;
+      prevPrevPitch: number;
+      consecutiveUnisons: number;
+      motifDirHint?: number;
+    }): number => {
+      const {
+        absTick,
+        slot,
+        isFinalNoteOfPhrase,
+        phrase,
+        prevPitch,
+        prevPrevPitch,
+        consecutiveUnisons,
+        motifDirHint,
+      } = ctx;
+
+      // 4.1 Anticipatory Lookahead (+240 ticks on anticipation slots)
+      const lookupTick = slot.isAnticipation
+        ? Math.min(sectionEnd - 1, absTick + 240)
+        : Math.min(sectionEnd - 1, absTick);
+      const chord = getActiveChordAtTick(
+        section.chords,
+        lookupTick,
+        song.key,
+        song.scale,
+        section.bars
+      ).parsed;
+
+      // Check if chord is non-diatonic (e.g. dim7, tritone sub, borrowed)
+      const chordRootInScale = scalePcs.has(chord.rootSemitone % 12);
+      const chordPcs = new Set(
+        chord.intervals.map((iv) => (chord.rootSemitone + iv) % 12)
+      );
+      const nextLookupChord = getActiveChordAtTick(
+        section.chords,
+        Math.min(sectionEnd - 1, lookupTick + 480),
+        song.key,
+        song.scale,
+        section.bars
+      ).parsed;
+      const nextResolveTargets = [
+        nextResolvePc(nextLookupChord, 0),
+        nextResolvePc(nextLookupChord, 3),
+        nextResolvePc(nextLookupChord, 4),
+      ].filter((pc): pc is number => pc !== null);
+
+      const targetArch = computeTargetArchPitch(absTick, phrase);
+      const prevInterval = prevPitch - prevPrevPitch;
+      const top30Threshold = minPitchBound + (maxPitchBound - minPitchBound) * 0.7;
+
+      const scores: number[] = [];
+      for (const cand of scalePitches) {
+        let score = 0;
+        const pc = cand % 12;
+        const relChordSemi = (pc - chord.rootSemitone + 12) % 12;
+        const relKeySemi = (pc - keySemitone + 12) % 12;
+
+        // 4.2 Harmonic Score (MHD Blend)
+        let localHarmonic = 0;
+        if (relChordSemi === 0) localHarmonic += grammar.toneWeights.root;
+        else if (relChordSemi === 3 || relChordSemi === 4) localHarmonic += grammar.toneWeights.third;
+        else if (relChordSemi === 7 || (chord.quality === 'dim' && relChordSemi === 6))
+          localHarmonic += grammar.toneWeights.fifth;
+        else if (relChordSemi === 10 || relChordSemi === 11 || (chord.quality === 'dim' && relChordSemi === 9))
+          localHarmonic += grammar.toneWeights.seventh;
+        else if (relChordSemi === 2) localHarmonic += grammar.toneWeights.ninth;
+        else if (relChordSemi === 5) localHarmonic += grammar.toneWeights.eleventh;
+        else localHarmonic += slot.stress === 0 ? 0.5 : -0.6;
+
+        // Passing tones allowed on weak stress === 0
+        if (slot.stress === 0 && !chordPcs.has(pc)) {
+          localHarmonic += 0.35;
+        }
+
+        // Non-diatonic guide-tone bonus (shared chord tone or step to next root/3rd)
+        if (!chordRootInScale || chord.quality === 'dim') {
+          if (chordPcs.has(pc)) {
+            localHarmonic += 1.5;
+          } else if (
+            nextResolveTargets.some((npc) => {
+              const stepDist = Math.min((pc - npc + 12) % 12, (npc - pc + 12) % 12);
+              return stepDist >= 1 && stepDist <= 2;
+            })
+          ) {
+            localHarmonic += 1.5;
+          }
+        }
+
+        let mhdAxis = 0;
+        if (pentPcs.has(pc)) mhdAxis += grammar.toneWeights.pentatonic;
+        if (relKeySemi === 0 || relKeySemi === 7) mhdAxis += 0.8;
+
+        score += coupling * localHarmonic + (1 - coupling) * mhdAxis;
+
+        // 4.3 Pitch Proximity & Low-Skip Bias
+        const diff = cand - prevPitch;
+        const absDiff = Math.abs(diff);
+        if (absDiff === 0) {
+          if (consecutiveUnisons >= grammar.maxConsecutiveUnisons) {
+            score -= 8.0;
+          } else {
+            score += grammar.unisonWeight * 1.5;
+          }
+        } else if (absDiff <= 2) {
+          score += 2.8;
+        } else if (absDiff <= 4) {
+          score += 1.8;
+        } else if (absDiff === 5) {
+          score += 0.4;
+        } else if (absDiff === 6) {
+          score -= 2.5;
+        } else if (absDiff <= 9) {
+          if (
+            slot.leapSlot &&
+            diff > 0 &&
+            rng.chance(grammar.signatureLeapChance + 0.35)
+          ) {
+            score += 2.2;
+          } else {
+            score -= 2.0;
+          }
+        } else if (absDiff <= 12) {
+          if (
+            slot.leapSlot &&
+            diff > 0 &&
+            (dnaProfileId === 'deftones_float' || dnaProfileId === 'posthc_leap')
+          ) {
+            score += 1.8;
+          } else {
+            score -= 4.0;
+          }
+        } else {
+          score -= 10.0;
+        }
+
+        // Low-Skip Bias
+        if (prevPitch >= top30Threshold && diff >= 5) {
+          score -= 2.5;
+        }
+
+        // 4.4 Post-Skip Reversal / Gap-Fill
+        const absPrevInt = Math.abs(prevInterval);
+        if (absPrevInt >= 5) {
+          const isOpposite =
+            (prevInterval > 0 && diff < 0) || (prevInterval < 0 && diff > 0);
+          if (isOpposite && absDiff >= 1 && absDiff <= 4) {
+            score += absPrevInt >= 7 ? 6.0 : 4.5;
+          } else if (isOpposite && absDiff === 5) {
+            score += 2.5;
+          } else if (!isOpposite && absDiff >= 1) {
+            score -= absPrevInt >= 7 ? 8.0 : 5.0;
+          }
+          if (absDiff >= 6) {
+            score -= 9.0;
+          }
+        } else if (
+          prevInterval !== 0 &&
+          diff !== 0 &&
+          Math.sign(prevInterval) !== Math.sign(diff) &&
+          absPrevInt <= 2 &&
+          absDiff <= 2
+        ) {
+          // Gentle anti-zigzag penalty
+          score -= 1.2;
+        }
+
+        // 4.5 Arch Tracking Score
+        score -= 0.45 * Math.abs(cand - targetArch);
+
+        // 4.6 Cadence Score
+        if (isFinalNoteOfPhrase) {
+          if (phrase.role === 'antecedent') {
+            if (
+              relKeySemi === 2 ||
+              relKeySemi === 7 ||
+              relKeySemi === 10 ||
+              relKeySemi === 11 ||
+              relChordSemi === 2 ||
+              relChordSemi === 3 ||
+              relChordSemi === 4
+            ) {
+              score += 2.0;
+            }
+            if (relKeySemi === 0) {
+              score -= 1.0;
+            }
+          } else if (phrase.role === 'consequent') {
+            if (
+              relKeySemi === 0 ||
+              relKeySemi === 3 ||
+              relKeySemi === 4 ||
+              relChordSemi === 0 ||
+              relChordSemi === 3 ||
+              relChordSemi === 4
+            ) {
+              score += 3.5 * grammar.cadenceResolutionStrength;
+            }
+          }
+        }
+
+        // Step 5 Motif Contour Consistency Bonus
+        if (motifDirHint !== undefined && motifDirHint !== 0) {
+          if (Math.sign(diff) === motifDirHint) {
+            score += 2.2;
+          }
+        }
+
+        scores.push(score);
+      }
+
+      // Deterministic Temperature Softmax Selection
+      const temperature = 0.45;
+      const maxScore = Math.max(...scores);
+      const weights = scores.map((s) => Math.exp((s - maxScore) / temperature));
+      const totalWeight = weights.reduce((a, b) => a + b, 0);
+      let r = rng.next() * totalWeight;
+      for (let i = 0; i < scalePitches.length; i++) {
+        r -= weights[i];
+        if (r <= 0) {
+          return scalePitches[i];
+        }
+      }
+      return scalePitches[scores.indexOf(maxScore)];
+    };
+
+    function nextResolvePc(chord: ParsedChord, iv: number): number | null {
+      if (!chord.intervals.includes(iv) && iv !== 0) return null;
+      return (chord.rootSemitone + iv) % 12;
+    }
+
+    // -----------------------------------------------------------------------
+    // Execute Phrases (Steps 2 -> 5 -> 4)
+    // -----------------------------------------------------------------------
+    interface TaggedNote extends MidiNote {
+      phraseId: number;
+    }
+
+    const phraseSlotStore = new Map<number, SyllableSlot[]>();
+    const phrasePitchStore = new Map<number, number[]>();
+    const rawTagged: TaggedNote[] = [];
+
+    // Choose initial pitch inside lower-mid scale range
+    const startChord = getActiveChordAtTick(
       section.chords,
       0,
       song.key,
       song.scale,
       section.bars
     ).parsed;
-    const baseStartPitch = pickLandingPitch(
-      firstChord,
-      prevVocalAvgPitch ?? dnaGrid[Math.min(dnaGrid.length - 1, Math.max(1, Math.floor(dnaGrid.length * 0.3)))],
-      false
+    const startIdeal =
+      prevVocalAvgPitch !== undefined && !Number.isNaN(prevVocalAvgPitch)
+        ? prevVocalAvgPitch
+        : minPitchBound + (maxPitchBound - minPitchBound) * 0.35;
+    const startScaleChordTones = getScaleChordTones(
+      startChord,
+      scalePcs,
+      minPitchBound,
+      maxPitchBound
     );
-    let currDnaIdx = findDnaIdx(baseStartPitch);
-    const climaxCapIdx = Math.max(0, dnaGrid.length - 1);
-    const preClimaxCapIdx = Math.max(1, climaxCapIdx - 2);
+    let currPitch = pickClosestFromList(startIdeal, startScaleChordTones);
+    let prevPrevPitch = currPitch;
+    let consecutiveUnisons = 0;
+    let phraseClusterCounter = 0;
 
-    for (let blockIdx = 0; blockIdx < totalBlocks; blockIdx++) {
-      const blockStartBar = blockIdx * 2;
-      const blockBars = Math.min(2, section.bars - blockStartBar);
-      const blockBaseTick = blockStartBar * TICKS_PER_BAR;
-      const isFinalBlock = blockIdx === totalBlocks - 1 && totalBlocks >= 2;
-      // In 8-bar (4-block) sections: block 2 (bars 5-6) faithfully repeats block 0 (bars 1-2)
-      // In 4-bar (2-block) sections: block 1 (bars 3-4) inherits block 0 front rhythm + final twist
-      const isFaithfulRepeatBlock =
-        (totalBlocks >= 4 && blockIdx === 2) ||
-        (totalBlocks === 2 && blockIdx === 1 && !isFinalBlock);
+    for (let pIdx = 0; pIdx < phrases.length; pIdx++) {
+      const phrase = phrases[pIdx];
+      let slots: SyllableSlot[];
+      let motifDirs: number[] | undefined;
 
-      let skeleton: DnaSlot[];
-      if (isFaithfulRepeatBlock && motifA1Rhythm && blockBars === 2) {
-        skeleton = motifA1Rhythm.map((s) => ({ ...s }));
-      } else if (isFinalBlock && motifA1Rhythm && blockBars === 2 && dnaProfileId === 'jpop_anthem') {
-        // Keep front-half rhythmic drive while elevating tail into anthem climax
-        skeleton = buildDnaRhythm(blockBars, true);
-      } else {
-        skeleton = buildDnaRhythm(blockBars, isFinalBlock);
-      }
-
-      // Reset start anchor slightly closer to Motif A1 at the start of A' (bars 5-6)
-      const blockChord = getActiveChordAtTick(
-        section.chords,
-        blockBaseTick,
-        song.key,
-        song.scale,
-        section.bars
-      ).parsed;
-      if (blockIdx === 0 || isFaithfulRepeatBlock) {
-        const anchorTarget = pickLandingPitch(
-          blockChord,
-          dnaGrid[Math.min(dnaGrid.length - 1, Math.max(1, Math.floor(dnaGrid.length * 0.3)))],
-          false
+      if (
+        phrase.motifSourcePhraseId !== undefined &&
+        phraseSlotStore.has(phrase.motifSourcePhraseId)
+      ) {
+        const srcSlots = phraseSlotStore.get(phrase.motifSourcePhraseId)!;
+        const srcPitches = phrasePitchStore.get(phrase.motifSourcePhraseId) ?? [];
+        slots = applyMotifVariation(srcSlots, phrase);
+        motifDirs = srcPitches.map((p, k) =>
+          k === 0 ? 0 : Math.sign(p - srcPitches[k - 1])
         );
-        currDnaIdx = findDnaIdx(anchorTarget);
+      } else {
+        slots = selectAndScaleRhythmCell(phrase);
       }
 
-      const blockDeltas: number[] = [];
+      phraseSlotStore.set(phrase.phraseId, slots);
+      const chosenPitches: number[] = [];
 
-      for (let i = 0; i < skeleton.length; i++) {
-        const slot = skeleton[i];
-        const absTick = blockBaseTick + slot.localTick;
-        const activeChord = getActiveChordAtTick(
-          section.chords,
-          absTick,
-          song.key,
-          song.scale,
-          section.bars
-        ).parsed;
+      // Split sub-phrase cluster IDs across intentional mid-cell silent breaks (>= 360 ticks)
+      // so Step 6 preserves deliberate freeze rests (e.g. Linkin Park verse) while keeping 0 micro-gaps
+      let activeClusterId = phraseClusterCounter++;
 
-        let nextIdx = currDnaIdx;
+      for (let i = 0; i < slots.length; i++) {
+        const slot = slots[i];
+        const absTick = phrase.startTick + slot.offsetTick;
+        if (absTick >= sectionEnd || absTick >= phrase.singEndTick) continue;
 
-        if (isFaithfulRepeatBlock && motifA1Deltas && i < motifA1Deltas.length && slot.role !== 'tail') {
-          nextIdx = Math.max(
-            0,
-            Math.min(preClimaxCapIdx, currDnaIdx + motifA1Deltas[i])
-          );
-        } else if (dnaProfileId === 'alt_hypnotic') {
-          if (slot.role === 'tail' && isFinalBlock) {
-            // Sudden 6th/octave leap OR floating tension long tone at bars 7-8 tail
-            const jumpTarget = Math.min(climaxCapIdx, currDnaIdx + (rng.chance(0.55) ? 6 : 4));
-            const landP = pickLandingPitch(activeChord, dnaGrid[jumpTarget], true);
-            nextIdx = findDnaIdx(landP);
-          } else if (slot.role === 'tail') {
-            const landP = pickLandingPitch(activeChord, dnaGrid[currDnaIdx], true);
-            nextIdx = findDnaIdx(landP);
-          } else {
-            // Hypnotic monotone repetition (3..5 same-pitch hits before tiny step)
-            const repeatLen = rng.nextInt(profile.repeatNoteRun[0], profile.repeatNoteRun[1]);
-            const delta = i % repeatLen === repeatLen - 1 ? rng.pick([1, -1]) : 0;
-            nextIdx = Math.max(0, Math.min(preClimaxCapIdx - 1, currDnaIdx + delta));
-          }
-        } else if (dnaProfileId === 'deftones_float') {
-          if (slot.role === 'tail') {
-            // Sudden soaring leap up an octave/9th into floating maj7/9th/11th tension
-            const highTargetIdx = isFinalBlock
-              ? climaxCapIdx
-              : Math.min(climaxCapIdx, Math.max(currDnaIdx + 5, climaxCapIdx - 1));
-            const floatPitch = pickLandingPitch(activeChord, dnaGrid[highTargetIdx], true);
-            nextIdx = findDnaIdx(floatPitch);
-          } else {
-            // Low-mid languid sway before the leap
-            const lowCap = Math.max(1, Math.floor(dnaGrid.length * 0.4));
-            const delta = i === 0 ? 0 : rng.pick([0, 1, -1]);
-            nextIdx = Math.max(0, Math.min(lowCap, currDnaIdx + delta));
-          }
-        } else if (dnaProfileId === 'posthc_leap') {
-          if (slot.role === 'peak') {
-            // Wide emotional leap (6th / octave / 9th) to top register
-            const targetIdx = isFinalBlock
-              ? climaxCapIdx
-              : Math.min(climaxCapIdx, Math.max(currDnaIdx + 5, climaxCapIdx - 1));
-            nextIdx = targetIdx;
-          } else if (slot.role === 'tail') {
-            // Final block breaks through high; earlier blocks resolve down smoothly
-            const targetPitch = isFinalBlock
-              ? dnaGrid[climaxCapIdx]
-              : pickLandingPitch(activeChord, dnaGrid[Math.max(0, currDnaIdx - 1)], rng.chance(profile.tensionLandingWeight));
-            nextIdx = findDnaIdx(targetPitch);
-          } else if (slot.localTick >= TICKS_PER_BAR) {
-            // Melodic staircase descent after high peak
-            nextIdx = Math.max(0, currDnaIdx - 1);
-          } else {
-            const lowMidCap = Math.max(2, Math.floor(dnaGrid.length * 0.45));
-            const delta = i === 0 ? 0 : rng.pick([0, 1, -1, 1]);
-            nextIdx = Math.max(0, Math.min(lowMidCap, currDnaIdx + delta));
-          }
-        } else if (dnaProfileId === 'jrock_drive') {
-          if (slot.role === 'pickup') {
-            nextIdx = Math.min(climaxCapIdx, currDnaIdx + 2);
-          } else if (slot.role === 'peak') {
-            nextIdx = isFinalBlock
-              ? climaxCapIdx
-              : Math.min(preClimaxCapIdx, currDnaIdx + 2);
-          } else if (slot.role === 'tail') {
-            const landP = pickLandingPitch(
-              activeChord,
-              dnaGrid[isFinalBlock ? Math.max(0, climaxCapIdx - 1) : currDnaIdx],
-              false
-            );
-            nextIdx = findDnaIdx(landP);
-          } else {
-            const delta = i === 0 ? 0 : isFinalBlock ? (i % 2 === 0 ? 1 : 0) : rng.pick([0, 1, 1, -1]);
-            nextIdx = Math.max(0, Math.min(preClimaxCapIdx, currDnaIdx + delta));
-          }
-        } else {
-          // jpop_anthem: smooth stepwise + warm 4th/5th/6th leaps, highest peak in final 2 bars, Root/3rd landing
-          if (slot.role === 'peak') {
-            nextIdx = isFinalBlock
-              ? climaxCapIdx
-              : Math.min(preClimaxCapIdx, currDnaIdx + (blockIdx === 1 ? 3 : 2));
-          } else if (slot.role === 'tail') {
-            const resolvePitch = pickLandingPitch(
-              activeChord,
-              dnaGrid[Math.max(0, currDnaIdx - (isFinalBlock ? 2 : 1))],
-              !isFinalBlock && blockIdx % 2 === 0,
-              isFinalBlock
-            );
-            nextIdx = findDnaIdx(resolvePitch);
-          } else {
-            const delta =
-              i === 0
-                ? 0
-                : isFinalBlock
-                  ? i >= skeleton.length - 4
-                    ? 1
-                    : rng.pick([0, 1, 1])
-                  : rng.pick([1, 0, 1, -1, 2]);
-            const cap = isFinalBlock ? climaxCapIdx - 1 : preClimaxCapIdx - 1;
-            nextIdx = Math.max(0, Math.min(Math.max(1, cap), currDnaIdx + delta));
+        if (i > 0) {
+          const prevSlot = slots[i - 1];
+          const prevEnd = prevSlot.offsetTick + prevSlot.baseDuration;
+          if (slot.offsetTick - prevEnd >= 360) {
+            activeClusterId = phraseClusterCounter++;
           }
         }
 
-        blockDeltas.push(nextIdx - currDnaIdx);
-        currDnaIdx = nextIdx;
-        const pitch = dnaGrid[currDnaIdx];
+        const isLastSlot =
+          i === slots.length - 1 ||
+          phrase.startTick + slots[i + 1].offsetTick >= phrase.singEndTick;
 
-        const isHighVel = slot.role === 'peak' || (slot.role === 'tail' && isFinalBlock);
+        const nextPitch =
+          pIdx === 0 && i === 0
+            ? currPitch
+            : solveNextPitch({
+                absTick,
+                slot,
+                isFinalNoteOfPhrase: isLastSlot,
+                phrase,
+                prevPitch: currPitch,
+                prevPrevPitch,
+                consecutiveUnisons,
+                motifDirHint: motifDirs?.[i],
+              });
+
+        if (nextPitch === currPitch) {
+          consecutiveUnisons += 1;
+        } else {
+          consecutiveUnisons = 0;
+        }
+        prevPrevPitch = currPitch;
+        currPitch = nextPitch;
+        chosenPitches.push(nextPitch);
+
+        const maxDurToSingEnd = Math.max(
+          120,
+          Math.min(slot.baseDuration, phrase.singEndTick - absTick, sectionEnd - absTick)
+        );
+        const relPos = (nextPitch - minPitchBound) / Math.max(1, maxPitchBound - minPitchBound);
         const vel = clampVelocity(
           baseVel +
-            (isHighVel ? 10 : slot.role === 'tail' ? -4 : 0) +
-            Math.round((currDnaIdx / Math.max(1, climaxCapIdx)) * 8) +
+            (slot.stress === 2 ? 8 : slot.stress === 0 ? -6 : 0) +
+            Math.round(relPos * 10) +
             rng.nextInt(-3, 3)
         );
 
-        notes.push({
-          pitch,
+        rawTagged.push({
+          pitch: nextPitch,
           velocity: vel,
           startTick: absTick,
-          durationTicks: slot.durationTicks,
+          durationTicks: maxDurToSingEnd,
+          channel: TRACK_CHANNELS.vocal,
+          phraseId: activeClusterId,
+        });
+      }
+
+      phrasePitchStore.set(phrase.phraseId, chosenPitches);
+    }
+
+    // -----------------------------------------------------------------------
+    // Step 6: VoiSona-Optimized Legato & Monophony Post-Processor
+    // -----------------------------------------------------------------------
+    const postProcessVocalNotes = (inputNotes: TaggedNote[]): MidiNote[] => {
+      if (inputNotes.length === 0) return [];
+      const sorted = inputNotes
+        .filter((n) => n.startTick >= 0 && n.startTick < sectionEnd)
+        .sort((a, b) => a.startTick - b.startTick);
+
+      // Deduplicate identical startTicks cleanly
+      const unique: TaggedNote[] = [];
+      for (const n of sorted) {
+        if (unique.length > 0 && unique[unique.length - 1].startTick === n.startTick) {
+          continue;
+        }
+        unique.push({ ...n });
+      }
+
+      // 6.1 & 6.2: Intra-phrase legato (0 gap) and Inter-phrase breath (>= 240 ticks)
+      for (let i = 0; i + 1 < unique.length; i++) {
+        const curr = unique[i];
+        const next = unique[i + 1];
+        const span = next.startTick - curr.startTick;
+
+        if (curr.phraseId === next.phraseId) {
+          // Strict 0-tick micro-gap inside phrase for VoiSona legato singing
+          curr.durationTicks = Math.max(120, span);
+        } else {
+          // Ensure >= 240-tick breath gap across phrase / sub-phrase boundary
+          const maxAllowed = span - 240;
+          if (curr.durationTicks > maxAllowed) {
+            curr.durationTicks = Math.max(120, Math.min(span, maxAllowed));
+          }
+          // Eliminate any accidental 1..239 tick micro-gap by extending or keeping >= 240 breath
+          const gap = next.startTick - (curr.startTick + curr.durationTicks);
+          if (gap > 0 && gap < 240) {
+            if (span - 240 >= 120) {
+              curr.durationTicks = span - 240;
+            } else {
+              curr.durationTicks = span;
+            }
+          }
+        }
+      }
+
+      // 6.3: Eliminate < 120-tick micro-notes & clamp final note to sectionEnd
+      const merged: TaggedNote[] = [];
+      for (let i = 0; i < unique.length; i++) {
+        const curr = unique[i];
+        if (curr.durationTicks < 120 && merged.length > 0) {
+          merged[merged.length - 1].durationTicks += curr.durationTicks;
+          continue;
+        }
+        merged.push(curr);
+      }
+
+      // 6.4: Final guardrail verification (strict monophony, >= 120 duration, 100% scale)
+      const finalOut: MidiNote[] = [];
+      for (let i = 0; i < merged.length; i++) {
+        const curr = merged[i];
+        const safePitch = scalePcs.has(curr.pitch % 12)
+          ? curr.pitch
+          : nearestScalePitch(curr.pitch, scalePcs, minPitchBound, maxPitchBound);
+        const maxDur =
+          i + 1 < merged.length
+            ? Math.min(sectionEnd - curr.startTick, merged[i + 1].startTick - curr.startTick)
+            : sectionEnd - curr.startTick;
+        const safeDur = Math.min(curr.durationTicks, maxDur);
+        if (safeDur < 120) continue;
+
+        finalOut.push({
+          pitch: safePitch,
+          velocity: clampVelocity(curr.velocity),
+          startTick: curr.startTick,
+          durationTicks: safeDur,
           channel: TRACK_CHANNELS.vocal,
         });
       }
 
-      if (blockIdx === 0) {
-        motifA1Rhythm = skeleton;
-        motifA1Deltas = blockDeltas;
-      }
-    }
+      return finalOut;
+    };
 
-    return enforceMonophonicAndClip(notes, sectionEnd);
+    return postProcessVocalNotes(rawTagged);
   }
 
   // =========================================================================
