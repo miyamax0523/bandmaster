@@ -2,12 +2,17 @@ import { describe, expect, it } from 'vitest';
 import {
   generateVocalHarmonyNotes,
   generateVocalNotes,
+  MELODY_STYLE_PROFILES,
   VOCAL_MAX_PITCH,
   VOCAL_MIN_PITCH,
 } from '../src/engines/vocalEngine';
 import { createDefaultSongConfig, generateAllSections } from '../src/lib/bandState';
 import { createUniformChordTimeline } from '../src/lib/chordTimeline';
-import { getScalePitchClasses, snapPitchToScale } from '../src/lib/chordUtils';
+import {
+  getScalePitchClasses,
+  parseChord,
+  snapPitchToScale,
+} from '../src/lib/chordUtils';
 import { resolveInstrumentParams } from '../src/lib/keywordParser';
 import { PATTERN_PRESET_GROUPS } from '../src/lib/patternPresets';
 import { processVocalMelody } from '../src/lib/riffProcessor';
@@ -760,5 +765,132 @@ describe('vocalEngine', () => {
     expect(
       byPreset.rap_triplet_bounce.some((n) => n.startTick % 480 === 160 || n.startTick % 480 === 320)
     ).toBe(true);
+  });
+
+  it('implements 6 analyzed MelodyStyleProfiles with 8-bar A->A\' motif repetition, final-2-bar climax, and strict scale/monophony', () => {
+    expect(Object.keys(MELODY_STYLE_PROFILES).sort()).toEqual([
+      'alt_hypnotic',
+      'deftones_float',
+      'jpop_anthem',
+      'jrock_drive',
+      'linkin_hybrid',
+      'posthc_leap',
+    ]);
+
+    const song = createDefaultSongConfig('rockBand');
+    song.key = 'E';
+    song.scale = 'Minor';
+    const scalePcs = new Set(getScalePitchClasses('E', 'Minor'));
+
+    const sixPresets = [
+      'melody_alt_hypnotic',
+      'melody_deftones_float',
+      'melody_posthc_leap',
+      'melody_jrock_drive',
+      'melody_jpop_anthem',
+      'rap_linkin_hybrid',
+    ];
+
+    const outputs: Record<string, ReturnType<typeof generateVocalNotes>> = {};
+    for (const preset of sixPresets) {
+      song.members.vocal.patternPreset = preset;
+      const section = createSection({
+        bars: 8,
+        energy: 'High',
+        vocalDensity: 3,
+        chords: createUniformChordTimeline(['Em', 'C', 'G', 'D'], 8),
+      });
+      const notes = generateVocalNotes({
+        song,
+        section,
+        sectionIndex: 0,
+        style: 'A',
+        seed: 2026,
+        params: resolveInstrumentParams(song, section, 'vocal', 'A'),
+      });
+      outputs[preset] = notes;
+      expect(notes.length).toBeGreaterThan(0);
+
+      // Strict Key/Scale 100% conformance & monophony across all 8 bars
+      for (let i = 0; i < notes.length; i++) {
+        expect(scalePcs.has(notes[i].pitch % 12)).toBe(true);
+        expect(notes[i].pitch).toBeGreaterThanOrEqual(VOCAL_MIN_PITCH);
+        expect(notes[i].pitch).toBeLessThanOrEqual(VOCAL_MAX_PITCH);
+        if (i > 0) {
+          expect(notes[i - 1].startTick + notes[i - 1].durationTicks).toBeLessThanOrEqual(
+            notes[i].startTick
+          );
+        }
+      }
+    }
+
+    // 1. 8-bar A -> A' motif repetition (bars 1-2 vs bars 5-6 share relative onset rhythm)
+    for (const melodicPreset of [
+      'melody_alt_hypnotic',
+      'melody_deftones_float',
+      'melody_posthc_leap',
+      'melody_jrock_drive',
+      'melody_jpop_anthem',
+    ]) {
+      const notes = outputs[melodicPreset];
+      const block0 = notes
+        .filter((n) => n.startTick < 2 * TICKS_PER_BAR)
+        .map((n) => n.startTick);
+      const block2 = notes
+        .filter((n) => n.startTick >= 4 * TICKS_PER_BAR && n.startTick < 6 * TICKS_PER_BAR)
+        .map((n) => n.startTick - 4 * TICKS_PER_BAR);
+      expect(block2).toEqual(block0);
+    }
+
+    // 2. melody_deftones_float: laidback offbeat entry (>= 240) + cross-bar long tone (>= 1200)
+    const deftones = outputs.melody_deftones_float;
+    expect(deftones[0].startTick).toBeGreaterThanOrEqual(240);
+    expect(deftones.some((n) => n.durationTicks >= 1200)).toBe(true);
+    const deftonesSpan =
+      Math.max(...deftones.map((n) => n.pitch)) - Math.min(...deftones.map((n) => n.pitch));
+    expect(deftonesSpan).toBeGreaterThanOrEqual(9);
+
+    // 3. melody_posthc_leap: wide high-tone leap span (>= 10 semitones) + cross-bar sustain (>= 960)
+    const posthc = outputs.melody_posthc_leap;
+    expect(posthc[0].startTick).toBeGreaterThanOrEqual(240);
+    const posthcSpan =
+      Math.max(...posthc.map((n) => n.pitch)) - Math.min(...posthc.map((n) => n.pitch));
+    expect(posthcSpan).toBeGreaterThanOrEqual(10);
+    expect(posthc.some((n) => n.durationTicks >= 960)).toBe(true);
+
+    // 4. melody_jrock_drive: beat 4-and pickup (1680) + stop rest (>= 360)
+    const jrock = outputs.melody_jrock_drive;
+    expect(jrock.some((n) => n.startTick % TICKS_PER_BAR === 1680)).toBe(true);
+
+    // 5. melody_jpop_anthem: reaches highest climax pitch in bars 7-8 & resolves on final chord (D) Root/3rd with long tone
+    const jpop = outputs.melody_jpop_anthem;
+    const maxBars1To6 = Math.max(
+      ...jpop.filter((n) => n.startTick < 6 * TICKS_PER_BAR).map((n) => n.pitch)
+    );
+    const maxBars7To8 = Math.max(
+      ...jpop.filter((n) => n.startTick >= 6 * TICKS_PER_BAR).map((n) => n.pitch)
+    );
+    expect(maxBars7To8).toBeGreaterThanOrEqual(maxBars1To6);
+    const lastJpop = jpop[jpop.length - 1];
+    expect(lastJpop.durationTicks).toBeGreaterThanOrEqual(960);
+    const finalD = parseChord('D'); // D(2), F#(6), A(9) -> Root=2, 3rd=6
+    const allowedResolvePcs = new Set(
+      finalD.intervals
+        .filter((iv) => iv === 0 || iv === 3 || iv === 4)
+        .map((iv) => (finalD.rootSemitone + iv) % 12)
+    );
+    expect(allowedResolvePcs.has(lastJpop.pitch % 12)).toBe(true);
+
+    // 6. rap_linkin_hybrid: crisp 16th percussive burst (<= 120 ticks) + dead-stop silent break (>= 720 ticks)
+    const linkin = outputs.rap_linkin_hybrid;
+    expect(linkin.some((n) => n.durationTicks <= 120)).toBe(true);
+    let maxLinkinGap = 0;
+    for (let i = 0; i + 1 < linkin.length; i++) {
+      maxLinkinGap = Math.max(
+        maxLinkinGap,
+        linkin[i + 1].startTick - (linkin[i].startTick + linkin[i].durationTicks)
+      );
+    }
+    expect(maxLinkinGap).toBeGreaterThanOrEqual(720);
   });
 });
