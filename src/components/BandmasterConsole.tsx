@@ -204,10 +204,7 @@ export function BandmasterConsole({
             className={`pill ${sec.id === section.id ? 'active' : ''}`}
             onClick={() => onSelectSection(sec.id)}
           >
-            {idx + 1}. {sec.name}{' '}
-            <span className="pill-sub">
-              {sec.kickMode === '808' ? '808' : '生'}
-            </span>
+            {idx + 1}. {sec.name}
           </button>
         ))}
       </div>
