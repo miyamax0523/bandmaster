@@ -224,6 +224,22 @@ export function useBandGenerator() {
     [song, bandState, commitChange]
   );
 
+  const applyQuickSong = useCallback(
+    (nextSong: SongConfig, baseSeed?: number) => {
+      const seed = baseSeed ?? ((Date.now() & 0x7fffff) + 17);
+      const nextState = generateAllSections(nextSong, undefined, seed, true);
+      commitChange(nextSong, nextState, true, true);
+    },
+    [commitChange]
+  );
+
+  const resetProjectToDefault = useCallback(() => {
+    const defaultSong = createDefaultSongConfig('rockBand');
+    const defaultState = generateAllSections(defaultSong, undefined, 4242, true);
+    setUndoStack([]);
+    commitChange(defaultSong, defaultState, false, true);
+  }, [commitChange]);
+
   const regenerateAll = useCallback(() => {
     const nextState = generateAllSections(
       song,
@@ -676,5 +692,7 @@ export function useBandGenerator() {
     copyTimelineToAllSections,
     pastePartPhrase,
     loadSnapshotData,
+    applyQuickSong,
+    resetProjectToDefault,
   };
 }

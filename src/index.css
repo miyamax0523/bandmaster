@@ -1919,3 +1919,133 @@ input[type='range'] {
   color: #fde68a;
   border-left: 2px solid #f59e0b;
 }
+
+/* Quick Generate & Reset Controls */
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.header-quick-btn,
+.header-reset-btn {
+  min-height: 36px;
+  padding: 5px 10px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  border-radius: 10px;
+}
+
+.btn-danger-muted {
+  background: rgba(239, 68, 68, 0.14);
+  color: #fca5a5;
+  border: 1px solid rgba(239, 68, 68, 0.35);
+}
+
+.btn-danger-muted:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.24);
+}
+
+.btn-danger {
+  background: #dc2626;
+  color: #ffffff;
+  border: 1px solid #ef4444;
+}
+
+.quick-gen-modal-panel {
+  max-width: 640px;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.quick-gen-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 10px;
+}
+
+.quick-gen-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.quick-gen-label {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.quick-genre-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(175px, 1fr));
+  gap: 8px;
+}
+
+.quick-genre-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.quick-genre-card.active {
+  border-color: var(--primary);
+  background: rgba(99, 102, 241, 0.18);
+  box-shadow: 0 0 0 1px var(--primary);
+}
+
+.quick-genre-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.quick-genre-desc {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.quick-gen-row-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.quick-bpm-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.quick-duration-badge {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #a5b4fc;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(99, 102, 241, 0.12);
+}
+
+.reset-confirm-modal {
+  max-width: 440px;
+}
+
+.reset-confirm-message {
+  margin: 14px 0;
+  font-size: 0.92rem;
+  line-height: 1.5;
+  color: var(--text);
+}

@@ -4,6 +4,7 @@ import { BandmasterConsole } from './components/BandmasterConsole';
 import { MemberSettings } from './components/MemberSettings';
 import { PlaybackControls } from './components/PlaybackControls';
 import { ProjectSnapshotsModal } from './components/ProjectSnapshotsModal';
+import { QuickGenerateModal } from './components/QuickGenerateModal';
 import { RiffRecorderModal } from './components/RiffRecorderModal';
 import { SongSettings } from './components/SongSettings';
 import { TrackControls } from './components/TrackControls';
@@ -57,6 +58,8 @@ export function App() {
     copyTimelineToAllSections,
     pastePartPhrase,
     loadSnapshotData,
+    applyQuickSong,
+    resetProjectToDefault,
   } = useBandGenerator();
 
   // Tab 4: BANDMASTER CONSOLE is initial default tab
@@ -71,6 +74,8 @@ export function App() {
     null
   );
   const [snapshotModalOpen, setSnapshotModalOpen] = useState(false);
+  const [quickGenModalOpen, setQuickGenModalOpen] = useState(false);
+  const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
   const [copiedPhrase, setCopiedPhrase] = useState<CopiedPartPhrase | null>(null);
 
   const audio = useAudioPreview(song, bandState, selectedSectionId);
@@ -102,13 +107,29 @@ export function App() {
             <h1 className="app-title">BANDMASTER</h1>
             <span className="version-pill">v{CURRENT_ENGINE_VERSION}</span>
           </div>
-          <button
-            type="button"
-            className="btn btn-secondary header-snapshot-btn"
-            onClick={() => setSnapshotModalOpen(true)}
-          >
-            💾 保存 / 履歴
-          </button>
+          <div className="header-actions">
+            <button
+              type="button"
+              className="btn btn-primary header-quick-btn"
+              onClick={() => setQuickGenModalOpen(true)}
+            >
+              ✨ 一発生成
+            </button>
+            <button
+              type="button"
+              className="btn btn-danger-muted header-reset-btn"
+              onClick={() => setResetConfirmOpen(true)}
+            >
+              🗑️ 全消し
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary header-snapshot-btn"
+              onClick={() => setSnapshotModalOpen(true)}
+            >
+              💾 保存 / 履歴
+            </button>
+          </div>
         </div>
         <div className="song-summary">
           {song.title} · {song.bpm} BPM · {song.key} {song.scale} ·{' '}
@@ -310,6 +331,64 @@ export function App() {
           }}
           onClose={() => setSnapshotModalOpen(false)}
         />
+      )}
+
+      {quickGenModalOpen && (
+        <QuickGenerateModal
+          initialSong={song}
+          onGenerate={(builtSong, seed) => {
+            audio.stop();
+            applyQuickSong(builtSong, seed);
+            setSelectedSectionId(builtSong.sections[0]?.id ?? '');
+          }}
+          onClose={() => setQuickGenModalOpen(false)}
+        />
+      )}
+
+      {resetConfirmOpen && (
+        <div
+          className="modal-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-label="全消し確認"
+        >
+          <div className="modal-panel reset-confirm-modal">
+            <div className="modal-header">
+              <h3 className="panel-title">🗑️ 全消し（リセット）</h3>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setResetConfirmOpen(false)}
+                aria-label="閉じる"
+              >
+                ✕
+              </button>
+            </div>
+            <p className="reset-confirm-message">
+              現在の曲データと全セクションを削除して初期状態に戻しますか？（この操作は取り消せません）
+            </p>
+            <div className="modal-footer">
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setResetConfirmOpen(false)}
+              >
+                キャンセル
+              </button>
+              <button
+                type="button"
+                className="btn btn-danger"
+                onClick={() => {
+                  audio.stop();
+                  resetProjectToDefault();
+                  setResetConfirmOpen(false);
+                }}
+              >
+                全消ししてリセット
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
