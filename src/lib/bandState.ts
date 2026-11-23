@@ -175,6 +175,7 @@ export function generateCellTakes(
   contextNotes?: {
     drumNotes?: MidiNote[];
     bassNotes?: MidiNote[];
+    keyboardNotes?: MidiNote[];
     vocalNotes?: MidiNote[];
   }
 ): Record<TakeStyle, MidiNote[]> {
@@ -200,13 +201,23 @@ export function generateCellTakes(
               .filter((n) => n.pitch === 35 || n.pitch === 36)
               .map((n) => n.startTick)
           : undefined,
-      bassNotes: instrument === 'keyboard' ? contextNotes?.bassNotes : undefined,
-      vocalNotes: instrument === 'keyboard' ? contextNotes?.vocalNotes : undefined,
+      bassNotes:
+        instrument === 'keyboard' || instrument === 'pad'
+          ? contextNotes?.bassNotes
+          : undefined,
+      keyboardNotes:
+        instrument === 'pad' ? contextNotes?.keyboardNotes : undefined,
+      vocalNotes:
+        instrument === 'keyboard' || instrument === 'pad'
+          ? contextNotes?.vocalNotes
+          : undefined,
       bpm: song.bpm,
       keyboardDensity:
         instrument === 'keyboard' ? (section.keyboardDensity ?? 4) : undefined,
       prevVocalAvgPitch:
-        instrument === 'vocal' || instrument === 'keyboard'
+        instrument === 'vocal' ||
+        instrument === 'keyboard' ||
+        instrument === 'pad'
           ? prevVocalAvgPitch
           : undefined,
     };
@@ -316,15 +327,23 @@ export function generateSectionCells(
         ? getSelectedDrumNotes(result)
         : [];
     const bassCell = result.bass;
-    const bassNotesForKb =
-      inst === 'keyboard' &&
+    const bassNotesForContext =
+      (inst === 'keyboard' || inst === 'pad') &&
       bassCell &&
       bassCell.selectedTake !== 'OFF' &&
       section.enabledParts?.bass !== false
         ? bassCell.takes[bassCell.selectedTake] ?? []
         : [];
-    const vocalNotesForKb =
-      inst === 'keyboard'
+    const kbCell = result.keyboard;
+    const kbNotesForPad =
+      inst === 'pad' &&
+      kbCell &&
+      kbCell.selectedTake !== 'OFF' &&
+      section.enabledParts?.keyboard !== false
+        ? kbCell.takes[kbCell.selectedTake] ?? []
+        : [];
+    const vocalNotesForContext =
+      inst === 'keyboard' || inst === 'pad'
         ? section.vocalMelody?.notes ??
           (existing?.vocal && existing.vocal.selectedTake !== 'OFF'
             ? existing.vocal.takes[existing.vocal.selectedTake]
@@ -338,14 +357,15 @@ export function generateSectionCells(
       inst,
       result[inst].seeds,
       drumNotes,
-      inst === 'vocal' || inst === 'keyboard'
+      inst === 'vocal' || inst === 'keyboard' || inst === 'pad'
         ? options?.prevVocalAvgPitch
         : undefined,
-      inst === 'keyboard'
+      inst === 'keyboard' || inst === 'pad'
         ? {
             drumNotes,
-            bassNotes: bassNotesForKb,
-            vocalNotes: vocalNotesForKb,
+            bassNotes: bassNotesForContext,
+            keyboardNotes: kbNotesForPad,
+            vocalNotes: vocalNotesForContext,
           }
         : undefined
     );

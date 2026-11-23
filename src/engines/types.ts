@@ -54,6 +54,7 @@ export interface EngineInput {
   drumNotes?: MidiNote[];
   kickTicks?: number[];
   bassNotes?: MidiNote[];
+  keyboardNotes?: MidiNote[];
   vocalNotes?: MidiNote[];
   bpm?: number;
   keyboardDensity?: KeyboardDensityLevel;
