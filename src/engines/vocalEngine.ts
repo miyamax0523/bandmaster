@@ -36,8 +36,51 @@ export {
   type SyllableSlot,
 };
 
+export const TPQN = 480;
+export const BEAT_TICKS = 480;
+export const BAR_TICKS = 1920;
+
 export const VOCAL_MIN_PITCH = 48; // C3
 export const VOCAL_MAX_PITCH = 76; // E5
+
+export type ChapterMiddleType =
+  | 'stay_rhythm'
+  | 'stay_float'
+  | 'dip_arch'
+  | 'rap_flow';
+
+export type NormalizedSectionRole =
+  | 'verse'
+  | 'pre_chorus'
+  | 'chorus'
+  | 'bridge'
+  | 'instrumental';
+
+export interface SectionDynamicsModifier {
+  role: NormalizedSectionRole;
+  pitchBiasSemitones: number;
+  timingOffset: number;
+  articulation: number;
+  restRatioTarget: number;
+  landingDurationRange: [number, number];
+  pickupProbability: number;
+  preChorusMode?: 'linear_push' | 'dip_hold';
+  preChorusBreakStyle?: 'silence_break' | 'long_hold';
+  bridgeMode?: 'otoshisabi' | 'overshoot';
+}
+
+export interface ChapterPlan {
+  chapterIndex: number;
+  startTick: number;
+  endTick: number;
+  headRange: [number, number];
+  middleRange: [number, number];
+  endingRange: [number, number];
+  breathStartTick: number;
+  middleType: ChapterMiddleType;
+  sourceChapterIndex?: number;
+  isFinalChapterInSection: boolean;
+}
 
 export type MelodyStyleProfileId =
   | 'alt_hypnotic'
@@ -45,7 +88,8 @@ export type MelodyStyleProfileId =
   | 'posthc_leap'
   | 'jrock_drive'
   | 'jpop_anthem'
-  | 'linkin_hybrid';
+  | 'linkin_hybrid'
+  | 'rap_mixture_flow';
 
 export interface MelodyStyleProfile {
   id: MelodyStyleProfileId;
@@ -160,7 +204,617 @@ export const MELODY_STYLE_PROFILES: Record<MelodyStyleProfileId, MelodyStyleProf
     energyOctaveShift: { Low: -2, Mid: 0, High: 2 },
     grammar: GENRE_VOCAL_GRAMMARS.linkin_hybrid,
   },
+  rap_mixture_flow: {
+    id: 'rap_mixture_flow',
+    motifRepeatFidelity: 0.85,
+    tailTwist: 'freeze_break',
+    syncopationRate: 0.7,
+    laidbackEntry: false,
+    crossBarTieRate: 0.0,
+    repeatNoteRun: [4, 8],
+    breathRestTicks: 480,
+    stepwiseRatio: 0.9,
+    leapSemitoneTarget: 2,
+    tensionLandingWeight: 0.15,
+    energyOctaveShift: { Low: -2, Mid: 0, High: 1 },
+    grammar: GENRE_VOCAL_GRAMMARS.rap_mixture_flow,
+  },
 };
+
+/** Pure deterministic Mulberry32 PRNG returning [0, 1). */
+export function mulberry32(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(state ^ (state >>> 15), 1 | state);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+export function normalizeSectionRole(
+  sectionType?: string,
+  energy?: EnergyLevel,
+  sectionName?: string
+): NormalizedSectionRole {
+  const combined = `${sectionType ?? ''} ${sectionName ?? ''}`.toLowerCase();
+  if (
+    combined.includes('pre-chorus') ||
+    combined.includes('pre_chorus') ||
+    combined.includes('bメロ') ||
+    combined.includes('b-melo')
+  ) {
+    return 'pre_chorus';
+  }
+  if (
+    combined.includes('bridge') ||
+    combined.includes('cメロ') ||
+    combined.includes('落ちサビ') ||
+    combined.includes('otoshisabi')
+  ) {
+    return 'bridge';
+  }
+  if (
+    combined.includes('chorus') ||
+    combined.includes('サビ') ||
+    combined.includes('大サビ')
+  ) {
+    return 'chorus';
+  }
+  if (
+    combined.includes('verse') ||
+    combined.includes('aメロ') ||
+    combined.includes('a-melo')
+  ) {
+    return 'verse';
+  }
+  if (combined.includes('intro') || combined.includes('outro')) {
+    return 'instrumental';
+  }
+  if (energy === 'High') return 'chorus';
+  if (energy === 'Low') return 'verse';
+  return 'verse';
+}
+
+export function resolveSectionDynamicsModifier(
+  role: NormalizedSectionRole,
+  energy: EnergyLevel,
+  sectionName: string | undefined,
+  rng: () => number
+): SectionDynamicsModifier {
+  if (role === 'verse') {
+    return {
+      role: 'verse',
+      pitchBiasSemitones: -2,
+      timingOffset: -0.25,
+      articulation: 0.3,
+      restRatioTarget: 0.42,
+      landingDurationRange: [480, 720],
+      pickupProbability: 0.35,
+    };
+  }
+  if (role === 'pre_chorus') {
+    const isLinear = rng() < 0.55;
+    const isBreak = rng() < 0.5;
+    return {
+      role: 'pre_chorus',
+      pitchBiasSemitones: isLinear ? 0 : -1,
+      timingOffset: isLinear ? -0.35 : -0.2,
+      articulation: 0.65,
+      restRatioTarget: 0.16,
+      landingDurationRange: [720, 960],
+      pickupProbability: 0.78,
+      preChorusMode: isLinear ? 'linear_push' : 'dip_hold',
+      preChorusBreakStyle: isBreak ? 'silence_break' : 'long_hold',
+    };
+  }
+  if (role === 'chorus') {
+    return {
+      role: 'chorus',
+      pitchBiasSemitones: 1,
+      timingOffset: 0.0,
+      articulation: 0.9,
+      restRatioTarget: 0.22,
+      landingDurationRange: [720, 1440],
+      pickupProbability: 0.3,
+    };
+  }
+  if (role === 'bridge') {
+    const isOtoshisabi =
+      energy === 'Low' ||
+      (sectionName ?? '').includes('落ちサビ') ||
+      rng() < 0.5;
+    if (isOtoshisabi) {
+      return {
+        role: 'bridge',
+        pitchBiasSemitones: -4,
+        timingOffset: 0.15,
+        articulation: 0.25,
+        restRatioTarget: 0.35,
+        landingDurationRange: [960, 1440],
+        pickupProbability: 0.45,
+        bridgeMode: 'otoshisabi',
+      };
+    }
+    return {
+      role: 'bridge',
+      pitchBiasSemitones: 3,
+      timingOffset: -0.1,
+      articulation: 1.0,
+      restRatioTarget: 0.2,
+      landingDurationRange: [720, 1200],
+      pickupProbability: 0.6,
+      bridgeMode: 'overshoot',
+    };
+  }
+  return {
+    role: 'instrumental',
+    pitchBiasSemitones: 0,
+    timingOffset: 0,
+    articulation: 0.5,
+    restRatioTarget: 0.35,
+    landingDurationRange: [480, 720],
+    pickupProbability: 0.2,
+  };
+}
+
+export function buildChapterPlans(
+  bars: number,
+  middleType: ChapterMiddleType,
+  modifier: SectionDynamicsModifier
+): ChapterPlan[] {
+  const effectiveMiddle: ChapterMiddleType =
+    modifier.role === 'pre_chorus' && modifier.preChorusMode === 'dip_hold'
+      ? 'dip_arch'
+      : middleType;
+  const chapterBars = 4;
+  const totalChapters = Math.max(1, Math.ceil(bars / chapterBars));
+  const plans: ChapterPlan[] = [];
+
+  for (let c = 0; c < totalChapters; c++) {
+    const startTick = c * 7680;
+    const endTick = Math.min(bars * BAR_TICKS, startTick + 7680);
+    const len = endTick - startTick;
+    plans.push({
+      chapterIndex: c,
+      startTick,
+      endTick,
+      headRange: [startTick, Math.min(endTick, startTick + 1680)],
+      middleRange: [
+        Math.min(endTick, startTick + 1680),
+        Math.min(endTick, startTick + 5520),
+      ],
+      endingRange: [
+        Math.min(endTick, startTick + Math.min(5760, Math.floor(len * 0.75))),
+        Math.max(startTick, endTick - 240),
+      ],
+      breathStartTick: Math.max(startTick, endTick - 240),
+      middleType: effectiveMiddle,
+      sourceChapterIndex: c % 2 === 1 ? c - 1 : undefined,
+      isFinalChapterInSection: c === totalChapters - 1,
+    });
+  }
+  return plans;
+}
+
+function generateRapMixtureFlowNotes(
+  input: EngineInput,
+  modifier: SectionDynamicsModifier,
+  scalePcs: ReadonlySet<number>,
+  keySemitone: number,
+  bandMin: number,
+  bandMax: number,
+  rng: () => number
+): MidiNote[] {
+  const { song, section } = input;
+  const sectionEnd = section.bars * BAR_TICKS;
+  const bpm = song.bpm;
+  const vocalDensity = Math.max(1.0, Math.min(5.0, section.vocalDensity ?? 3));
+  const densityNorm = (vocalDensity - 1.0) / 4.0; // 0.0..1.0
+
+  const scaleGrid = buildScaleGrid(
+    scalePcs,
+    Math.max(VOCAL_MIN_PITCH, bandMin - 2),
+    Math.min(VOCAL_MAX_PITCH, bandMax + 2)
+  );
+  const safeGrid =
+    scaleGrid.length > 0
+      ? scaleGrid
+      : [nearestScalePitch(57, scalePcs, VOCAL_MIN_PITCH, VOCAL_MAX_PITCH)];
+
+  const rootPitch = pickClosestFromList(
+    Math.round((safeGrid[0] + safeGrid[safeGrid.length - 1]) / 2) - 2,
+    safeGrid.filter((p) => p % 12 === keySemitone)
+  );
+  const fifthPitch = pickClosestFromList(
+    rootPitch + 7,
+    safeGrid.filter((p) => p % 12 === (keySemitone + 7) % 12)
+  );
+  const accentChoices = safeGrid.filter(
+    (p) => p > rootPitch && p <= rootPitch + 3
+  );
+  const accentPitch =
+    accentChoices.length > 0 ? accentChoices[0] : fifthPitch;
+
+  // Fast BPM (>= 120): tight 1-2 note percussive lock (<= 3 unique pitches); Slow BPM (< 120): 3-5 note melodic flow
+  const isFastRap = bpm >= 120;
+  const fastPitchPool = Array.from(
+    new Set([rootPitch, accentPitch])
+  ).slice(0, 2);
+  const slowRootIdx = Math.max(0, safeGrid.indexOf(rootPitch));
+  const slowPitchPool = safeGrid.slice(
+    Math.max(0, slowRootIdx - 1),
+    Math.min(safeGrid.length, slowRootIdx + 4)
+  );
+
+  const chapterBars = 4;
+  const numChapters = Math.max(1, Math.ceil(section.bars / chapterBars));
+  const notes: MidiNote[] = [];
+
+  for (let ch = 0; ch < numChapters; ch++) {
+    const chStartBar = ch * chapterBars;
+    const chBars = Math.min(chapterBars, section.bars - chStartBar);
+
+    // Best-of-4 groove selection for bars 0..(chBars-2) + final bar stop
+    let bestCand: MidiNote[] = [];
+    let bestScore = -Infinity;
+
+    for (let candIdx = 0; candIdx < 4; candIdx++) {
+      const candNotes: MidiNote[] = [];
+      const candRng = mulberry32(
+        ((input.seed + ch * 977 + candIdx * 131) >>> 0) || 1
+      );
+      let prevSlowIdx = Math.min(slowPitchPool.length - 1, 1);
+
+      for (let b = 0; b < chBars; b++) {
+        const barIdx = chStartBar + b;
+        const barStart = barIdx * BAR_TICKS;
+        const isChapterEndBar = b === chBars - 1;
+
+        if (isChapterEndBar) {
+          // 4th bar "Ending": rhythmic buildup then sharp low-root stop on beat 4 snare (1440)
+          const preStops =
+            densityNorm >= 0.6
+              ? [0, 240, 480, 720, 960, 1200]
+              : densityNorm >= 0.3
+                ? [0, 480, 960]
+                : [0, 960];
+          for (const off of preStops) {
+            if (barStart + off >= sectionEnd) continue;
+            const p = isFastRap
+              ? fastPitchPool[0]
+              : slowPitchPool[Math.max(0, Math.min(slowPitchPool.length - 1, prevSlowIdx))];
+            candNotes.push({
+              pitch: p,
+              velocity: clampVelocity(86 + (off % 480 === 0 ? 8 : 0)),
+              startTick: barStart + off,
+              durationTicks: 120,
+              channel: TRACK_CHANNELS.vocal,
+            });
+          }
+          const stopTick = barStart + 1440;
+          if (stopTick < sectionEnd) {
+            candNotes.push({
+              pitch: rootPitch,
+              velocity: 108,
+              startTick: stopTick,
+              durationTicks: Math.min(360, sectionEnd - stopTick),
+              channel: TRACK_CHANNELS.vocal,
+            });
+          }
+          continue;
+        }
+
+        // Standard rap bars: 16th/8th grid with snare-aligned rhymes (480, 1440)
+        const step = isFastRap && densityNorm >= 0.45 ? 120 : 240;
+        const baseProb = 0.25 + 0.65 * densityNorm;
+        let runLen = 0;
+
+        for (let off = 0; off < BAR_TICKS - 240; off += step) {
+          const isSnarePos = off === 480 || off === 1440;
+          const prob = isSnarePos ? Math.min(0.96, baseProb + 0.25) : baseProb;
+          if (runLen >= 5) {
+            runLen = 0;
+            continue; // Breath pocket
+          }
+          if (candRng() > prob) {
+            runLen = 0;
+            continue;
+          }
+          runLen++;
+
+          let p: number;
+          if (isFastRap) {
+            p =
+              isSnarePos && candRng() < 0.45 && fastPitchPool.length > 1
+                ? fastPitchPool[1]
+                : fastPitchPool[0];
+          } else {
+            const delta = candRng() < 0.6 ? 1 : -1;
+            prevSlowIdx = Math.max(
+              0,
+              Math.min(slowPitchPool.length - 1, prevSlowIdx + (candRng() < 0.35 ? 0 : delta))
+            );
+            p = slowPitchPool[prevSlowIdx];
+          }
+
+          // Crisp staccato separation (120 ticks gap before next grid if fast)
+          const dur = isFastRap
+            ? Math.min(step, 120)
+            : Math.min(step - 20, 220);
+
+          candNotes.push({
+            pitch: p,
+            velocity: clampVelocity((isSnarePos ? 104 : 84) + Math.round(modifier.articulation * 8)),
+            startTick: barStart + off,
+            durationTicks: Math.max(80, dur),
+            channel: TRACK_CHANNELS.vocal,
+          });
+        }
+      }
+
+      // Score candidate: snare alignment + target density match
+      const snareHits = candNotes.filter(
+        (n) => n.startTick % BAR_TICKS === 480 || n.startTick % BAR_TICKS === 1440
+      ).length;
+      const targetNotes = Math.max(4, Math.round(chBars * (4 + densityNorm * 10)));
+      const densityErr = Math.abs(candNotes.length - targetNotes);
+      const score = snareHits * 3.0 - densityErr * 0.8;
+      if (score > bestScore) {
+        bestScore = score;
+        bestCand = candNotes;
+      }
+    }
+
+    notes.push(...bestCand);
+  }
+
+  void rng;
+  return enforceMonophonicAndClip(notes, sectionEnd);
+}
+
+function applySectionCrossPickup(
+  notes: MidiNote[],
+  input: EngineInput,
+  modifier: SectionDynamicsModifier,
+  scalePcs: ReadonlySet<number>,
+  bandMin: number,
+  bandMax: number,
+  rng: () => number
+): MidiNote[] {
+  const { song, section, nextSectionFirstChord } = input;
+  const sectionEnd = section.bars * BAR_TICKS;
+  if (!nextSectionFirstChord || sectionEnd < BAR_TICKS) {
+    return notes;
+  }
+
+  const shouldPickup =
+    modifier.role === 'pre_chorus' || rng() < modifier.pickupProbability;
+  if (!shouldPickup) {
+    return notes;
+  }
+
+  const out = notes.map((n) => ({ ...n }));
+  const pickupStart = sectionEnd - 240;
+  const breathRequiredBefore = pickupStart - 240; // Minimum 240-tick breath before pickup
+
+  // Clip or remove any note encroaching into [breathRequiredBefore, sectionEnd)
+  for (let i = out.length - 1; i >= 0; i--) {
+    const n = out[i];
+    if (n.startTick >= breathRequiredBefore) {
+      out.splice(i, 1);
+    } else if (n.startTick + n.durationTicks > breathRequiredBefore) {
+      n.durationTicks = Math.max(120, breathRequiredBefore - n.startTick);
+    }
+  }
+
+  const nextRootPc = noteNameToSemitone(nextSectionFirstChord.replace(/[^A-G#b]/g, '').slice(0, 2) || song.key);
+  const scaleGrid = buildScaleGrid(scalePcs, bandMin, bandMax);
+  const targetPitch = pickClosestFromList(
+    out.length > 0 ? out[out.length - 1].pitch + 2 : 64,
+    scaleGrid.filter((p) => p % 12 === nextRootPc).length > 0
+      ? scaleGrid.filter((p) => p % 12 === nextRootPc)
+      : scaleGrid
+  );
+  const leadPitch = nearestScalePitch(targetPitch - 2, scalePcs, bandMin, bandMax);
+
+  out.push({
+    pitch: leadPitch,
+    velocity: clampVelocity(92 + Math.round(modifier.articulation * 12)),
+    startTick: pickupStart,
+    durationTicks: 240,
+    channel: TRACK_CHANNELS.vocal,
+  });
+
+  return enforceMonophonicAndClip(out, sectionEnd);
+}
+
+function applySectionRoleAndChapterPostProcess(
+  rawNotes: MidiNote[],
+  input: EngineInput,
+  modifier: SectionDynamicsModifier,
+  scalePcs: ReadonlySet<number>,
+  bandMin: number,
+  bandMax: number,
+  preset: string,
+  rng: () => number
+): MidiNote[] {
+  const { section } = input;
+  const sectionEnd = section.bars * BAR_TICKS;
+  if (rawNotes.length === 0) return [];
+
+  let notes = rawNotes.map((n) => ({ ...n }));
+  const vocalDensity = Math.max(1.0, Math.min(5.0, section.vocalDensity ?? 3));
+
+  // 1. Continuous decimal vocalDensity interpolation (handles fractional values like 1.8, 2.5, 3.3, 4.2)
+  if (
+    !Number.isInteger(vocalDensity) &&
+    preset !== 'melody_call_response' &&
+    preset !== 'melody_soar_long' &&
+    preset !== 'melody_shoegaze_float'
+  ) {
+    if (vocalDensity < 2.8) {
+      // Thin non-anchor notes proportionally
+      const keepProb = 0.55 + ((vocalDensity - 1.0) / 1.8) * 0.45;
+      notes = notes.filter((n, idx) => {
+        if (idx === 0 || idx === notes.length - 1) return true;
+        if (n.durationTicks >= 480) return true;
+        return rng() <= keepProb;
+      });
+    } else if (vocalDensity > 3.2) {
+      // Subdivide eligible long/medium notes proportionally to fractional density
+      const addProb = Math.min(0.85, ((vocalDensity - 3.0) / 2.0) * 0.85);
+      const subdivided: MidiNote[] = [];
+      for (let i = 0; i < notes.length; i++) {
+        const n = notes[i];
+        const isLast = i === notes.length - 1;
+        if (
+          !isLast &&
+          n.durationTicks >= 480 &&
+          n.durationTicks <= 720 &&
+          n.startTick % BAR_TICKS < 1200 &&
+          rng() < addProb
+        ) {
+          const half = Math.floor(n.durationTicks / 2);
+          const stepPitch = nearestScalePitch(
+            n.pitch + (rng() < 0.5 ? 2 : -2),
+            scalePcs,
+            bandMin,
+            bandMax
+          );
+          subdivided.push({ ...n, durationTicks: half });
+          subdivided.push({
+            ...n,
+            pitch: stepPitch,
+            startTick: n.startTick + half,
+            durationTicks: n.durationTicks - half,
+            velocity: clampVelocity(n.velocity - 4),
+          });
+        } else {
+          subdivided.push(n);
+        }
+      }
+      notes = subdivided;
+    }
+  }
+
+  const isRoleAwarePreset =
+    preset === 'auto' ||
+    preset === 'melody_alt_hypnotic' ||
+    preset === 'melody_deftones_float' ||
+    preset === 'melody_posthc_leap' ||
+    preset === 'melody_jrock_drive' ||
+    preset === 'melody_jpop_anthem';
+
+  // 2. Section Role Dynamics (Verse / Pre-Chorus / Chorus / Bridge)
+  if (modifier.role === 'verse' && isRoleAwarePreset && section.energy !== 'High') {
+    // Shift downbeat phrase entries (localTick === 0) to offbeat (+240) when space permits,
+    // keep resting pockets wide, shorten landing durations to 480..720, and soften velocity to 72..88
+    for (let i = 0; i < notes.length; i++) {
+      const n = notes[i];
+      const next = i + 1 < notes.length ? notes[i + 1] : null;
+      const localTick = n.startTick % BAR_TICKS;
+      if (localTick === 0 && (!next || next.startTick - n.startTick >= 480)) {
+        n.startTick += 240;
+        n.durationTicks = Math.max(120, n.durationTicks - 240);
+      }
+    }
+    // Enforce >= 360..720 rest pocket at bar/phrase ends & keep landing duration in [480, 720]
+    for (let i = 0; i < notes.length; i++) {
+      const n = notes[i];
+      const next = i + 1 < notes.length ? notes[i + 1] : null;
+      const isPhraseTail = !next || next.startTick - (n.startTick + n.durationTicks) >= 240;
+      if (isPhraseTail && n.durationTicks > 720) {
+        n.durationTicks = 600;
+      }
+      n.velocity = Math.min(88, Math.max(72, n.velocity - 10));
+    }
+    // Thin middle notes symmetrically by chapter offset if rest ratio is below verse target
+    const totalDur = notes.reduce((s, n) => s + n.durationTicks, 0);
+    if (totalDur / Math.max(1, sectionEnd) > 0.62 && notes.length > 6) {
+      notes = notes.filter((n, idx) => {
+        if (idx === 0 || idx === notes.length - 1) return true;
+        const chLocal = n.startTick % 7680;
+        if (chLocal < 1200 || chLocal % BAR_TICKS >= 1200) return true;
+        return (chLocal / 120) % 3 !== 1;
+      });
+    }
+  } else if (modifier.role === 'pre_chorus') {
+    const lastBarStart = (section.bars - 1) * BAR_TICKS;
+    if (modifier.preChorusBreakStyle === 'silence_break') {
+      // Clear final 2-3 beats (480..720 ticks before section end, leaving pickup room if needed)
+      const breakStart = sectionEnd - 720;
+      for (let i = notes.length - 1; i >= 0; i--) {
+        if (notes[i].startTick >= breakStart) {
+          notes.splice(i, 1);
+        } else if (notes[i].startTick + notes[i].durationTicks > breakStart) {
+          notes[i].durationTicks = Math.max(120, breakStart - notes[i].startTick);
+        }
+      }
+    } else {
+      // Long-hold tension landing (720..960 ticks) into final bar
+      const tailNotes = notes.filter((n) => n.startTick >= lastBarStart);
+      if (tailNotes.length > 0) {
+        const anchor = tailNotes[0];
+        notes = notes.filter((n) => n.startTick <= anchor.startTick);
+        anchor.durationTicks = Math.min(960, Math.max(720, sectionEnd - anchor.startTick - 240));
+      }
+    }
+  } else if (modifier.role === 'chorus') {
+    // High articulation, strong beat landing, long sustained chapter endings
+    for (const n of notes) {
+      n.velocity = Math.min(116, Math.max(96, n.velocity + 4));
+    }
+    const numChapters = Math.max(1, Math.ceil(section.bars / 4));
+    for (let c = 0; c < numChapters; c++) {
+      const chEnd = Math.min(sectionEnd, (c + 1) * 7680);
+      const chNotes = notes.filter((n) => n.startTick >= c * 7680 && n.startTick < chEnd);
+      if (chNotes.length > 0) {
+        const last = chNotes[chNotes.length - 1];
+        const minTarget = c === numChapters - 1 ? 960 : 720;
+        if (last.durationTicks < minTarget && last.startTick + minTarget <= chEnd) {
+          last.durationTicks = Math.min(1440, Math.max(minTarget, chEnd - last.startTick - 240));
+        }
+      }
+    }
+  } else if (modifier.role === 'bridge') {
+    if (modifier.bridgeMode === 'otoshisabi') {
+      // 0.60x thinning, -4 semitone shift, long sustain 960..1440, soft velocity
+      notes = notes.filter((_, idx) => idx % 5 !== 2 && idx % 5 !== 4);
+      for (let i = 0; i < notes.length; i++) {
+        const n = notes[i];
+        n.pitch = nearestScalePitch(n.pitch - 4, scalePcs, bandMin, bandMax);
+        n.velocity = Math.min(82, Math.max(62, n.velocity - 16));
+        const nextStart = i + 1 < notes.length ? notes[i + 1].startTick : sectionEnd;
+        if (nextStart - n.startTick >= 960) {
+          n.durationTicks = Math.min(1440, nextStart - n.startTick - 120);
+        }
+      }
+    } else {
+      // Overshoot climax: +3 semitones upward shift
+      for (const n of notes) {
+        n.pitch = nearestScalePitch(n.pitch + 3, scalePcs, bandMin, Math.min(VOCAL_MAX_PITCH, bandMax + 3));
+        n.velocity = Math.min(122, Math.max(98, n.velocity + 8));
+      }
+    }
+  }
+
+  // 3. Section cross-pickup (auftakt)
+  notes = applySectionCrossPickup(notes, input, modifier, scalePcs, bandMin, bandMax, rng);
+
+  // 4. VoiSona micro-gap glue (0 ticks gap inside phrases, >= 240 ticks breath at phrase boundaries)
+  notes = enforceMonophonicAndClip(notes, sectionEnd);
+  for (let i = 0; i < notes.length - 1; i++) {
+    const curr = notes[i];
+    const next = notes[i + 1];
+    const gap = next.startTick - (curr.startTick + curr.durationTicks);
+    if (gap > 0 && gap < 240) {
+      curr.durationTicks = next.startTick - curr.startTick;
+    }
+  }
+
+  return enforceMonophonicAndClip(notes, sectionEnd);
+}
 
 function clampVelocity(v: number): number {
   return Math.min(127, Math.max(1, Math.round(v)));
@@ -548,6 +1202,36 @@ export function generateVocalNotes(input: EngineInput): MidiNote[] {
               'melodic_hook_tail',
               'sparse_punchline',
             ]);
+
+  const role = normalizeSectionRole(section.type, section.energy, section.name);
+  const roleRng = mulberry32(((seed ^ 0x4b1d2e3f) >>> 0) || 1);
+  const modifier = resolveSectionDynamicsModifier(
+    role,
+    section.energy,
+    section.name,
+    roleRng
+  );
+
+  if (preset === 'rap_mixture_flow') {
+    const rapNotes = generateRapMixtureFlowNotes(
+      input,
+      modifier,
+      scalePcs,
+      keySemitone,
+      bandMin,
+      bandMax,
+      roleRng
+    );
+    return applySectionCrossPickup(
+      rapNotes,
+      input,
+      modifier,
+      scalePcs,
+      bandMin,
+      bandMax,
+      roleRng
+    );
+  }
 
   const isRapPreset = preset.startsWith('rap_') && preset !== 'rap_linkin_hybrid';
   if (isRapPreset) {
@@ -1098,7 +1782,17 @@ export function generateVocalNotes(input: EngineInput): MidiNote[] {
       }
     }
 
-    return enforceMonophonicAndClip(notes, sectionEnd);
+    const baseResult = enforceMonophonicAndClip(notes, sectionEnd);
+    return applySectionRoleAndChapterPostProcess(
+      baseResult,
+      input,
+      modifier,
+      scalePcs,
+      bandMin,
+      bandMax,
+      preset,
+      roleRng
+    );
   }
 
   // =========================================================================
@@ -1892,7 +2586,17 @@ export function generateVocalNotes(input: EngineInput): MidiNote[] {
       return finalOut;
     };
 
-    return postProcessVocalNotes(rawTagged);
+    const nextGenNotes = postProcessVocalNotes(rawTagged);
+    return applySectionRoleAndChapterPostProcess(
+      nextGenNotes,
+      input,
+      modifier,
+      scalePcs,
+      minPitchBound,
+      maxPitchBound,
+      preset,
+      roleRng
+    );
   }
 
   // =========================================================================
@@ -2024,7 +2728,17 @@ export function generateVocalNotes(input: EngineInput): MidiNote[] {
         });
       }
     }
-    return enforceMonophonicAndClip(notes, sectionEnd);
+    const baseResult = enforceMonophonicAndClip(notes, sectionEnd);
+    return applySectionRoleAndChapterPostProcess(
+      baseResult,
+      input,
+      modifier,
+      scalePcs,
+      bandMin,
+      bandMax,
+      preset,
+      roleRng
+    );
   }
 
   // Stage 1 Types: 2-Bar Rhythm Motif Skeleton
@@ -2508,7 +3222,17 @@ export function generateVocalNotes(input: EngineInput): MidiNote[] {
     }
   }
 
-  return enforceMonophonicAndClip(notes, sectionEnd);
+  const baseGeneric = enforceMonophonicAndClip(notes, sectionEnd);
+  return applySectionRoleAndChapterPostProcess(
+    baseGeneric,
+    input,
+    modifier,
+    scalePcs,
+    bandMin,
+    bandMax,
+    preset,
+    roleRng
+  );
 }
 
 /**

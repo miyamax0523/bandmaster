@@ -219,6 +219,7 @@ export const PATTERN_PRESET_GROUPS: Record<
         { value: 'rap_spoken_tension', label: 'ラップ：低音語り溜め', group: 'ラップ・ミクスチャー' },
         { value: 'rap_stop_and_go', label: 'ラップ：連打＆急停止ブレイク', group: 'ラップ・ミクスチャー' },
         { value: 'rap_linkin_hybrid', label: 'ラップ：タイト刻み＆急停止', group: 'ラップ・ミクスチャー' },
+        { value: 'rap_mixture_flow', label: 'ラップ・ミクスチャーフロウ', group: 'ラップ・ミクスチャー' },
         { value: 'rap_triplet_bounce', label: 'ラップ：三連ハネフロウ', group: 'ラップ・ミクスチャー' },
       ],
     },

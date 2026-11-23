@@ -1,7 +1,9 @@
 import type {
+  EnergyLevel,
   KeyboardDensityLevel,
   MidiNote,
   Section,
+  SectionType,
   SongConfig,
   TakeStyle,
 } from '../types/song';
@@ -59,4 +61,7 @@ export interface EngineInput {
   bpm?: number;
   keyboardDensity?: KeyboardDensityLevel;
   prevVocalAvgPitch?: number;
+  nextSectionFirstChord?: string;
+  nextSectionType?: SectionType | string;
+  nextSectionEnergy?: EnergyLevel | string;
 }

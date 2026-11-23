@@ -188,7 +188,7 @@ export interface Section {
   hatDensity?: DensityLevel; // 1..5 (default 3)
   kickDensity?: DensityLevel; // 1..5 (default 3)
   keyboardDensity?: KeyboardDensityLevel; // 1..7 (default 4)
-  vocalDensity?: DensityLevel; // 1..5 (default 3)
+  vocalDensity?: number; // 1.0..5.0 (default 3)
   vocalHarmony?: VocalHarmonyMode; // default 'off'
   bassChromaticEnabled?: boolean; // default false
   bassFillEnabled?: boolean; // default false

@@ -188,6 +188,26 @@ export const GENRE_VOCAL_GRAMMARS: Record<MelodyStyleProfileId, GenreVocalGramma
     cadenceResolutionStrength: 0.75,
     archShape: 'tight_burst',
   },
+  rap_mixture_flow: {
+    harmonicCouplingVerse: 0.25,
+    harmonicCouplingChorus: 0.5,
+    targetRestRatio: [0.25, 0.45],
+    unisonWeight: 2.0,
+    maxConsecutiveUnisons: 6,
+    signatureLeapRange: [2, 5],
+    signatureLeapChance: 0.15,
+    toneWeights: {
+      root: 2.4,
+      third: 1.0,
+      fifth: 1.8,
+      seventh: 0.8,
+      ninth: 0.8,
+      eleventh: 0.4,
+      pentatonic: 2.2,
+    },
+    cadenceResolutionStrength: 0.9,
+    archShape: 'tight_burst',
+  },
 };
 
 function makeSlots(

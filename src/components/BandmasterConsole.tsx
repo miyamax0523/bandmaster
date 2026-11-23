@@ -41,7 +41,7 @@ interface BandmasterConsoleProps {
   ) => void;
   onChangeSectionVocalDensity: (
     sectionId: string,
-    vocalDensity: DensityLevel
+    vocalDensity: number
   ) => void;
   onChangeSectionVocalHarmony: (
     sectionId: string,
@@ -556,25 +556,35 @@ export function BandmasterConsole({
               {key === 'vocal' && (
                 <div className="density-controls">
                   <div className="density-row">
-                    <span className="density-label">音数</span>
-                    <div className="density-segments" role="group" aria-label="Vocal 音数">
-                      {DENSITY_LEVELS.map((lvl) => {
-                        const active = (section.vocalDensity ?? 3) === lvl;
-                        return (
-                          <button
-                            key={lvl}
-                            type="button"
-                            className={`density-btn ${active ? 'active' : ''}`}
-                            disabled={cell.locked || !effectivelyEnabled}
-                            onClick={() =>
-                              onChangeSectionVocalDensity(section.id, lvl)
-                            }
-                          >
-                            {lvl}
-                          </button>
-                        );
-                      })}
-                    </div>
+                    <span className="density-label">
+                      手数: {(section.vocalDensity ?? 3).toFixed(1)} (
+                      {(section.vocalDensity ?? 3) <= 1.8
+                        ? '余白多め'
+                        : (section.vocalDensity ?? 3) <= 2.6
+                          ? '控えめ'
+                          : (section.vocalDensity ?? 3) <= 3.5
+                            ? '標準'
+                            : (section.vocalDensity ?? 3) <= 4.3
+                              ? '密集'
+                              : '連射'}
+                      )
+                    </span>
+                    <input
+                      type="range"
+                      className="bpm-range"
+                      min={1.0}
+                      max={5.0}
+                      step={0.1}
+                      value={section.vocalDensity ?? 3}
+                      aria-label="Vocal 手数スライダー"
+                      disabled={cell.locked || !effectivelyEnabled}
+                      onChange={(e) =>
+                        onChangeSectionVocalDensity(
+                          section.id,
+                          parseFloat(e.target.value)
+                        )
+                      }
+                    />
                   </div>
                   <div className="density-row">
                     <span className="density-label">ハモリ</span>

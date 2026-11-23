@@ -182,6 +182,8 @@ export function generateCellTakes(
   const takes = {} as Record<TakeStyle, MidiNote[]>;
   for (const style of TAKES) {
     const params = resolveInstrumentParams(song, section, instrument, style);
+    const nextSection = song.sections[sectionIndex + 1];
+    const nextSectionFirstChord = nextSection?.chords?.[0]?.chord;
     const input = {
       song,
       section,
@@ -220,6 +222,12 @@ export function generateCellTakes(
         instrument === 'pad'
           ? prevVocalAvgPitch
           : undefined,
+      nextSectionFirstChord:
+        instrument === 'vocal' ? nextSectionFirstChord : undefined,
+      nextSectionType:
+        instrument === 'vocal' ? nextSection?.type : undefined,
+      nextSectionEnergy:
+        instrument === 'vocal' ? nextSection?.energy : undefined,
     };
     if (instrument === 'drums') {
       takes[style] = generateDrumNotes(input);
@@ -648,33 +656,40 @@ export function updateSectionVocalDensity(
   song: SongConfig,
   bandState: BandState,
   sectionId: string,
-  vocalDensity: DensityLevel
+  vocalDensity: number
 ): { song: SongConfig; bandState: BandState } {
   const nextSong = cloneSongConfig(song);
   const secIdx = nextSong.sections.findIndex((s) => s.id === sectionId);
   if (secIdx === -1) return { song, bandState };
 
   const sec = nextSong.sections[secIdx];
-  sec.vocalDensity = vocalDensity;
+  sec.vocalDensity = Math.max(1, Math.min(5, Math.round(vocalDensity * 10) / 10));
 
   const nextState = cloneBandState(bandState);
   const existingSec = nextState.cellsBySection[sectionId];
 
-  if (existingSec && !existingSec.vocal?.locked) {
+  if (existingSec) {
     const prevVocalAvgPitch =
       secIdx > 0
         ? getAverageVocalPitch(
             nextState.cellsBySection[nextSong.sections[secIdx - 1].id]
           )
         : undefined;
-    nextState.cellsBySection[sectionId] = generateSectionCells(
-      nextSong,
-      sec,
-      secIdx,
-      existingSec,
-      6500 + secIdx,
-      { newSeeds: false, instruments: ['vocal'], prevVocalAvgPitch }
-    );
+    const regenTargets: InstrumentType[] = [];
+    if (!existingSec.vocal?.locked) regenTargets.push('vocal');
+    if (!existingSec.keyboard?.locked) regenTargets.push('keyboard');
+    if (!existingSec.pad?.locked) regenTargets.push('pad');
+
+    if (regenTargets.length > 0) {
+      nextState.cellsBySection[sectionId] = generateSectionCells(
+        nextSong,
+        sec,
+        secIdx,
+        existingSec,
+        6500 + secIdx,
+        { newSeeds: false, instruments: regenTargets, prevVocalAvgPitch }
+      );
+    }
   }
 
   return { song: nextSong, bandState: nextState };

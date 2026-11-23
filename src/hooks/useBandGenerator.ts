@@ -494,7 +494,7 @@ export function useBandGenerator() {
   );
 
   const changeSectionVocalDensity = useCallback(
-    (sectionId: string, vocalDensity: DensityLevel) => {
+    (sectionId: string, vocalDensity: number) => {
       const res = updateSectionVocalDensity(
         song,
         bandState,

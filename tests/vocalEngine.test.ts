@@ -1,8 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
+  buildChapterPlans,
   generateVocalHarmonyNotes,
   generateVocalNotes,
   MELODY_STYLE_PROFILES,
+  mulberry32,
+  normalizeSectionRole,
+  resolveSectionDynamicsModifier,
   VOCAL_MAX_PITCH,
   VOCAL_MIN_PITCH,
 } from '../src/engines/vocalEngine';
@@ -778,6 +782,7 @@ describe('vocalEngine', () => {
       'jrock_drive',
       'linkin_hybrid',
       'posthc_leap',
+      'rap_mixture_flow',
     ]);
 
     const song = createDefaultSongConfig('rockBand');
@@ -1150,5 +1155,266 @@ describe('vocalEngine', () => {
     expect(jrockAntRate).toBeGreaterThan(deftonesAntRate);
 
     console.info('[Next-Gen Vocal Quality Metrics]', JSON.stringify(summary));
+  });
+
+  it('1. enforces 100% hard constraints across all 7 styles, sectionTypes, 4/8 bars, and seeds with zero Math.random()', () => {
+    const styles = [
+      'melody_alt_hypnotic',
+      'melody_deftones_float',
+      'melody_posthc_leap',
+      'melody_jrock_drive',
+      'melody_jpop_anthem',
+      'rap_linkin_hybrid',
+      'rap_mixture_flow',
+    ] as const;
+    const sectionTypes = ['Verse', 'Pre-Chorus', 'Chorus', 'Bridge'] as const;
+    const scalePcs = new Set(getScalePitchClasses('C', 'Major'));
+
+    const baseSong = createDefaultSongConfig('rockBand');
+    baseSong.key = 'C';
+    baseSong.scale = 'Major';
+    const chords4 = createUniformChordTimeline(['C', 'G', 'Am', 'F'], 4);
+    const chords8 = createUniformChordTimeline(['C', 'G', 'Am', 'F'], 8);
+
+    const spy = vi.spyOn(Math, 'random');
+    try {
+      for (const preset of styles) {
+        for (const sType of sectionTypes) {
+          for (const bars of [4, 8] as const) {
+            baseSong.members.vocal.patternPreset = preset;
+            const chords = bars === 4 ? chords4 : chords8;
+            const sec = createSection({
+              bars,
+              type: sType,
+              energy: sType === 'Chorus' ? 'High' : sType === 'Bridge' ? 'Low' : 'Mid',
+              chords,
+            });
+            const params = resolveInstrumentParams(baseSong, sec, 'vocal', 'A');
+            const input = { song: baseSong, section: sec, sectionIndex: 0, style: 'A' as const, seed: 42, params };
+            spy.mockClear();
+            const n1 = generateVocalNotes(input);
+            const n2 = generateVocalNotes(input);
+            expect(spy).not.toHaveBeenCalled();
+
+            expect(n1).toEqual(n2);
+            expect(n1.length).toBeGreaterThan(0);
+
+            const secLen = bars * TICKS_PER_BAR;
+            for (let i = 0; i < n1.length; i++) {
+              const curr = n1[i];
+              expect(curr.startTick).toBeGreaterThanOrEqual(0);
+              expect(curr.durationTicks).toBeGreaterThan(0);
+              expect(curr.startTick + curr.durationTicks).toBeLessThanOrEqual(secLen);
+              expect(scalePcs.has(curr.pitch % 12)).toBe(true);
+              if (i + 1 < n1.length) {
+                expect(curr.startTick + curr.durationTicks).toBeLessThanOrEqual(n1[i + 1].startTick);
+              }
+            }
+          }
+        }
+      }
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('2. verifies chapter-based 8-bar structure (mid/final chorus sustain & chapter 1->2 rhythm similarity >= 80%)', () => {
+    const role = normalizeSectionRole('Chorus', 'High');
+    const mod = resolveSectionDynamicsModifier(role, 'High', 'サビ', mulberry32(1));
+    const plans = buildChapterPlans(8, 'dip_arch', mod);
+    expect(plans.length).toBe(2);
+    expect(plans[0].startTick).toBe(0);
+    expect(plans[0].endTick).toBe(7680);
+    expect(plans[1].sourceChapterIndex).toBe(0);
+
+    const song = createDefaultSongConfig('rockBand');
+    song.key = 'C';
+    song.scale = 'Major';
+    song.members.vocal.patternPreset = 'melody_jpop_anthem';
+    const sec = createSection({
+      bars: 8,
+      type: 'Chorus',
+      energy: 'High',
+      vocalDensity: 3,
+      chords: createUniformChordTimeline(['C', 'G', 'Am', 'F'], 8),
+    });
+    const notes = generateVocalNotes({
+      song,
+      section: sec,
+      sectionIndex: 0,
+      style: 'A',
+      seed: 10,
+      params: resolveInstrumentParams(song, sec, 'vocal', 'A'),
+    });
+
+    const ch1Notes = notes.filter((n) => n.startTick < 7680);
+    const ch2Notes = notes.filter((n) => n.startTick >= 7680);
+    expect(ch1Notes[ch1Notes.length - 1].durationTicks).toBeGreaterThanOrEqual(720);
+    expect(ch2Notes[ch2Notes.length - 1].durationTicks).toBeGreaterThanOrEqual(960);
+
+    const ch1HeadMid = new Set(
+      ch1Notes.filter((n) => n.startTick < 5520).map((n) => n.startTick)
+    );
+    const ch2HeadMid = ch2Notes
+      .filter((n) => n.startTick - 7680 < 5520)
+      .map((n) => n.startTick - 7680);
+    const matched = ch2HeadMid.filter((t) => ch1HeadMid.has(t)).length;
+    expect(matched / Math.max(1, ch2HeadMid.length)).toBeGreaterThanOrEqual(0.8);
+  });
+
+  it('3. differentiates Verse, Pre-Chorus, Chorus, and Bridge by rhythm, rest ratio, and articulation', () => {
+    const song = createDefaultSongConfig('rockBand');
+    song.key = 'C';
+    song.scale = 'Major';
+    song.members.vocal.patternPreset = 'melody_jpop_anthem';
+
+    const makeSec = (type: Section['type'], energy: Section['energy'], name: string) =>
+      createSection({
+        bars: 4,
+        type,
+        name,
+        energy,
+        vocalDensity: 3,
+        chords: createUniformChordTimeline(['C', 'G', 'Am', 'F'], 4),
+      });
+
+    const verseSec = makeSec('Verse', 'Mid', 'Aメロ');
+    const preSec = makeSec('Pre-Chorus', 'Mid', 'Bメロ');
+    const chorusSec = makeSec('Chorus', 'High', 'サビ');
+    const bridgeLowSec = makeSec('Bridge', 'Low', '落ちサビ');
+    const bridgeHighSec = makeSec('Bridge', 'High', '大Cメロ');
+
+    const run = (sec: Section, seed = 21) =>
+      generateVocalNotes({
+        song,
+        section: sec,
+        sectionIndex: 0,
+        style: 'A',
+        seed,
+        params: resolveInstrumentParams(song, sec, 'vocal', 'A'),
+        nextSectionFirstChord: sec.type === 'Pre-Chorus' ? 'C' : undefined,
+      });
+
+    const verseNotes = run(verseSec);
+    const preNotes = run(preSec);
+    const chorusNotes = run(chorusSec);
+    const bridgeLowNotes = run(bridgeLowSec);
+    const bridgeHighNotes = run(bridgeHighSec, 22);
+
+    const restRatio = (arr: typeof verseNotes) => {
+      const sung = arr.reduce((s, n) => s + n.durationTicks, 0);
+      return 1 - sung / (4 * TICKS_PER_BAR);
+    };
+    expect(restRatio(verseNotes)).toBeGreaterThan(restRatio(chorusNotes));
+
+    const verseOffbeats = verseNotes.filter((n) => n.startTick % 480 !== 0).length;
+    expect(verseOffbeats).toBeGreaterThan(0);
+    expect(verseNotes[verseNotes.length - 1].durationTicks).toBeLessThanOrEqual(720);
+
+    expect(preNotes.some((n) => n.startTick === 4 * TICKS_PER_BAR - 240)).toBe(true);
+
+    const avgVel = (arr: typeof verseNotes) =>
+      arr.reduce((s, n) => s + n.velocity, 0) / arr.length;
+    expect(avgVel(bridgeLowNotes)).toBeLessThan(avgVel(bridgeHighNotes));
+  });
+
+  it('4. implements tempo-dependent pitch strategy and density scaling for rap_mixture_flow', () => {
+    const fastSong = createDefaultSongConfig('rockBand');
+    fastSong.bpm = 136;
+    fastSong.key = 'E';
+    fastSong.scale = 'Minor';
+    fastSong.members.vocal.patternPreset = 'rap_mixture_flow';
+
+    const slowSong = createDefaultSongConfig('rockBand');
+    slowSong.bpm = 92;
+    slowSong.key = 'E';
+    slowSong.scale = 'Minor';
+    slowSong.members.vocal.patternPreset = 'rap_mixture_flow';
+
+    const sec = createSection({
+      bars: 4,
+      type: 'Verse',
+      energy: 'Mid',
+      vocalDensity: 3.5,
+      chords: createUniformChordTimeline(['Em', 'C', 'G', 'D'], 4),
+    });
+
+    const fastNotes = generateVocalNotes({
+      song: fastSong,
+      section: sec,
+      sectionIndex: 0,
+      style: 'A',
+      seed: 10,
+      params: resolveInstrumentParams(fastSong, sec, 'vocal', 'A'),
+    });
+    const slowNotes = generateVocalNotes({
+      song: slowSong,
+      section: sec,
+      sectionIndex: 0,
+      style: 'A',
+      seed: 10,
+      params: resolveInstrumentParams(slowSong, sec, 'vocal', 'A'),
+    });
+
+    expect(new Set(fastNotes.map((n) => n.pitch)).size).toBeLessThanOrEqual(3);
+    expect(new Set(slowNotes.map((n) => n.pitch)).size).toBeGreaterThanOrEqual(3);
+
+    const sparseSec = { ...sec, vocalDensity: 1.2 };
+    const denseSec = { ...sec, vocalDensity: 4.8 };
+    const sparseNotes = generateVocalNotes({
+      song: fastSong,
+      section: sparseSec,
+      sectionIndex: 0,
+      style: 'A',
+      seed: 10,
+      params: resolveInstrumentParams(fastSong, sparseSec, 'vocal', 'A'),
+    });
+    const denseNotes = generateVocalNotes({
+      song: fastSong,
+      section: denseSec,
+      sectionIndex: 0,
+      style: 'A',
+      seed: 10,
+      params: resolveInstrumentParams(fastSong, denseSec, 'vocal', 'A'),
+    });
+    expect(denseNotes.length).toBeGreaterThan(sparseNotes.length);
+  });
+
+  it('5. supports continuous decimal vocalDensity (1.0..5.0) and cross-section pickup breath >= 240 ticks', () => {
+    const song = createDefaultSongConfig('rockBand');
+    song.key = 'C';
+    song.scale = 'Major';
+    song.members.vocal.patternPreset = 'melody_jpop_anthem';
+
+    const decimals = [1.0, 1.8, 2.5, 3.3, 4.2, 5.0];
+    const counts: number[] = [];
+    for (const d of decimals) {
+      const sec = createSection({
+        bars: 4,
+        type: 'Pre-Chorus',
+        energy: 'Mid',
+        vocalDensity: d,
+        chords: createUniformChordTimeline(['Dm7', 'G7', 'Em7', 'Am7'], 4),
+      });
+      const notes = generateVocalNotes({
+        song,
+        section: sec,
+        sectionIndex: 0,
+        style: 'A',
+        seed: 55,
+        params: resolveInstrumentParams(song, sec, 'vocal', 'A'),
+        nextSectionFirstChord: 'C',
+      });
+      counts.push(notes.length);
+
+      const pickupIdx = notes.findIndex((n) => n.startTick === 4 * TICKS_PER_BAR - 240);
+      expect(pickupIdx).toBeGreaterThan(0);
+      const prev = notes[pickupIdx - 1];
+      expect(notes[pickupIdx].startTick - (prev.startTick + prev.durationTicks)).toBeGreaterThanOrEqual(
+        240
+      );
+    }
+    expect(counts[counts.length - 1]).toBeGreaterThan(counts[0]);
   });
 });
