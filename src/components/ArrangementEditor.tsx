@@ -60,9 +60,11 @@ const SECTION_TYPES: SectionType[] = [
 ];
 
 const ARRANGEMENT_PRESETS: Array<{ id: ArrangementPresetId; label: string }> = [
-  { id: 'twoPart', label: '2部構成 (Verse / Chorus)' },
-  { id: 'fourPart', label: '王道4部 (Intro / A / B / サビ)' },
-  { id: 'full', label: 'フル構成 (Intro / A / B / サビ / C / Outro)' },
+  { id: 'full_2min30', label: '標準フル（約2分半・2B省略・84小節）' },
+  { id: 'chorus_start', label: 'サビ始まり疾走（約2分半・88小節）' },
+  { id: 'full_two_chorus', label: '王道2コーラス完備（約2分45秒・92小節）' },
+  { id: 'one_half', label: 'ワンハーフ凝縮（約1分30秒・56小節）' },
+  { id: 'ballad_60', label: 'バラード専用フル（約2分半・60小節）' },
 ];
 
 const SECTION_PART_CHIPS: Array<{

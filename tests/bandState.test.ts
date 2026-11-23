@@ -181,15 +181,41 @@ describe('bandState', () => {
   });
 
   it('computes total bars and formatted duration (MM:SS) and applies arrangement presets', () => {
-    const song = createDefaultSongConfig('rockBand');
-    // Default rockBand: 4 + 8 + 4 + 8 = 24 bars at 135 BPM -> round((24 * 4 * 60) / 135) = 43s -> 0:43
+    const song = createDefaultSongConfig('royal_jpop');
+    // Default 2.5-min golden rock structure: 84 bars at 142 BPM -> round((84 * 4 * 60) / 142) = 142s -> 2:22
     expect(getSongDurationSummary(song)).toEqual({
-      totalBars: 24,
-      totalSeconds: 43,
-      formattedDuration: '0:43',
+      totalBars: 84,
+      totalSeconds: 142,
+      formattedDuration: '2:22',
     });
 
-    // At 120 BPM with 14 bars -> 28s -> 0:28
+    // New 2.5-min & modern rock/pop arrangement presets
+    const stdFull = applyArrangementPresetToSong(song, 'full_2min30');
+    expect(stdFull.song.sections.length).toBe(10);
+    expect(getSongDurationSummary(stdFull.song).totalBars).toBe(84);
+
+    const chorusStart = applyArrangementPresetToSong(song, 'chorus_start');
+    expect(chorusStart.song.sections.length).toBe(11);
+    expect(getSongDurationSummary(chorusStart.song).totalBars).toBe(88);
+
+    const twoChorus = applyArrangementPresetToSong(song, 'full_two_chorus');
+    expect(twoChorus.song.sections.length).toBe(11);
+    expect(getSongDurationSummary(twoChorus.song).totalBars).toBe(92);
+
+    const oneHalf = applyArrangementPresetToSong(song, 'one_half');
+    expect(oneHalf.song.sections.length).toBe(7);
+    expect(getSongDurationSummary(oneHalf.song).totalBars).toBe(56);
+
+    const ballad60 = applyArrangementPresetToSong(song, 'ballad_60');
+    expect(ballad60.song.sections.length).toBe(9);
+    expect(getSongDurationSummary(ballad60.song).totalBars).toBe(60);
+
+    // Auto-scales full_2min30 to 60 bars when bpm <= 95
+    song.bpm = 86;
+    const autoBallad = applyArrangementPresetToSong(song, 'full_2min30');
+    expect(getSongDurationSummary(autoBallad.song).totalBars).toBe(60);
+
+    // Legacy arrangement presets remain backwards compatible
     song.bpm = 120;
     const twoPart = applyArrangementPresetToSong(song, 'twoPart');
     expect(twoPart.song.sections.length).toBe(2);
@@ -213,7 +239,7 @@ describe('bandState', () => {
       origIds[1],
       origIds[2],
       origIds[0],
-      origIds[3],
+      ...origIds.slice(3),
     ]);
     // Out-of-bounds or no-op returns original reference
     expect(reorderSectionsInSong(song, 1, 1)).toBe(song);

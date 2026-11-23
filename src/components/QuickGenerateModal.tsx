@@ -1,13 +1,15 @@
 import { useMemo, useState } from 'react';
 import { KEY_NAMES } from '../lib/chordUtils';
+import type { MasterGenreId } from '../lib/masterGenres';
 import type { ScaleType, SongConfig } from '../types/song';
 import {
   buildSongFromQuickSetup,
   QUICK_CHORD_PRESETS,
+  QUICK_GENRE_LIST,
   QUICK_GENRE_META,
   QUICK_STRUCTURE_TEMPLATES,
+  resolveEffectiveStructureTemplate,
   type QuickChordPresetId,
-  type QuickGenreId,
   type QuickSongLengthId,
   type QuickStructureTemplateId,
 } from '../utils/quickSongBuilder';
@@ -20,11 +22,11 @@ interface QuickGenerateModalProps {
 
 const LENGTH_TABS: Array<{ id: QuickSongLengthId; label: string }> = [
   { id: 'short_loop', label: 'ショート' },
-  { id: 'one_chorus', label: 'ワンコーラス' },
-  { id: 'full_chorus', label: 'フル構成' },
+  { id: 'one_chorus', label: 'ワンハーフ / 1コーラス' },
+  { id: 'full_chorus', label: 'フル構成（約2分半）' },
 ];
 
-const GENRE_LIST = Object.values(QUICK_GENRE_META);
+const GENRE_LIST = QUICK_GENRE_LIST;
 const TEMPLATE_LIST = Object.values(QUICK_STRUCTURE_TEMPLATES);
 
 function formatDurationEstimate(totalBars: number, bpm: number): string {
@@ -40,14 +42,14 @@ export function QuickGenerateModal({
   onGenerate,
   onClose,
 }: QuickGenerateModalProps) {
-  const [genre, setGenre] = useState<QuickGenreId>('royal_jpop');
+  const [genre, setGenre] = useState<MasterGenreId>('royal_jpop');
   const [keyRoot, setKeyRoot] = useState<string>(initialSong.key || 'C');
   const [scaleType, setScaleType] = useState<ScaleType>(initialSong.scale || 'Major');
-  const [bpm, setBpm] = useState<number>(initialSong.bpm || 132);
+  const [bpm, setBpm] = useState<number>(initialSong.bpm || 145);
   const [autoSyncBpm, setAutoSyncBpm] = useState<boolean>(true);
-  const [songLength, setSongLength] = useState<QuickSongLengthId>('one_chorus');
+  const [songLength, setSongLength] = useState<QuickSongLengthId>('full_chorus');
   const [structureTemplate, setStructureTemplate] =
-    useState<QuickStructureTemplateId>('one_standard');
+    useState<QuickStructureTemplateId>('full_standard');
   const [chordPreset, setChordPreset] = useState<QuickChordPresetId>('auto_by_genre');
   const [customChordsText, setCustomChordsText] = useState<string>('Fmaj7 G6 Em7 Am7');
   const [includeAnticipation, setIncludeAnticipation] = useState<boolean>(true);
@@ -57,13 +59,19 @@ export function QuickGenerateModal({
     [songLength]
   );
 
-  const activeTemplate = QUICK_STRUCTURE_TEMPLATES[structureTemplate];
+  const effectiveTemplate = useMemo(
+    () => resolveEffectiveStructureTemplate(structureTemplate, genre, bpm),
+    [structureTemplate, genre, bpm]
+  );
+  const isBalladAutoScaled =
+    effectiveTemplate.id === 'full_ballad_60' &&
+    structureTemplate !== 'full_ballad_60';
   const totalBars = useMemo(
-    () => activeTemplate.sections.reduce((sum, s) => sum + s.bars, 0),
-    [activeTemplate]
+    () => effectiveTemplate.sections.reduce((sum, s) => sum + s.bars, 0),
+    [effectiveTemplate]
   );
 
-  const handleSelectGenre = (nextGenre: QuickGenreId) => {
+  const handleSelectGenre = (nextGenre: MasterGenreId) => {
     setGenre(nextGenre);
     const meta = QUICK_GENRE_META[nextGenre];
     if (autoSyncBpm) {
@@ -259,6 +267,7 @@ export function QuickGenerateModal({
             </select>
             <div className="quick-duration-badge">
               合計 {totalBars}小節 / {formatDurationEstimate(totalBars, bpm)} @ {bpm} BPM
+              {isBalladAutoScaled && '（バラード用60小節へ自動最適化）'}
             </div>
           </div>
 

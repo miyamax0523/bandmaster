@@ -5,6 +5,7 @@ import {
   type ParsedMidiFile,
 } from '../lib/midiParser';
 import type { QuickTemplateId } from '../lib/bandState';
+import { MASTER_GENRE_LIST } from '../lib/masterGenres';
 import type {
   BeatFeel,
   DrumLoopData,
@@ -21,12 +22,12 @@ interface SongSettingsProps {
   onChangeSongDrumLoop: (loop?: DrumLoopData) => void;
 }
 
-const TEMPLATES: Array<{ id: QuickTemplateId; label: string; desc: string }> = [
-  { id: 'rockBand', label: '🎸 王道ロック', desc: '4リズム標準編成' },
-  { id: 'metal3Piece', label: '⚡ 3ピースメタル', desc: 'Drums+Bass (KEY/PAD OFF)' },
-  { id: 'shoegaze', label: '🌊 シューゲイザー', desc: 'Half-Time + 浮遊空間系' },
-  { id: 'trapHybrid', label: '🔊 808ハイブリッド', desc: 'Trapロール + 808 Bounce' },
-];
+const TEMPLATES: Array<{ id: QuickTemplateId; label: string; desc: string }> =
+  MASTER_GENRE_LIST.map((g) => ({
+    id: g.id,
+    label: `${g.icon} ${g.label}`,
+    desc: g.desc,
+  }));
 
 export function SongSettings({
   song,

@@ -1,4 +1,5 @@
 import {
+  getDefaultDrumFillEnabled,
   type ChordSlot,
   type EnergyLevel,
   type InstrumentType,
@@ -15,23 +16,33 @@ import {
   semitoneToKeyName,
   transposeChords,
 } from '../lib/chordUtils';
+import {
+  MASTER_GENRES,
+  MASTER_GENRE_LIST,
+  normalizeMasterGenreId,
+  type MasterGenreId,
+  type MasterGenreMeta,
+} from '../lib/masterGenres';
 
-export type QuickGenreId =
+export type LegacyQuickGenreId =
   | 'alt_heavy_shoegaze'
-  | 'emo_jrock'
-  | 'royal_jpop'
-  | 'numetal_mixture'
   | 'fusion_funk'
   | 'chill_lofi_ballad';
+
+export type QuickGenreId = MasterGenreId | LegacyQuickGenreId;
 
 export type QuickSongLengthId = 'short_loop' | 'one_chorus' | 'full_chorus';
 
 export type QuickStructureTemplateId =
   | 'short_ab'
   | 'short_chorus_loop'
+  | 'one_half'
   | 'one_standard'
   | 'one_aiko_style'
   | 'full_standard'
+  | 'full_chorus_start'
+  | 'full_two_chorus'
+  | 'full_ballad_60'
   | 'full_dramatic';
 
 export type QuickChordPresetId =
@@ -55,88 +66,29 @@ export interface QuickSongSetupParams {
   includeAnticipation?: boolean;
 }
 
-export interface QuickGenreMeta {
-  id: QuickGenreId;
-  label: string;
-  icon: string;
-  desc: string;
-  recommendedBpm: number;
-  defaultScale: ScaleType;
-  beatFeel: SongConfig['beatFeel'];
-}
+export type QuickGenreMeta = MasterGenreMeta;
 
-export const QUICK_GENRE_META: Record<QuickGenreId, QuickGenreMeta> = {
-  alt_heavy_shoegaze: {
-    id: 'alt_heavy_shoegaze',
-    label: 'オルタナ / シューゲイザー',
-    icon: '🌊',
-    desc: '重厚ハーフタイム + 浮遊9th空間',
-    recommendedBpm: 118,
-    defaultScale: 'Minor',
-    beatFeel: 'Half-Time',
-  },
-  emo_jrock: {
-    id: 'emo_jrock',
-    label: '疾走エモ / J-ROCK',
-    icon: '⚡',
-    desc: 'ツービート疾走 + 食い込みドライブ',
-    recommendedBpm: 168,
-    defaultScale: 'Major',
-    beatFeel: 'Driving',
-  },
-  royal_jpop: {
-    id: 'royal_jpop',
-    label: '王道 J-POP / メロディック',
-    icon: '✨',
-    desc: 'キャッチー歌メロ + 王道バンド編成',
-    recommendedBpm: 132,
-    defaultScale: 'Major',
-    beatFeel: 'Straight',
-  },
-  numetal_mixture: {
-    id: 'numetal_mixture',
-    label: 'ニューメタル / ミクスチャー',
-    icon: '🔥',
-    desc: 'ラップフロウ + ヘヴィリフ刻み',
-    recommendedBpm: 105,
-    defaultScale: 'Minor',
-    beatFeel: 'Half-Time',
-  },
-  fusion_funk: {
-    id: 'fusion_funk',
-    label: 'フュージョン / ファンク',
-    icon: '🎷',
-    desc: '16分スラップ + 9th/13thコンピング',
-    recommendedBpm: 124,
-    defaultScale: 'Minor',
-    beatFeel: 'Bounce',
-  },
-  chill_lofi_ballad: {
-    id: 'chill_lofi_ballad',
-    label: 'チル / ローファイバラード',
-    icon: '🌙',
-    desc: 'レイドバック + 温かみのある空間',
-    recommendedBpm: 84,
-    defaultScale: 'Major',
-    beatFeel: 'Bounce',
-  },
-};
+/** Canonical 5 master genres exposed to UI */
+export const QUICK_GENRE_META: Record<MasterGenreId, QuickGenreMeta> = MASTER_GENRES;
+export const QUICK_GENRE_LIST: readonly QuickGenreMeta[] = MASTER_GENRE_LIST;
 
-interface StructureSectionSpec {
+export interface StructureSectionSpec {
   type: SectionType;
   name: string;
   bars: number;
   role: 'intro' | 'verse' | 'pre_chorus' | 'chorus' | 'otoshisabi' | 'interlude' | 'outro';
 }
 
+export interface QuickStructureTemplate {
+  id: QuickStructureTemplateId;
+  lengthId: QuickSongLengthId;
+  label: string;
+  sections: readonly StructureSectionSpec[];
+}
+
 export const QUICK_STRUCTURE_TEMPLATES: Record<
-  QuickStructureTemplateId,
-  {
-    id: QuickStructureTemplateId;
-    lengthId: QuickSongLengthId;
-    label: string;
-    sections: readonly StructureSectionSpec[];
-  }
+  Exclude<QuickStructureTemplateId, 'full_dramatic'>,
+  QuickStructureTemplate
 > = {
   short_ab: {
     id: 'short_ab',
@@ -153,61 +105,111 @@ export const QUICK_STRUCTURE_TEMPLATES: Record<
     label: 'サビ(8)ループ [8小節]',
     sections: [{ type: 'Chorus', name: 'サビ', bars: 8, role: 'chorus' }],
   },
+  one_half: {
+    id: 'one_half',
+    lengthId: 'one_chorus',
+    label: 'ワンハーフ凝縮（約1分30秒）[56小節]',
+    sections: [
+      { type: 'Intro', name: 'イントロ', bars: 4, role: 'intro' },
+      { type: 'Verse', name: 'Aメロ', bars: 8, role: 'verse' },
+      { type: 'Pre-Chorus', name: 'Bメロ', bars: 8, role: 'pre_chorus' },
+      { type: 'Chorus', name: 'サビ', bars: 8, role: 'chorus' },
+      { type: 'Bridge', name: 'Cメロ', bars: 8, role: 'otoshisabi' },
+      { type: 'Chorus', name: 'ラスサビ', bars: 16, role: 'chorus' },
+      { type: 'Outro', name: 'アウトロ', bars: 4, role: 'outro' },
+    ],
+  },
   one_standard: {
     id: 'one_standard',
     lengthId: 'one_chorus',
-    label: 'Intro(4) → A(8) → B(4) → サビ(8) → Outro(4) [28小節]',
+    label: 'ワンコーラス標準 [28小節]',
     sections: [
-      { type: 'Intro', name: 'Intro', bars: 4, role: 'intro' },
+      { type: 'Intro', name: 'イントロ', bars: 4, role: 'intro' },
       { type: 'Verse', name: 'Aメロ', bars: 8, role: 'verse' },
       { type: 'Pre-Chorus', name: 'Bメロ', bars: 4, role: 'pre_chorus' },
       { type: 'Chorus', name: 'サビ', bars: 8, role: 'chorus' },
-      { type: 'Outro', name: 'Outro', bars: 4, role: 'outro' },
+      { type: 'Outro', name: 'アウトロ', bars: 4, role: 'outro' },
     ],
   },
   one_aiko_style: {
     id: 'one_aiko_style',
     lengthId: 'one_chorus',
-    label: 'Intro(4) → A(8) → B(4) → 大サビ(16) → Outro(4) [36小節]',
+    label: 'ワンコーラス大サビ [36小節]',
     sections: [
-      { type: 'Intro', name: 'Intro', bars: 4, role: 'intro' },
+      { type: 'Intro', name: 'イントロ', bars: 4, role: 'intro' },
       { type: 'Verse', name: 'Aメロ', bars: 8, role: 'verse' },
       { type: 'Pre-Chorus', name: 'Bメロ', bars: 4, role: 'pre_chorus' },
       { type: 'Chorus', name: '大サビ', bars: 16, role: 'chorus' },
-      { type: 'Outro', name: 'Outro', bars: 4, role: 'outro' },
+      { type: 'Outro', name: 'アウトロ', bars: 4, role: 'outro' },
     ],
   },
   full_standard: {
     id: 'full_standard',
     lengthId: 'full_chorus',
-    label: 'フル標準 [56小節]',
+    label: '標準フル（約2分半・王道2B省略型）[84小節]',
     sections: [
-      { type: 'Intro', name: 'Intro', bars: 4, role: 'intro' },
+      { type: 'Intro', name: 'イントロ', bars: 8, role: 'intro' },
       { type: 'Verse', name: '1Aメロ', bars: 8, role: 'verse' },
-      { type: 'Pre-Chorus', name: '1Bメロ', bars: 4, role: 'pre_chorus' },
+      { type: 'Pre-Chorus', name: '1Bメロ', bars: 8, role: 'pre_chorus' },
       { type: 'Chorus', name: '1サビ', bars: 8, role: 'chorus' },
       { type: 'Bridge', name: '間奏', bars: 4, role: 'interlude' },
       { type: 'Verse', name: '2Aメロ', bars: 8, role: 'verse' },
-      { type: 'Pre-Chorus', name: '2Bメロ', bars: 4, role: 'pre_chorus' },
-      { type: 'Chorus', name: '大サビ', bars: 12, role: 'chorus' },
-      { type: 'Outro', name: 'Outro', bars: 4, role: 'outro' },
+      { type: 'Chorus', name: '2サビ', bars: 8, role: 'chorus' },
+      { type: 'Bridge', name: 'Cメロ（落ちサビ）', bars: 8, role: 'otoshisabi' },
+      { type: 'Chorus', name: 'ラスサビ', bars: 16, role: 'chorus' },
+      { type: 'Outro', name: 'アウトロ', bars: 8, role: 'outro' },
     ],
   },
-  full_dramatic: {
-    id: 'full_dramatic',
+  full_chorus_start: {
+    id: 'full_chorus_start',
     lengthId: 'full_chorus',
-    label: 'フルドラマチック（落ちサビ付）[60小節]',
+    label: 'サビ始まり疾走（約2分半）[88小節]',
     sections: [
-      { type: 'Intro', name: 'Intro', bars: 4, role: 'intro' },
+      { type: 'Chorus', name: 'サビ頭', bars: 8, role: 'chorus' },
+      { type: 'Intro', name: 'イントロ', bars: 8, role: 'intro' },
       { type: 'Verse', name: '1Aメロ', bars: 8, role: 'verse' },
-      { type: 'Pre-Chorus', name: '1Bメロ', bars: 4, role: 'pre_chorus' },
+      { type: 'Pre-Chorus', name: '1Bメロ', bars: 8, role: 'pre_chorus' },
+      { type: 'Chorus', name: '1サビ', bars: 8, role: 'chorus' },
+      { type: 'Verse', name: '2Aメロ', bars: 8, role: 'verse' },
+      { type: 'Pre-Chorus', name: '2Bメロ', bars: 4, role: 'pre_chorus' },
+      { type: 'Chorus', name: '2サビ', bars: 8, role: 'chorus' },
+      { type: 'Bridge', name: '落ちサビ', bars: 8, role: 'otoshisabi' },
+      { type: 'Chorus', name: 'ラスサビ', bars: 16, role: 'chorus' },
+      { type: 'Outro', name: 'アウトロ', bars: 4, role: 'outro' },
+    ],
+  },
+  full_two_chorus: {
+    id: 'full_two_chorus',
+    lengthId: 'full_chorus',
+    label: '王道2コーラス完備（約2分45秒）[92小節]',
+    sections: [
+      { type: 'Intro', name: 'イントロ', bars: 8, role: 'intro' },
+      { type: 'Verse', name: '1Aメロ', bars: 8, role: 'verse' },
+      { type: 'Pre-Chorus', name: '1Bメロ', bars: 8, role: 'pre_chorus' },
       { type: 'Chorus', name: '1サビ', bars: 8, role: 'chorus' },
       { type: 'Bridge', name: '間奏', bars: 4, role: 'interlude' },
       { type: 'Verse', name: '2Aメロ', bars: 8, role: 'verse' },
-      { type: 'Pre-Chorus', name: '2Bメロ', bars: 4, role: 'pre_chorus' },
-      { type: 'Bridge', name: '落ちサビ', bars: 4, role: 'otoshisabi' },
-      { type: 'Chorus', name: '大サビ', bars: 12, role: 'chorus' },
-      { type: 'Outro', name: 'Outro', bars: 4, role: 'outro' },
+      { type: 'Pre-Chorus', name: '2Bメロ', bars: 8, role: 'pre_chorus' },
+      { type: 'Chorus', name: '2サビ', bars: 8, role: 'chorus' },
+      { type: 'Bridge', name: 'Cメロ', bars: 8, role: 'otoshisabi' },
+      { type: 'Chorus', name: 'ラスサビ', bars: 16, role: 'chorus' },
+      { type: 'Outro', name: 'アウトロ', bars: 8, role: 'outro' },
+    ],
+  },
+  full_ballad_60: {
+    id: 'full_ballad_60',
+    lengthId: 'full_chorus',
+    label: 'バラード専用フル（約2分半）[60小節]',
+    sections: [
+      { type: 'Intro', name: 'イントロ', bars: 4, role: 'intro' },
+      { type: 'Verse', name: '1Aメロ', bars: 8, role: 'verse' },
+      { type: 'Pre-Chorus', name: '1Bメロ', bars: 4, role: 'pre_chorus' },
+      { type: 'Chorus', name: '1サビ', bars: 8, role: 'chorus' },
+      { type: 'Verse', name: '2Aメロ', bars: 8, role: 'verse' },
+      { type: 'Chorus', name: '2サビ', bars: 8, role: 'chorus' },
+      { type: 'Bridge', name: '落ちサビ', bars: 8, role: 'otoshisabi' },
+      { type: 'Chorus', name: 'ラスサビ', bars: 8, role: 'chorus' },
+      { type: 'Outro', name: 'アウトロ', bars: 4, role: 'outro' },
     ],
   },
 };
@@ -221,6 +223,27 @@ export const QUICK_CHORD_PRESETS: Array<{ id: QuickChordPresetId; label: string 
   { id: 'emo_driving', label: 'エモ疾走 (IV-I-V-VIm)' },
   { id: 'custom', label: 'カスタム入力' },
 ];
+
+export function resolveEffectiveStructureTemplate(
+  templateId: QuickStructureTemplateId,
+  genre: QuickGenreId,
+  bpm: number
+): QuickStructureTemplate {
+  const normalizedGenre = normalizeMasterGenreId(genre);
+  const baseTemplate =
+    templateId === 'full_dramatic'
+      ? QUICK_STRUCTURE_TEMPLATES.full_standard
+      : QUICK_STRUCTURE_TEMPLATES[templateId] ?? QUICK_STRUCTURE_TEMPLATES.full_standard;
+
+  if (
+    baseTemplate.lengthId === 'full_chorus' &&
+    (normalizedGenre === 'chill_ballad' || bpm <= 95)
+  ) {
+    return QUICK_STRUCTURE_TEMPLATES.full_ballad_60;
+  }
+
+  return baseTemplate;
+}
 
 export function mulberry32(seed: number): () => number {
   let state = seed >>> 0;
@@ -269,25 +292,20 @@ function parseCustomChords(text: string | undefined): string[] {
 
 function resolveBaseChordsInC(
   chordPreset: QuickChordPresetId,
-  genre: QuickGenreId,
+  genre: MasterGenreId,
   scale: ScaleType,
   role: StructureSectionSpec['role']
 ): string[] {
   const effectivePreset: QuickChordPresetId =
     chordPreset !== 'auto_by_genre'
       ? chordPreset
-      : genre === 'alt_heavy_shoegaze' || genre === 'numetal_mixture'
+      : genre === 'alt_shoegaze' || genre === 'numetal_mixture'
         ? 'alt_floating'
         : genre === 'emo_jrock'
           ? 'emo_driving'
-          : genre === 'fusion_funk'
-            ? 'royal_4536'
-            : genre === 'chill_lofi_ballad'
-              ? 'royal_4536'
-              : 'royal_4536';
+          : 'royal_4536';
 
   if (scale === 'Minor') {
-    // Base progressions in C Minor (C=0, Eb=3, F=5, G=7, Ab=8, Bb=10)
     switch (effectivePreset) {
       case 'komuro_6451':
         return role === 'verse'
@@ -311,7 +329,6 @@ function resolveBaseChordsInC(
     }
   }
 
-  // Base progressions in C Major
   switch (effectivePreset) {
     case 'komuro_6451':
       return role === 'verse' ? ['Am7', 'F', 'G', 'C'] : ['Am', 'F', 'G', 'C'];
@@ -325,12 +342,7 @@ function resolveBaseChordsInC(
       return role === 'verse' ? ['Am', 'F', 'C', 'G'] : ['F', 'C', 'G', 'Am'];
     case 'royal_4536':
     default:
-      if (genre === 'fusion_funk') {
-        return role === 'verse'
-          ? ['Dm9', 'G13', 'Em7', 'A7']
-          : ['Fmaj7', 'G6', 'Em7', 'Am9'];
-      }
-      if (genre === 'chill_lofi_ballad') {
+      if (genre === 'chill_ballad') {
         return role === 'verse'
           ? ['Cmaj7', 'Am7', 'Dm9', 'G7']
           : ['Fmaj7', 'G6', 'Em7', 'Am9'];
@@ -361,14 +373,14 @@ function buildDeterministicChordTimeline(
 }
 
 function resolveSectionPresetsForGenre(
-  genre: QuickGenreId,
+  genre: MasterGenreId,
   role: StructureSectionSpec['role']
 ): Record<InstrumentType, string> {
   const isHigh = role === 'chorus';
   const isLow = role === 'intro' || role === 'outro' || role === 'otoshisabi';
 
   switch (genre) {
-    case 'alt_heavy_shoegaze':
+    case 'alt_shoegaze':
       return {
         drums: isHigh ? 'halftime_heavy' : isLow ? 'simple_minimal' : 'breakdown_heavy',
         bass: isLow ? 'root_whole' : 'auto',
@@ -390,23 +402,15 @@ function resolveSectionPresetsForGenre(
         bass: isHigh ? 'metal_gallop' : 'sub_808_glide',
         keyboard: isHigh ? 'rock_power_riff' : 'dark_low_riff',
         pad: isHigh ? 'sidechain_pulse' : 'dark_cinematic',
-        vocal: role === 'verse' ? 'rap_mixture_flow' : 'melody_posthc_leap',
+        vocal: role === 'verse' ? 'rap_mixture_flow' : 'rap_linkin_hybrid',
       };
-    case 'fusion_funk':
-      return {
-        drums: isHigh ? 'straight_16' : 'four_on_floor',
-        bass: isHigh ? 'slap_funk' : 'syncopated_groove',
-        keyboard: isHigh ? 'fusion_ep_comp' : 'funk_16th_clav',
-        pad: isHigh ? 'choir_open_voicing' : 'floating_9th',
-        vocal: isHigh ? 'melody_jpop_anthem' : 'melody_syncopated_hook',
-      };
-    case 'chill_lofi_ballad':
+    case 'chill_ballad':
       return {
         drums: isLow ? 'simple_minimal' : 'rim_chill',
         bass: isLow ? 'root_whole' : 'melodic_walk',
         keyboard: isHigh ? 'floating_tension' : 'whole_sustain',
         pad: isHigh ? 'warm_whole' : 'analog_warm_drift',
-        vocal: isHigh ? 'melody_ballad' : 'melody_ballad_breath',
+        vocal: isHigh ? 'melody_deftones_float' : 'melody_alt_hypnotic',
       };
     case 'royal_jpop':
     default:
@@ -425,13 +429,18 @@ export function buildSongFromQuickSetup(
   seed = 1000
 ): SongConfig {
   const rng = mulberry32(seed);
-  void rng(); // Consume deterministically so seed variations can branch cleanly if needed
+  void rng();
 
   const key = normalizeKeyName(params.keyRoot);
   const scale = normalizeScaleType(params.scaleType);
   const bpm = Math.max(60, Math.min(200, Math.round(params.bpm)));
-  const genreMeta = QUICK_GENRE_META[params.genre];
-  const template = QUICK_STRUCTURE_TEMPLATES[params.structureTemplate];
+  const normalizedGenre = normalizeMasterGenreId(params.genre);
+  const genreMeta = MASTER_GENRES[normalizedGenre];
+  const template = resolveEffectiveStructureTemplate(
+    params.structureTemplate,
+    normalizedGenre,
+    bpm
+  );
   const includeAnticipation = params.includeAnticipation ?? true;
 
   const customChords =
@@ -447,7 +456,7 @@ export function buildSongFromQuickSetup(
         : transposeChords(
             resolveBaseChordsInC(
               params.chordPreset,
-              params.genre,
+              normalizedGenre,
               scale,
               spec.role
             ),
@@ -475,7 +484,7 @@ export function buildSongFromQuickSetup(
         : spec.role === 'pre_chorus' || spec.role === 'interlude'
           ? 'Mid'
           : spec.role === 'verse'
-            ? params.genre === 'emo_jrock' || params.genre === 'fusion_funk'
+            ? normalizedGenre === 'emo_jrock' || normalizedGenre === 'royal_jpop'
               ? 'Mid'
               : 'Low'
             : 'Low';
@@ -486,15 +495,16 @@ export function buildSongFromQuickSetup(
         : spec.role === 'otoshisabi'
           ? 2.2
           : spec.role === 'verse'
-            ? params.genre === 'numetal_mixture' || params.genre === 'emo_jrock'
+            ? normalizedGenre === 'numetal_mixture' || normalizedGenre === 'emo_jrock'
               ? 3.2
               : 2.6
             : spec.role === 'pre_chorus'
               ? 3.1
               : 3.8;
 
-    const presets = resolveSectionPresetsForGenre(params.genre, spec.role);
-    const isIntroOrOutro = spec.role === 'intro' || spec.role === 'outro' || spec.role === 'interlude';
+    const presets = resolveSectionPresetsForGenre(normalizedGenre, spec.role);
+    const isIntroOrOutro =
+      spec.role === 'intro' || spec.role === 'outro' || spec.role === 'interlude';
 
     return {
       id: `qs-sec-${seed}-${idx}`,
@@ -502,17 +512,18 @@ export function buildSongFromQuickSetup(
       name: spec.name,
       bars: spec.bars,
       energy,
-      kickMode: params.genre === 'numetal_mixture' ? '808' : 'acoustic',
+      kickMode: normalizedGenre === 'numetal_mixture' ? '808' : 'acoustic',
       drumAnticipationMode: 'sync',
+      drumHat16thEnabled: false,
+      drumFillEnabled: getDefaultDrumFillEnabled(spec.type, spec.bars),
+      drumBreakEnabled: false,
       hatDensity: energy === 'High' ? 4 : energy === 'Mid' ? 3 : 2,
       kickDensity: energy === 'High' ? 4 : 3,
       keyboardDensity: energy === 'High' ? 5 : 4,
       vocalDensity,
       vocalHarmony: spec.role === 'chorus' ? 'upper_3rd' : 'off',
       bassChromaticEnabled:
-        params.genre === 'fusion_funk' ||
-        params.genre === 'alt_heavy_shoegaze' ||
-        params.genre === 'numetal_mixture',
+        normalizedGenre === 'alt_shoegaze' || normalizedGenre === 'numetal_mixture',
       bassFillEnabled: spec.role === 'pre_chorus' || spec.role === 'chorus',
       bassFillSeed: seed + idx,
       patternPresets: { ...presets },
@@ -528,7 +539,7 @@ export function buildSongFromQuickSetup(
     };
   });
 
-  const defaultPresets = resolveSectionPresetsForGenre(params.genre, 'chorus');
+  const defaultPresets = resolveSectionPresetsForGenre(normalizedGenre, 'chorus');
 
   return {
     title: `${genreMeta.label} (${key} ${scale})`,
@@ -537,7 +548,7 @@ export function buildSongFromQuickSetup(
     scale,
     timeSignature: '4/4',
     beatFeel: genreMeta.beatFeel,
-    swing: params.genre === 'fusion_funk' || params.genre === 'chill_lofi_ballad' ? 16 : 0,
+    swing: normalizedGenre === 'chill_ballad' ? 14 : 0,
     swingTarget: '8th',
     exportOnlyActiveTracks: true,
     split808KickTrack: true,

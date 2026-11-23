@@ -38,6 +38,10 @@ import {
 } from './chordTimeline';
 import { getDefaultProgression, getDiatonicChords } from './chordUtils';
 import { resolveInstrumentParams } from './keywordParser';
+import {
+  MASTER_GENRES,
+  type MasterGenreId,
+} from './masterGenres';
 import { createSeededRng } from './random';
 
 export const GENERATION_ORDER: readonly InstrumentType[] = [
@@ -1320,19 +1324,315 @@ export function pushUndoSnapshot(
 }
 
 export type QuickTemplateId =
+  | MasterGenreId
   | 'rockBand'
   | 'metal3Piece'
   | 'shoegaze'
   | 'trapHybrid';
 
+function buildStandard84BarSections(
+  verseChords: string[],
+  preChords: string[],
+  chorusChords: string[],
+  bridgeChords: string[],
+  mkId?: (slug: string) => string
+): Section[] {
+  const idFor = (slug: string, fixedId: string) => (mkId ? mkId(slug) : fixedId);
+  return [
+    {
+      id: idFor('intro', 'sec-intro'),
+      type: 'Intro',
+      name: 'イントロ',
+      bars: 8,
+      energy: 'Mid',
+      kickMode: 'acoustic',
+      drumHat16thEnabled: false,
+      drumFillEnabled: true,
+      drumBreakEnabled: false,
+      hatDensity: 3,
+      kickDensity: 3,
+      keyboardDensity: 4,
+      vocalDensity: 3,
+      vocalHarmony: 'off',
+      patternPresets: createDefaultPartPresets(),
+      enabledParts: createDefaultEnabledParts(),
+      chords: createUniformChordTimeline(verseChords, 8),
+    },
+    {
+      id: idFor('verse1', 'sec-verse'),
+      type: 'Verse',
+      name: '1Aメロ',
+      bars: 8,
+      energy: 'Mid',
+      kickMode: 'acoustic',
+      drumHat16thEnabled: false,
+      drumFillEnabled: true,
+      drumBreakEnabled: false,
+      hatDensity: 3,
+      kickDensity: 3,
+      keyboardDensity: 4,
+      vocalDensity: 3,
+      vocalHarmony: 'off',
+      patternPresets: createDefaultPartPresets(),
+      enabledParts: createDefaultEnabledParts(),
+      chords: createUniformChordTimeline(verseChords, 8),
+    },
+    {
+      id: idFor('pre1', 'sec-pre'),
+      type: 'Pre-Chorus',
+      name: '1Bメロ',
+      bars: 8,
+      energy: 'Mid',
+      kickMode: 'acoustic',
+      drumHat16thEnabled: false,
+      drumFillEnabled: true,
+      drumBreakEnabled: false,
+      hatDensity: 3,
+      kickDensity: 3,
+      keyboardDensity: 4,
+      vocalDensity: 3,
+      vocalHarmony: 'off',
+      patternPresets: createDefaultPartPresets(),
+      enabledParts: createDefaultEnabledParts(),
+      chords: createUniformChordTimeline(preChords, 8),
+    },
+    {
+      id: idFor('chorus1', 'sec-chorus'),
+      type: 'Chorus',
+      name: '1サビ',
+      bars: 8,
+      energy: 'High',
+      kickMode: 'acoustic',
+      drumHat16thEnabled: false,
+      drumFillEnabled: true,
+      drumBreakEnabled: false,
+      hatDensity: 3,
+      kickDensity: 3,
+      keyboardDensity: 4,
+      vocalDensity: 3,
+      vocalHarmony: 'off',
+      patternPresets: createDefaultPartPresets(),
+      enabledParts: createDefaultEnabledParts(),
+      chords: createUniformChordTimeline(chorusChords, 8),
+    },
+    {
+      id: idFor('interlude', 'sec-interlude'),
+      type: 'Bridge',
+      name: '間奏',
+      bars: 4,
+      energy: 'Mid',
+      kickMode: 'acoustic',
+      drumHat16thEnabled: false,
+      drumFillEnabled: true,
+      drumBreakEnabled: false,
+      hatDensity: 3,
+      kickDensity: 3,
+      keyboardDensity: 4,
+      vocalDensity: 3,
+      vocalHarmony: 'off',
+      patternPresets: createDefaultPartPresets(),
+      enabledParts: createDefaultEnabledParts(),
+      chords: createUniformChordTimeline(verseChords, 4),
+    },
+    {
+      id: idFor('verse2', 'sec-verse-2'),
+      type: 'Verse',
+      name: '2Aメロ',
+      bars: 8,
+      energy: 'Mid',
+      kickMode: 'acoustic',
+      drumHat16thEnabled: false,
+      drumFillEnabled: true,
+      drumBreakEnabled: false,
+      hatDensity: 3,
+      kickDensity: 3,
+      keyboardDensity: 4,
+      vocalDensity: 3,
+      vocalHarmony: 'off',
+      patternPresets: createDefaultPartPresets(),
+      enabledParts: createDefaultEnabledParts(),
+      chords: createUniformChordTimeline(verseChords, 8),
+    },
+    {
+      id: idFor('chorus2', 'sec-chorus-2'),
+      type: 'Chorus',
+      name: '2サビ',
+      bars: 8,
+      energy: 'High',
+      kickMode: 'acoustic',
+      drumHat16thEnabled: false,
+      drumFillEnabled: true,
+      drumBreakEnabled: false,
+      hatDensity: 3,
+      kickDensity: 3,
+      keyboardDensity: 4,
+      vocalDensity: 3,
+      vocalHarmony: 'off',
+      patternPresets: createDefaultPartPresets(),
+      enabledParts: createDefaultEnabledParts(),
+      chords: createUniformChordTimeline(chorusChords, 8),
+    },
+    {
+      id: idFor('bridge', 'sec-bridge'),
+      type: 'Bridge',
+      name: 'Cメロ（落ちサビ）',
+      bars: 8,
+      energy: 'Low',
+      kickMode: 'acoustic',
+      drumHat16thEnabled: false,
+      drumFillEnabled: true,
+      drumBreakEnabled: false,
+      hatDensity: 3,
+      kickDensity: 3,
+      keyboardDensity: 4,
+      vocalDensity: 3,
+      vocalHarmony: 'off',
+      patternPresets: createDefaultPartPresets(),
+      enabledParts: createDefaultEnabledParts(),
+      chords: createUniformChordTimeline(bridgeChords, 8),
+    },
+    {
+      id: idFor('last-chorus', 'sec-last-chorus'),
+      type: 'Chorus',
+      name: 'ラスサビ',
+      bars: 16,
+      energy: 'High',
+      kickMode: 'acoustic',
+      drumHat16thEnabled: false,
+      drumFillEnabled: true,
+      drumBreakEnabled: false,
+      hatDensity: 3,
+      kickDensity: 3,
+      keyboardDensity: 4,
+      vocalDensity: 3,
+      vocalHarmony: 'off',
+      patternPresets: createDefaultPartPresets(),
+      enabledParts: createDefaultEnabledParts(),
+      chords: createUniformChordTimeline(chorusChords, 16),
+    },
+    {
+      id: idFor('outro', 'sec-outro'),
+      type: 'Outro',
+      name: 'アウトロ',
+      bars: 8,
+      energy: 'Low',
+      kickMode: 'acoustic',
+      drumHat16thEnabled: false,
+      drumFillEnabled: false,
+      drumBreakEnabled: false,
+      hatDensity: 3,
+      kickDensity: 3,
+      keyboardDensity: 4,
+      vocalDensity: 3,
+      vocalHarmony: 'off',
+      patternPresets: createDefaultPartPresets(),
+      enabledParts: createDefaultEnabledParts(),
+      chords: createUniformChordTimeline(verseChords, 8),
+    },
+  ];
+}
+
+function buildBallad60BarSections(
+  verseChords: string[],
+  preChords: string[],
+  chorusChords: string[],
+  bridgeChords: string[],
+  mkId?: (slug: string) => string
+): Section[] {
+  const idFor = (slug: string, fixedId: string) => (mkId ? mkId(slug) : fixedId);
+  return [
+    {
+      id: idFor('intro', 'sec-intro'),
+      type: 'Intro',
+      name: 'イントロ',
+      bars: 4,
+      energy: 'Low',
+      kickMode: 'acoustic',
+      chords: createUniformChordTimeline(verseChords, 4),
+    },
+    {
+      id: idFor('verse1', 'sec-verse'),
+      type: 'Verse',
+      name: '1Aメロ',
+      bars: 8,
+      energy: 'Low',
+      kickMode: 'acoustic',
+      chords: createUniformChordTimeline(verseChords, 8),
+    },
+    {
+      id: idFor('pre1', 'sec-pre'),
+      type: 'Pre-Chorus',
+      name: '1Bメロ',
+      bars: 4,
+      energy: 'Mid',
+      kickMode: 'acoustic',
+      chords: createUniformChordTimeline(preChords, 4),
+    },
+    {
+      id: idFor('chorus1', 'sec-chorus'),
+      type: 'Chorus',
+      name: '1サビ',
+      bars: 8,
+      energy: 'High',
+      kickMode: 'acoustic',
+      chords: createUniformChordTimeline(chorusChords, 8),
+    },
+    {
+      id: idFor('verse2', 'sec-verse-2'),
+      type: 'Verse',
+      name: '2Aメロ',
+      bars: 8,
+      energy: 'Mid',
+      kickMode: 'acoustic',
+      chords: createUniformChordTimeline(verseChords, 8),
+    },
+    {
+      id: idFor('chorus2', 'sec-chorus-2'),
+      type: 'Chorus',
+      name: '2サビ',
+      bars: 8,
+      energy: 'High',
+      kickMode: 'acoustic',
+      chords: createUniformChordTimeline(chorusChords, 8),
+    },
+    {
+      id: idFor('bridge', 'sec-bridge'),
+      type: 'Bridge',
+      name: '落ちサビ',
+      bars: 8,
+      energy: 'Low',
+      kickMode: 'acoustic',
+      chords: createUniformChordTimeline(bridgeChords, 8),
+    },
+    {
+      id: idFor('last-chorus', 'sec-last-chorus'),
+      type: 'Chorus',
+      name: 'ラスサビ',
+      bars: 8,
+      energy: 'High',
+      kickMode: 'acoustic',
+      chords: createUniformChordTimeline(chorusChords, 8),
+    },
+    {
+      id: idFor('outro', 'sec-outro'),
+      type: 'Outro',
+      name: 'アウトロ',
+      bars: 4,
+      energy: 'Low',
+      kickMode: 'acoustic',
+      chords: createUniformChordTimeline(verseChords, 4),
+    },
+  ];
+}
+
 export function createDefaultSongConfig(
-  template: QuickTemplateId = 'rockBand'
+  template: QuickTemplateId = 'royal_jpop'
 ): SongConfig {
   const defaultChords = getDefaultProgression('E', 'Minor');
 
   const base: SongConfig = {
     title: 'New Band Song',
-    bpm: 135,
+    bpm: 142,
     key: 'E',
     scale: 'Minor',
     timeSignature: '4/4',
@@ -1378,87 +1678,106 @@ export function createDefaultSongConfig(
         instructionText: '',
       },
     },
-    sections: [
-      {
-        id: 'sec-intro',
-        type: 'Intro',
-        name: 'イントロ',
-        bars: 4,
-        energy: 'Mid',
-        kickMode: 'acoustic',
-        drumHat16thEnabled: false,
-        drumFillEnabled: false,
-        drumBreakEnabled: false,
-        hatDensity: 3,
-        kickDensity: 3,
-        keyboardDensity: 4,
-        vocalDensity: 3,
-        vocalHarmony: 'off',
-        patternPresets: createDefaultPartPresets(),
-        enabledParts: createDefaultEnabledParts(),
-        chords: createUniformChordTimeline(defaultChords, 4),
-      },
-      {
-        id: 'sec-verse',
-        type: 'Verse',
-        name: 'Aメロ',
-        bars: 8,
-        energy: 'Mid',
-        kickMode: 'acoustic',
-        drumHat16thEnabled: false,
-        drumFillEnabled: true,
-        drumBreakEnabled: false,
-        hatDensity: 3,
-        kickDensity: 3,
-        keyboardDensity: 4,
-        vocalDensity: 3,
-        vocalHarmony: 'off',
-        patternPresets: createDefaultPartPresets(),
-        enabledParts: createDefaultEnabledParts(),
-        chords: createUniformChordTimeline(defaultChords, 8),
-      },
-      {
-        id: 'sec-pre',
-        type: 'Pre-Chorus',
-        name: 'Bメロ',
-        bars: 4,
-        energy: 'Mid',
-        kickMode: 'acoustic',
-        drumHat16thEnabled: false,
-        drumFillEnabled: true,
-        drumBreakEnabled: false,
-        hatDensity: 3,
-        kickDensity: 3,
-        keyboardDensity: 4,
-        vocalDensity: 3,
-        vocalHarmony: 'off',
-        patternPresets: createDefaultPartPresets(),
-        enabledParts: createDefaultEnabledParts(),
-        chords: createUniformChordTimeline(['Am', 'G', 'C', 'D'], 4),
-      },
-      {
-        id: 'sec-chorus',
-        type: 'Chorus',
-        name: 'サビ',
-        bars: 8,
-        energy: 'High',
-        kickMode: 'acoustic',
-        drumHat16thEnabled: false,
-        drumFillEnabled: true,
-        drumBreakEnabled: false,
-        hatDensity: 3,
-        kickDensity: 3,
-        keyboardDensity: 4,
-        vocalDensity: 3,
-        vocalHarmony: 'off',
-        patternPresets: createDefaultPartPresets(),
-        enabledParts: createDefaultEnabledParts(),
-        chords: createUniformChordTimeline(['C', 'D', 'Em', 'G'], 8),
-      },
-    ],
+    sections: buildStandard84BarSections(
+      defaultChords,
+      ['Am', 'G', 'C', 'D'],
+      ['C', 'D', 'Em', 'G'],
+      ['Am', 'B7', 'C', 'D']
+    ),
   };
 
-  if (template === 'metal3Piece') {
+  if (template === 'alt_shoegaze' || template === 'shoegaze') {
+    const meta = MASTER_GENRES.alt_shoegaze;
+    base.title = meta.label;
+    base.bpm = meta.recommendedBpm;
+    base.beatFeel = meta.beatFeel;
+    base.members.drums.drumStyle = 'Heavy / Half-Time';
+    base.members.drums.patternPreset = meta.defaultPresets.drums;
+    base.members.bass.patternPreset = meta.defaultPresets.bass;
+    base.members.keyboard.activeSectionsOnly = false;
+    base.members.keyboard.keyboardStyle = 'Long Sustain';
+    base.members.keyboard.patternPreset = meta.defaultPresets.keyboard;
+    base.members.keyboard.instructionText = '浮遊 シューゲイザー';
+    base.members.pad.activeSectionsOnly = false;
+    base.members.pad.padStyle = 'Floating Tension';
+    base.members.pad.patternPreset = meta.defaultPresets.pad;
+    base.members.pad.instructionText = 'deftones 空間';
+    base.members.vocal.patternPreset = meta.defaultPresets.vocal;
+    base.sections = base.sections.map((s) => ({
+      ...s,
+      patternPresets: { ...meta.defaultPresets },
+    }));
+  } else if (template === 'emo_jrock') {
+    const meta = MASTER_GENRES.emo_jrock;
+    base.title = meta.label;
+    base.bpm = meta.recommendedBpm;
+    base.scale = meta.defaultScale;
+    base.beatFeel = meta.beatFeel;
+    base.members.drums.patternPreset = meta.defaultPresets.drums;
+    base.members.bass.bassStyle = 'Driving 8th';
+    base.members.bass.patternPreset = meta.defaultPresets.bass;
+    base.members.keyboard.patternPreset = meta.defaultPresets.keyboard;
+    base.members.pad.patternPreset = meta.defaultPresets.pad;
+    base.members.vocal.patternPreset = meta.defaultPresets.vocal;
+    base.sections = base.sections.map((s) => ({
+      ...s,
+      patternPresets: { ...meta.defaultPresets },
+    }));
+  } else if (template === 'numetal_mixture' || template === 'trapHybrid') {
+    const meta = MASTER_GENRES.numetal_mixture;
+    base.title = meta.label;
+    base.bpm = meta.recommendedBpm;
+    base.beatFeel = meta.beatFeel;
+    base.members.drums.drumStyle = 'Sub-Step / Trap';
+    base.members.drums.patternPreset = meta.defaultPresets.drums;
+    base.members.bass.bass808Behavior = 'octaveUp';
+    base.members.bass.patternPreset = meta.defaultPresets.bass;
+    base.members.keyboard.patternPreset = meta.defaultPresets.keyboard;
+    base.members.pad.patternPreset = meta.defaultPresets.pad;
+    base.members.vocal.patternPreset = meta.defaultPresets.vocal;
+    base.sections = base.sections.map((s) => ({
+      ...s,
+      kickMode: s.type === 'Verse' || s.type === 'Intro' ? '808' : 'acoustic',
+      patternPresets: {
+        ...meta.defaultPresets,
+        vocal: s.type === 'Verse' ? 'rap_mixture_flow' : meta.defaultPresets.vocal,
+      },
+    }));
+  } else if (template === 'chill_ballad') {
+    const meta = MASTER_GENRES.chill_ballad;
+    base.title = meta.label;
+    base.bpm = meta.recommendedBpm;
+    base.scale = meta.defaultScale;
+    base.beatFeel = meta.beatFeel;
+    base.swing = 14;
+    base.members.drums.patternPreset = meta.defaultPresets.drums;
+    base.members.bass.patternPreset = meta.defaultPresets.bass;
+    base.members.keyboard.activeSectionsOnly = false;
+    base.members.keyboard.patternPreset = meta.defaultPresets.keyboard;
+    base.members.pad.activeSectionsOnly = false;
+    base.members.pad.patternPreset = meta.defaultPresets.pad;
+    base.members.vocal.patternPreset = meta.defaultPresets.vocal;
+    const prog = getDefaultProgression(base.key, base.scale);
+    const dia = getDiatonicChords(base.key, base.scale);
+    base.sections = buildBallad60BarSections(
+      prog,
+      [dia[3], dia[2], dia[5], dia[6]],
+      [dia[5], dia[6], dia[0], dia[2]],
+      [dia[3], dia[4], dia[5], dia[6]]
+    ).map((s) => ({
+      ...s,
+      drumHat16thEnabled: false,
+      drumFillEnabled: getDefaultDrumFillEnabled(s.type, s.bars),
+      drumBreakEnabled: false,
+      hatDensity: 2,
+      kickDensity: 2,
+      keyboardDensity: 4,
+      vocalDensity: 2.6,
+      vocalHarmony: 'off',
+      patternPresets: { ...meta.defaultPresets },
+      enabledParts: createDefaultEnabledParts(),
+    }));
+  } else if (template === 'metal3Piece') {
     base.title = 'Metal 3-Piece Riff';
     base.bpm = 160;
     base.beatFeel = 'Driving';
@@ -1467,36 +1786,20 @@ export function createDefaultSongConfig(
     base.members.bass.bassStyle = 'Driving 8th';
     base.members.keyboard.enabled = false;
     base.members.pad.enabled = false;
-  } else if (template === 'shoegaze') {
-    base.title = 'Shoegaze Float';
-    base.bpm = 112;
-    base.beatFeel = 'Half-Time';
-    base.members.drums.drumStyle = 'Heavy / Half-Time';
-    base.members.keyboard.activeSectionsOnly = false;
-    base.members.keyboard.keyboardStyle = 'Long Sustain';
-    base.members.keyboard.instructionText = '浮遊 シューゲイザー';
-    base.members.pad.activeSectionsOnly = false;
-    base.members.pad.padStyle = 'Floating Tension';
-    base.members.pad.instructionText = 'deftones 空間';
-  } else if (template === 'trapHybrid') {
-    base.title = '808 Hybrid Bounce';
-    base.bpm = 142;
-    base.beatFeel = 'Bounce';
-    base.swing = 15;
-    base.swingTarget = '16th';
-    base.members.drums.drumStyle = 'Sub-Step / Trap';
-    base.members.drums.instructionText = 'トラップ ロール';
-    base.members.bass.bass808Behavior = 'octaveUp';
-    base.sections = base.sections.map((s) => ({
-      ...s,
-      kickMode: s.type === 'Verse' || s.type === 'Intro' ? '808' : 'acoustic',
-    }));
   }
 
   return base;
 }
 
-export type ArrangementPresetId = 'twoPart' | 'fourPart' | 'full';
+export type ArrangementPresetId =
+  | 'full_2min30'
+  | 'chorus_start'
+  | 'full_two_chorus'
+  | 'one_half'
+  | 'ballad_60'
+  | 'twoPart'
+  | 'fourPart'
+  | 'full';
 
 export function getSongDurationSummary(song: SongConfig): {
   totalBars: number;
@@ -1530,7 +1833,55 @@ export function applyArrangementPresetToSong(
   const mkId = (slug: string) =>
     `sec-${slug}-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
 
-  if (presetId === 'twoPart') {
+  if (presetId === 'full_2min30') {
+    nextSong.sections =
+      nextSong.bpm <= 95
+        ? buildBallad60BarSections(prog, preChords, chorusChords, bridgeChords, mkId)
+        : buildStandard84BarSections(prog, preChords, chorusChords, bridgeChords, mkId);
+  } else if (presetId === 'chorus_start') {
+    // サビ頭(8) -> イントロ(8) -> 1A(8) -> 1B(8) -> 1サビ(8) -> 2A(8) -> 2B(4) -> 2サビ(8) -> 落ちサビ(8) -> ラスサビ(16) -> アウトロ(4) = 88 bars
+    nextSong.sections = [
+      { id: mkId('chorus-head'), type: 'Chorus', name: 'サビ頭', bars: 8, energy: 'High', kickMode: 'acoustic', chords: createUniformChordTimeline(chorusChords, 8) },
+      { id: mkId('intro'), type: 'Intro', name: 'イントロ', bars: 8, energy: 'Mid', kickMode: 'acoustic', chords: createUniformChordTimeline(prog, 8) },
+      { id: mkId('verse1'), type: 'Verse', name: '1Aメロ', bars: 8, energy: 'Mid', kickMode: 'acoustic', chords: createUniformChordTimeline(prog, 8) },
+      { id: mkId('pre1'), type: 'Pre-Chorus', name: '1Bメロ', bars: 8, energy: 'Mid', kickMode: 'acoustic', chords: createUniformChordTimeline(preChords, 8) },
+      { id: mkId('chorus1'), type: 'Chorus', name: '1サビ', bars: 8, energy: 'High', kickMode: 'acoustic', chords: createUniformChordTimeline(chorusChords, 8) },
+      { id: mkId('verse2'), type: 'Verse', name: '2Aメロ', bars: 8, energy: 'Mid', kickMode: 'acoustic', chords: createUniformChordTimeline(prog, 8) },
+      { id: mkId('pre2'), type: 'Pre-Chorus', name: '2Bメロ', bars: 4, energy: 'Mid', kickMode: 'acoustic', chords: createUniformChordTimeline(preChords, 4) },
+      { id: mkId('chorus2'), type: 'Chorus', name: '2サビ', bars: 8, energy: 'High', kickMode: 'acoustic', chords: createUniformChordTimeline(chorusChords, 8) },
+      { id: mkId('bridge'), type: 'Bridge', name: '落ちサビ', bars: 8, energy: 'Low', kickMode: 'acoustic', chords: createUniformChordTimeline(bridgeChords, 8) },
+      { id: mkId('last-chorus'), type: 'Chorus', name: 'ラスサビ', bars: 16, energy: 'High', kickMode: 'acoustic', chords: createUniformChordTimeline(chorusChords, 16) },
+      { id: mkId('outro'), type: 'Outro', name: 'アウトロ', bars: 4, energy: 'Low', kickMode: 'acoustic', chords: createUniformChordTimeline(prog, 4) },
+    ];
+  } else if (presetId === 'full_two_chorus') {
+    // イントロ(8) -> 1A(8) -> 1B(8) -> 1サビ(8) -> 間奏(4) -> 2A(8) -> 2B(8) -> 2サビ(8) -> Cメロ(8) -> ラスサビ(16) -> アウトロ(8) = 92 bars
+    nextSong.sections = [
+      { id: mkId('intro'), type: 'Intro', name: 'イントロ', bars: 8, energy: 'Mid', kickMode: 'acoustic', chords: createUniformChordTimeline(prog, 8) },
+      { id: mkId('verse1'), type: 'Verse', name: '1Aメロ', bars: 8, energy: 'Mid', kickMode: 'acoustic', chords: createUniformChordTimeline(prog, 8) },
+      { id: mkId('pre1'), type: 'Pre-Chorus', name: '1Bメロ', bars: 8, energy: 'Mid', kickMode: 'acoustic', chords: createUniformChordTimeline(preChords, 8) },
+      { id: mkId('chorus1'), type: 'Chorus', name: '1サビ', bars: 8, energy: 'High', kickMode: 'acoustic', chords: createUniformChordTimeline(chorusChords, 8) },
+      { id: mkId('interlude'), type: 'Bridge', name: '間奏', bars: 4, energy: 'Mid', kickMode: 'acoustic', chords: createUniformChordTimeline(prog, 4) },
+      { id: mkId('verse2'), type: 'Verse', name: '2Aメロ', bars: 8, energy: 'Mid', kickMode: 'acoustic', chords: createUniformChordTimeline(prog, 8) },
+      { id: mkId('pre2'), type: 'Pre-Chorus', name: '2Bメロ', bars: 8, energy: 'Mid', kickMode: 'acoustic', chords: createUniformChordTimeline(preChords, 8) },
+      { id: mkId('chorus2'), type: 'Chorus', name: '2サビ', bars: 8, energy: 'High', kickMode: 'acoustic', chords: createUniformChordTimeline(chorusChords, 8) },
+      { id: mkId('bridge'), type: 'Bridge', name: 'Cメロ', bars: 8, energy: 'Low', kickMode: 'acoustic', chords: createUniformChordTimeline(bridgeChords, 8) },
+      { id: mkId('last-chorus'), type: 'Chorus', name: 'ラスサビ', bars: 16, energy: 'High', kickMode: 'acoustic', chords: createUniformChordTimeline(chorusChords, 16) },
+      { id: mkId('outro'), type: 'Outro', name: 'アウトロ', bars: 8, energy: 'Low', kickMode: 'acoustic', chords: createUniformChordTimeline(prog, 8) },
+    ];
+  } else if (presetId === 'one_half') {
+    // イントロ(4) -> Aメロ(8) -> Bメロ(8) -> サビ(8) -> Cメロ(8) -> ラスサビ(16) -> アウトロ(4) = 56 bars
+    nextSong.sections = [
+      { id: mkId('intro'), type: 'Intro', name: 'イントロ', bars: 4, energy: 'Mid', kickMode: 'acoustic', chords: createUniformChordTimeline(prog, 4) },
+      { id: mkId('verse1'), type: 'Verse', name: 'Aメロ', bars: 8, energy: 'Mid', kickMode: 'acoustic', chords: createUniformChordTimeline(prog, 8) },
+      { id: mkId('pre1'), type: 'Pre-Chorus', name: 'Bメロ', bars: 8, energy: 'Mid', kickMode: 'acoustic', chords: createUniformChordTimeline(preChords, 8) },
+      { id: mkId('chorus1'), type: 'Chorus', name: 'サビ', bars: 8, energy: 'High', kickMode: 'acoustic', chords: createUniformChordTimeline(chorusChords, 8) },
+      { id: mkId('bridge'), type: 'Bridge', name: 'Cメロ', bars: 8, energy: 'Low', kickMode: 'acoustic', chords: createUniformChordTimeline(bridgeChords, 8) },
+      { id: mkId('last-chorus'), type: 'Chorus', name: 'ラスサビ', bars: 16, energy: 'High', kickMode: 'acoustic', chords: createUniformChordTimeline(chorusChords, 16) },
+      { id: mkId('outro'), type: 'Outro', name: 'アウトロ', bars: 4, energy: 'Low', kickMode: 'acoustic', chords: createUniformChordTimeline(prog, 4) },
+    ];
+  } else if (presetId === 'ballad_60') {
+    nextSong.sections = buildBallad60BarSections(prog, preChords, chorusChords, bridgeChords, mkId);
+  } else if (presetId === 'twoPart') {
     nextSong.sections = [
       {
         id: mkId('verse'),

@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import { generateAllSections } from '../src/lib/bandState';
 import { getScalePitchClasses, parseChord } from '../src/lib/chordUtils';
+import { PATTERN_PRESET_GROUPS } from '../src/lib/patternPresets';
 import { TICKS_PER_BAR } from '../src/types/song';
 import {
   buildSongFromQuickSetup,
+  QUICK_GENRE_LIST,
   type QuickGenreId,
   type QuickSongLengthId,
   type QuickStructureTemplateId,
@@ -202,5 +204,89 @@ describe('quickSongBuilder', () => {
     } finally {
       spy.mockRestore();
     }
+  });
+
+  it('5. exposes exactly 5 canonical master genres (excluding fusion/funk from UI presets) and auto-scales ballad/slow full songs to 60 bars', () => {
+    expect(QUICK_GENRE_LIST.map((g) => g.id)).toEqual([
+      'alt_shoegaze',
+      'emo_jrock',
+      'numetal_mixture',
+      'royal_jpop',
+      'chill_ballad',
+    ]);
+
+    const bassValues = PATTERN_PRESET_GROUPS.bass.flatMap((g) => g.options.map((o) => o.value));
+    const kbValues = PATTERN_PRESET_GROUPS.keyboard.flatMap((g) => g.options.map((o) => o.value));
+    expect(bassValues).not.toContain('slap_funk');
+    expect(kbValues).not.toContain('fusion_ep_comp');
+    expect(kbValues).not.toContain('fusion_fast_arp');
+
+    // Standard full = 84 bars, chorus_start = 88 bars, full_two_chorus = 92 bars, one_half = 56 bars
+    const std = buildSongFromQuickSetup({
+      keyRoot: 'E',
+      scaleType: 'Minor',
+      bpm: 145,
+      genre: 'royal_jpop',
+      songLength: 'full_chorus',
+      structureTemplate: 'full_standard',
+      chordPreset: 'auto_by_genre',
+    });
+    expect(std.sections.reduce((s, sec) => s + sec.bars, 0)).toBe(84);
+
+    const chorusStart = buildSongFromQuickSetup({
+      keyRoot: 'E',
+      scaleType: 'Major',
+      bpm: 162,
+      genre: 'emo_jrock',
+      songLength: 'full_chorus',
+      structureTemplate: 'full_chorus_start',
+      chordPreset: 'auto_by_genre',
+    });
+    expect(chorusStart.sections.reduce((s, sec) => s + sec.bars, 0)).toBe(88);
+
+    const twoChorus = buildSongFromQuickSetup({
+      keyRoot: 'C',
+      scaleType: 'Major',
+      bpm: 145,
+      genre: 'royal_jpop',
+      songLength: 'full_chorus',
+      structureTemplate: 'full_two_chorus',
+      chordPreset: 'auto_by_genre',
+    });
+    expect(twoChorus.sections.reduce((s, sec) => s + sec.bars, 0)).toBe(92);
+
+    const oneHalf = buildSongFromQuickSetup({
+      keyRoot: 'C',
+      scaleType: 'Major',
+      bpm: 145,
+      genre: 'royal_jpop',
+      songLength: 'one_chorus',
+      structureTemplate: 'one_half',
+      chordPreset: 'auto_by_genre',
+    });
+    expect(oneHalf.sections.reduce((s, sec) => s + sec.bars, 0)).toBe(56);
+
+    // chill_ballad or bpm <= 95 auto-scales full templates to 60 bars
+    const balladAuto = buildSongFromQuickSetup({
+      keyRoot: 'C',
+      scaleType: 'Major',
+      bpm: 86,
+      genre: 'chill_ballad',
+      songLength: 'full_chorus',
+      structureTemplate: 'full_standard',
+      chordPreset: 'auto_by_genre',
+    });
+    expect(balladAuto.sections.reduce((s, sec) => s + sec.bars, 0)).toBe(60);
+
+    const slowRockAuto = buildSongFromQuickSetup({
+      keyRoot: 'E',
+      scaleType: 'Minor',
+      bpm: 90,
+      genre: 'alt_shoegaze',
+      songLength: 'full_chorus',
+      structureTemplate: 'full_two_chorus',
+      chordPreset: 'auto_by_genre',
+    });
+    expect(slowRockAuto.sections.reduce((s, sec) => s + sec.bars, 0)).toBe(60);
   });
 });
