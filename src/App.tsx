@@ -11,6 +11,7 @@ import { TrackControls } from './components/TrackControls';
 import { useAudioPreview } from './hooks/useAudioPreview';
 import { useBandGenerator } from './hooks/useBandGenerator';
 import { getSongDurationSummary } from './lib/bandState';
+import { findSectionSpanAtTick } from './lib/noteSelector';
 import { CURRENT_ENGINE_VERSION, type CopiedPartPhrase } from './types/song';
 
 type ActiveTab = 'song' | 'arrangement' | 'members' | 'console';
@@ -103,6 +104,14 @@ export function App() {
     audio.previewState.status === 'playing' &&
     audio.playbackMode === 'section' &&
     audio.previewState.sectionLoop?.sectionId === selectedSectionId;
+  const isPlaybackRunning = audio.previewState.status === 'playing';
+  const playingSectionId =
+    audio.previewState.status !== 'stopped'
+      ? (findSectionSpanAtTick(
+          audio.sectionSpans,
+          audio.previewState.currentTick
+        )?.sectionId ?? null)
+      : null;
 
   return (
     <div className="app-shell">
@@ -193,6 +202,8 @@ export function App() {
           playbackMode={audio.playbackMode}
           activeSectionId={selectedSectionId}
           sectionSpans={audio.sectionSpans}
+          sections={song.sections}
+          onSelectSection={setSelectedSectionId}
           onPlay={audio.play}
           onPause={audio.pause}
           onStop={audio.stop}
@@ -252,6 +263,8 @@ export function App() {
               song={song}
               bandState={bandState}
               selectedSectionId={selectedSectionId}
+              playingSectionId={playingSectionId}
+              isPlaybackRunning={isPlaybackRunning}
               isPreviewingSection={isPreviewingSection}
               canUndo={canUndo}
               onSelectSection={setSelectedSectionId}

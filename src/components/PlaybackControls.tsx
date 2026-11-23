@@ -1,13 +1,18 @@
-import { TICKS_PER_BAR, TICKS_PER_BEAT } from '../types/song';
+import { TICKS_PER_BAR, TICKS_PER_BEAT, type Section } from '../types/song';
 import type { AudioPreviewState } from '../lib/audioPreview';
 import type { PlaybackMode } from '../hooks/useAudioPreview';
-import type { SectionSpan } from '../lib/noteSelector';
+import {
+  findSectionSpanAtTick,
+  type SectionSpan,
+} from '../lib/noteSelector';
 
 interface PlaybackControlsProps {
   previewState: AudioPreviewState;
   playbackMode: PlaybackMode;
   activeSectionId: string;
   sectionSpans: SectionSpan[];
+  sections?: readonly Section[];
+  onSelectSection?: (sectionId: string) => void;
   onPlay: () => void;
   onPause: () => void;
   onStop: () => void;
@@ -26,6 +31,8 @@ export function PlaybackControls({
   playbackMode,
   activeSectionId,
   sectionSpans,
+  sections,
+  onSelectSection,
   onPlay,
   onPause,
   onStop,
@@ -34,6 +41,16 @@ export function PlaybackControls({
 }: PlaybackControlsProps) {
   const activeSpan =
     sectionSpans.find((s) => s.sectionId === activeSectionId) ?? null;
+  const currentSpan = findSectionSpanAtTick(
+    sectionSpans,
+    previewState.currentTick
+  );
+  const currentSection =
+    currentSpan && sections
+      ? sections.find((s) => s.id === currentSpan.sectionId) ?? null
+      : null;
+  const isPlaying = previewState.status === 'playing';
+  const isPaused = previewState.status === 'paused';
 
   return (
     <section
@@ -89,6 +106,21 @@ export function PlaybackControls({
       </div>
 
       <div className="transport-seek">
+        {currentSection && currentSpan && (
+          <button
+            type="button"
+            className={`now-playing-section-badge ${isPlaying ? 'is-playing' : isPaused ? 'is-paused' : ''}`}
+            onClick={() => onSelectSection?.(currentSection.id)}
+            title="クリックでこのセクションを表示"
+            aria-live="polite"
+          >
+            {isPlaying && <span className="playing-dot" aria-hidden="true" />}
+            {isPaused && <span aria-hidden="true">⏸</span>}
+            <span>
+              {currentSpan.sectionIndex + 1}. {currentSection.name}
+            </span>
+          </button>
+        )}
         <span className="pos-badge">
           {formatPosition(previewState.currentTick)}
         </span>

@@ -28,6 +28,8 @@ interface BandmasterConsoleProps {
   song: SongConfig;
   bandState: BandState;
   selectedSectionId: string;
+  playingSectionId?: string | null;
+  isPlaybackRunning?: boolean;
   isPreviewingSection: boolean;
   canUndo: boolean;
   onSelectSection: (id: string) => void;
@@ -175,6 +177,8 @@ export function BandmasterConsole({
   song,
   bandState,
   selectedSectionId,
+  playingSectionId,
+  isPlaybackRunning = false,
   isPreviewingSection,
   canUndo,
   onSelectSection,
@@ -274,16 +278,32 @@ export function BandmasterConsole({
       </div>
 
       <div className="section-pills" role="tablist" aria-label="Sections">
-        {song.sections.map((sec, idx) => (
-          <button
-            key={sec.id}
-            type="button"
-            className={`pill ${sec.id === section.id ? 'active' : ''}`}
-            onClick={() => onSelectSection(sec.id)}
-          >
-            {idx + 1}. {sec.name}
-          </button>
-        ))}
+        {song.sections.map((sec, idx) => {
+          const isPlayingHere = Boolean(
+            playingSectionId && sec.id === playingSectionId
+          );
+          return (
+            <button
+              key={sec.id}
+              type="button"
+              className={`pill ${sec.id === section.id ? 'active' : ''} ${
+                isPlayingHere ? 'playing' : ''
+              } ${isPlayingHere && isPlaybackRunning ? 'is-running' : ''}`}
+              aria-current={isPlayingHere ? 'location' : undefined}
+              onClick={() => onSelectSection(sec.id)}
+            >
+              {isPlayingHere && (
+                <span
+                  className={`playing-dot ${isPlaybackRunning ? '' : 'is-paused'}`}
+                  aria-hidden="true"
+                />
+              )}
+              <span>
+                {idx + 1}. {sec.name}
+              </span>
+            </button>
+          );
+        })}
       </div>
 
       <ChordTimelineEditor
@@ -308,6 +328,32 @@ export function BandmasterConsole({
           {section.unisonRiff && (
             <span className="badge badge-accent">🎸 ユニゾンリフ適用中</span>
           )}
+          {(() => {
+            if (!playingSectionId) return null;
+            if (playingSectionId === section.id) {
+              return (
+                <span className="badge badge-playing">
+                  {isPlaybackRunning ? '▶ 再生中' : '⏸ 一時停止中'}
+                </span>
+              );
+            }
+            const playingIdx = song.sections.findIndex(
+              (s) => s.id === playingSectionId
+            );
+            const playingSec = playingIdx >= 0 ? song.sections[playingIdx] : null;
+            if (!playingSec) return null;
+            return (
+              <button
+                type="button"
+                className="badge badge-playing-jump"
+                onClick={() => onSelectSection(playingSec.id)}
+                title="再生中のセクションへ表示を切り替え"
+              >
+                {isPlaybackRunning ? '▶ 再生中' : '⏸ 一時停止'}: {playingIdx + 1}.{' '}
+                {playingSec.name} へ移動
+              </button>
+            );
+          })()}
         </div>
         <button
           type="button"

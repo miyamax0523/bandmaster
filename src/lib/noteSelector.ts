@@ -82,6 +82,20 @@ export function getSectionSpans(song: SongConfig): SectionSpan[] {
   return spans;
 }
 
+export function findSectionSpanAtTick(
+  spans: readonly SectionSpan[],
+  tick: number
+): SectionSpan | null {
+  if (spans.length === 0) return null;
+  if (tick <= spans[0].startTick) return spans[0];
+  for (const span of spans) {
+    if (tick >= span.startTick && tick < span.endTick) {
+      return span;
+    }
+  }
+  return spans[spans.length - 1];
+}
+
 export function getTotalSongTicks(song: SongConfig): number {
   return song.sections.reduce(
     (sum, sec) => sum + sec.bars * TICKS_PER_BAR,

@@ -614,6 +614,71 @@ input[type='range'] {
   color: #fff;
 }
 
+.pill.playing {
+  border-color: #10b981;
+  background: rgba(16, 185, 129, 0.16);
+  color: #ecfdf5;
+  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.32);
+}
+
+.pill.active.playing {
+  background: var(--primary);
+  border-color: #34d399;
+  color: #fff;
+  box-shadow: 0 0 0 2px rgba(52, 211, 153, 0.55);
+}
+
+.playing-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #34d399;
+  flex-shrink: 0;
+  box-shadow: 0 0 8px rgba(52, 211, 153, 0.85);
+  animation: playing-pulse 1.1s ease-in-out infinite;
+}
+
+.playing-dot.is-paused {
+  animation: none;
+  background: #fbbf24;
+  box-shadow: none;
+}
+
+@keyframes playing-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.8);
+  }
+}
+
+.badge-playing {
+  background: rgba(16, 185, 129, 0.2);
+  border: 1px solid #34d399;
+  color: #a7f3d0;
+  font-weight: 600;
+}
+
+.badge-playing-jump {
+  background: rgba(16, 185, 129, 0.16);
+  border: 1px solid #34d399;
+  color: #d1fae5;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.74rem;
+  min-height: 24px;
+}
+
+.badge-playing-jump:hover {
+  background: rgba(16, 185, 129, 0.3);
+}
+
 .pill-sub {
   flex-shrink: 0;
   font-size: 0.72rem;
@@ -1173,6 +1238,42 @@ input[type='range'] {
   border-radius: 8px;
   background: var(--surface-2);
   white-space: nowrap;
+}
+
+.now-playing-section-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  white-space: nowrap;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  min-height: 28px;
+}
+
+.now-playing-section-badge > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.now-playing-section-badge.is-playing {
+  border-color: #34d399;
+  background: rgba(16, 185, 129, 0.18);
+  color: #d1fae5;
+}
+
+.now-playing-section-badge.is-paused {
+  border-color: #fbbf24;
+  background: rgba(251, 191, 36, 0.14);
+  color: #fef3c7;
 }
 
 .mixer-list {

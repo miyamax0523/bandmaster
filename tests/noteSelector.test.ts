@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { createDefaultSongConfig, generateAllSections } from '../src/lib/bandState';
 import { createUniformChordTimeline } from '../src/lib/chordTimeline';
-import { selectSongTracks } from '../src/lib/noteSelector';
+import {
+  findSectionSpanAtTick,
+  getSectionSpans,
+  selectSongTracks,
+} from '../src/lib/noteSelector';
 import { TICKS_PER_BAR, TRACK_CHANNELS } from '../src/types/song';
 
 describe('noteSelector', () => {
@@ -172,5 +176,45 @@ describe('noteSelector', () => {
     expect(tracks.bass.length).toBe(1);
     expect(tracks.bass[0].startTick).toBe(1680);
     expect(tracks.bass[0].durationTicks).toBe(240); // clipped to 1920 - 1680
+  });
+
+  it('finds the exact playing section span at any tick during full-song playback', () => {
+    const song = createDefaultSongConfig('rockBand');
+    song.sections = [
+      {
+        id: 'intro',
+        type: 'Intro',
+        name: 'イントロ',
+        bars: 2,
+        energy: 'Low',
+        kickMode: 'acoustic',
+        chords: createUniformChordTimeline(['Em', 'C'], 2),
+      },
+      {
+        id: 'verse',
+        type: 'Verse',
+        name: 'Aメロ',
+        bars: 4,
+        energy: 'Mid',
+        kickMode: 'acoustic',
+        chords: createUniformChordTimeline(['Em', 'C', 'G', 'D'], 4),
+      },
+      {
+        id: 'chorus',
+        type: 'Chorus',
+        name: 'サビ',
+        bars: 2,
+        energy: 'High',
+        kickMode: 'acoustic',
+        chords: createUniformChordTimeline(['C', 'D'], 2),
+      },
+    ];
+    const spans = getSectionSpans(song);
+    expect(findSectionSpanAtTick([], 0)).toBeNull();
+    expect(findSectionSpanAtTick(spans, 0)?.sectionId).toBe('intro');
+    expect(findSectionSpanAtTick(spans, 2 * TICKS_PER_BAR - 1)?.sectionId).toBe('intro');
+    expect(findSectionSpanAtTick(spans, 2 * TICKS_PER_BAR)?.sectionId).toBe('verse');
+    expect(findSectionSpanAtTick(spans, 6 * TICKS_PER_BAR)?.sectionId).toBe('chorus');
+    expect(findSectionSpanAtTick(spans, 99 * TICKS_PER_BAR)?.sectionId).toBe('chorus');
   });
 });
