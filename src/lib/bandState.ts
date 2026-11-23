@@ -7,6 +7,7 @@ import {
   createDefaultEnabledParts,
   createDefaultPartPresets,
   CURRENT_ENGINE_VERSION,
+  getDefaultDrumFillEnabled,
   TICKS_PER_BAR,
   type ChordSlot,
   type CopiedPartPhrase,
@@ -92,6 +93,10 @@ export function cloneSection(sec: Section): Section {
   return {
     ...sec,
     drumAnticipationMode: sec.drumAnticipationMode ?? 'sync',
+    drumHat16thEnabled: sec.drumHat16thEnabled ?? false,
+    drumFillEnabled:
+      sec.drumFillEnabled ?? getDefaultDrumFillEnabled(sec.type, sec.bars),
+    drumBreakEnabled: sec.drumBreakEnabled ?? false,
     vocalHarmony: sec.vocalHarmony ?? 'off',
     bassChromaticEnabled: sec.bassChromaticEnabled ?? false,
     bassFillEnabled: sec.bassFillEnabled ?? false,
@@ -216,6 +221,19 @@ export function generateCellTakes(
       bpm: song.bpm,
       keyboardDensity:
         instrument === 'keyboard' ? (section.keyboardDensity ?? 4) : undefined,
+      drumHat16thEnabled:
+        instrument === 'drums'
+          ? (section.drumHat16thEnabled ?? false)
+          : undefined,
+      drumFillEnabled:
+        instrument === 'drums'
+          ? (section.drumFillEnabled ??
+            getDefaultDrumFillEnabled(section.type, section.bars))
+          : undefined,
+      drumBreakEnabled:
+        instrument === 'drums'
+          ? (section.drumBreakEnabled ?? false)
+          : undefined,
       prevVocalAvgPitch:
         instrument === 'vocal' ||
         instrument === 'keyboard' ||
@@ -1368,6 +1386,9 @@ export function createDefaultSongConfig(
         bars: 4,
         energy: 'Mid',
         kickMode: 'acoustic',
+        drumHat16thEnabled: false,
+        drumFillEnabled: false,
+        drumBreakEnabled: false,
         hatDensity: 3,
         kickDensity: 3,
         keyboardDensity: 4,
@@ -1384,6 +1405,9 @@ export function createDefaultSongConfig(
         bars: 8,
         energy: 'Mid',
         kickMode: 'acoustic',
+        drumHat16thEnabled: false,
+        drumFillEnabled: true,
+        drumBreakEnabled: false,
         hatDensity: 3,
         kickDensity: 3,
         keyboardDensity: 4,
@@ -1400,6 +1424,9 @@ export function createDefaultSongConfig(
         bars: 4,
         energy: 'Mid',
         kickMode: 'acoustic',
+        drumHat16thEnabled: false,
+        drumFillEnabled: true,
+        drumBreakEnabled: false,
         hatDensity: 3,
         kickDensity: 3,
         keyboardDensity: 4,
@@ -1416,6 +1443,9 @@ export function createDefaultSongConfig(
         bars: 8,
         energy: 'High',
         kickMode: 'acoustic',
+        drumHat16thEnabled: false,
+        drumFillEnabled: true,
+        drumBreakEnabled: false,
         hatDensity: 3,
         kickDensity: 3,
         keyboardDensity: 4,
@@ -1621,6 +1651,10 @@ export function applyArrangementPresetToSong(
 
   nextSong.sections = nextSong.sections.map((s) => ({
     ...s,
+    drumHat16thEnabled: s.drumHat16thEnabled ?? false,
+    drumFillEnabled:
+      s.drumFillEnabled ?? getDefaultDrumFillEnabled(s.type, s.bars),
+    drumBreakEnabled: s.drumBreakEnabled ?? false,
     hatDensity: s.hatDensity ?? 3,
     kickDensity: s.kickDensity ?? 3,
     keyboardDensity: s.keyboardDensity ?? 4,
@@ -1716,5 +1750,102 @@ export function rerollSectionBassFill(
   return {
     song: nextSong,
     bandState: regenerateSectionBassOnly(nextSong, bandState, sectionId),
+  };
+}
+
+function regenerateSectionDrumsAndSyncBass(
+  song: SongConfig,
+  bandState: BandState,
+  sectionId: string,
+  seedBase: number
+): BandState {
+  const secIdx = song.sections.findIndex((s) => s.id === sectionId);
+  if (secIdx === -1) return bandState;
+  const sec = song.sections[secIdx];
+  const nextState = cloneBandState(bandState);
+  const existingSec = nextState.cellsBySection[sectionId];
+
+  const targets: InstrumentType[] = [];
+  if (!existingSec?.drums?.locked) {
+    targets.push('drums');
+  }
+  if (!sec.unisonRiff && !existingSec?.bass?.locked) {
+    targets.push('bass');
+  }
+
+  if (targets.length > 0) {
+    nextState.cellsBySection[sectionId] = generateSectionCells(
+      song,
+      sec,
+      secIdx,
+      existingSec,
+      seedBase + secIdx,
+      { newSeeds: false, instruments: targets }
+    );
+  }
+
+  return nextState;
+}
+
+export function setSectionDrumHat16thEnabled(
+  song: SongConfig,
+  bandState: BandState,
+  sectionId: string,
+  enabled: boolean
+): { song: SongConfig; bandState: BandState } {
+  const nextSong = cloneSongConfig(song);
+  const secIdx = nextSong.sections.findIndex((s) => s.id === sectionId);
+  if (secIdx === -1) return { song, bandState };
+  nextSong.sections[secIdx].drumHat16thEnabled = enabled;
+  return {
+    song: nextSong,
+    bandState: regenerateSectionDrumsAndSyncBass(
+      nextSong,
+      bandState,
+      sectionId,
+      6310
+    ),
+  };
+}
+
+export function setSectionDrumFillEnabled(
+  song: SongConfig,
+  bandState: BandState,
+  sectionId: string,
+  enabled: boolean
+): { song: SongConfig; bandState: BandState } {
+  const nextSong = cloneSongConfig(song);
+  const secIdx = nextSong.sections.findIndex((s) => s.id === sectionId);
+  if (secIdx === -1) return { song, bandState };
+  nextSong.sections[secIdx].drumFillEnabled = enabled;
+  return {
+    song: nextSong,
+    bandState: regenerateSectionDrumsAndSyncBass(
+      nextSong,
+      bandState,
+      sectionId,
+      6320
+    ),
+  };
+}
+
+export function setSectionDrumBreakEnabled(
+  song: SongConfig,
+  bandState: BandState,
+  sectionId: string,
+  enabled: boolean
+): { song: SongConfig; bandState: BandState } {
+  const nextSong = cloneSongConfig(song);
+  const secIdx = nextSong.sections.findIndex((s) => s.id === sectionId);
+  if (secIdx === -1) return { song, bandState };
+  nextSong.sections[secIdx].drumBreakEnabled = enabled;
+  return {
+    song: nextSong,
+    bandState: regenerateSectionDrumsAndSyncBass(
+      nextSong,
+      bandState,
+      sectionId,
+      6330
+    ),
   };
 }

@@ -60,6 +60,9 @@ export interface EngineInput {
   vocalNotes?: MidiNote[];
   bpm?: number;
   keyboardDensity?: KeyboardDensityLevel;
+  drumHat16thEnabled?: boolean;
+  drumFillEnabled?: boolean;
+  drumBreakEnabled?: boolean;
   prevVocalAvgPitch?: number;
   nextSectionFirstChord?: string;
   nextSectionType?: SectionType | string;

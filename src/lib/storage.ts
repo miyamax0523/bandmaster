@@ -2,6 +2,7 @@ import {
   createDefaultEnabledParts,
   createDefaultPartPresets,
   CURRENT_ENGINE_VERSION,
+  getDefaultDrumFillEnabled,
   type InstrumentType,
   type MidiNote,
   type Section,
@@ -226,6 +227,11 @@ export function hydrateProject(stored: StoredBandProject): {
     const section: Section = {
       ...rawSec,
       drumAnticipationMode: rawSec.drumAnticipationMode ?? 'sync',
+      drumHat16thEnabled: rawSec.drumHat16thEnabled ?? false,
+      drumFillEnabled:
+        rawSec.drumFillEnabled ??
+        getDefaultDrumFillEnabled(rawSec.type, rawSec.bars),
+      drumBreakEnabled: rawSec.drumBreakEnabled ?? false,
       chords: restoredChords,
       hatDensity: rawSec.hatDensity ?? 3,
       kickDensity: rawSec.kickDensity ?? 3,

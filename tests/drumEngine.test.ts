@@ -822,4 +822,233 @@ describe('drumEngine', () => {
       expect(notes.length).toBeGreaterThan(0);
     }
   });
+
+  it('suppresses 16th-note hat/ride intervals (120 ticks) on 8th-note genres when drumHat16thEnabled is false', () => {
+    const eighthGenres: DrumGenreDNAId[] = [
+      'alt_heavy_shoegaze',
+      'emo_jrock_fast',
+      'jpop_melodic',
+      'chill_lofi_ballad',
+    ];
+    const cymbalPitches = new Set<number>([42, 46, 51, 53]);
+
+    for (const genre of eighthGenres) {
+      const song = createSong('');
+      song.bpm = 120;
+      song.members.drums.patternPreset = genre;
+      const section = createSection({
+        type: 'Verse',
+        bars: 4,
+        energy: 'Mid',
+        drumHat16thEnabled: false,
+        drumFillEnabled: false,
+        drumBreakEnabled: false,
+      });
+
+      const res = generateDrumResult({
+        song,
+        section,
+        sectionIndex: 0,
+        style: 'A',
+        seed: 101,
+        params: resolveInstrumentParams(song, section, 'drums', 'A'),
+      });
+
+      // Check normal groove bars (bars 0..2)
+      for (let bar = 0; bar < 3; bar++) {
+        const barStart = bar * TICKS_PER_BAR;
+        const barEnd = barStart + TICKS_PER_BAR;
+        const cymbals = res.events
+          .filter(
+            (e) =>
+              e.tick >= barStart &&
+              e.tick < barEnd &&
+              cymbalPitches.has(e.note)
+          )
+          .sort((a, b) => a.tick - b.tick);
+
+        let sixteenthCount = 0;
+        for (let i = 1; i < cymbals.length; i++) {
+          if (cymbals[i].tick - cymbals[i - 1].tick === 120) {
+            sixteenthCount++;
+          }
+        }
+        expect(sixteenthCount).toBe(0);
+      }
+    }
+  });
+
+  it('unlocks 16th-note hat/ride ornamentation (120-tick intervals) on 8th-note genres when drumHat16thEnabled is true', () => {
+    const eighthGenres: DrumGenreDNAId[] = [
+      'alt_heavy_shoegaze',
+      'emo_jrock_fast',
+      'jpop_melodic',
+      'chill_lofi_ballad',
+    ];
+    const cymbalPitches = new Set<number>([42, 46, 51, 53]);
+
+    for (const genre of eighthGenres) {
+      const song = createSong('');
+      song.bpm = 120;
+      song.members.drums.patternPreset = genre;
+      const section = createSection({
+        type: 'Verse',
+        bars: 4,
+        energy: 'Mid',
+        drumHat16thEnabled: true,
+        drumFillEnabled: false,
+        drumBreakEnabled: false,
+      });
+
+      const res = generateDrumResult({
+        song,
+        section,
+        sectionIndex: 0,
+        style: 'A',
+        seed: 101,
+        params: resolveInstrumentParams(song, section, 'drums', 'A'),
+      });
+
+      const cymbals = res.events
+        .filter((e) => cymbalPitches.has(e.note))
+        .sort((a, b) => a.tick - b.tick);
+
+      let sixteenthCount = 0;
+      for (let i = 1; i < cymbals.length; i++) {
+        if (cymbals[i].tick - cymbals[i - 1].tick === 120) {
+          sixteenthCount++;
+        }
+      }
+      expect(sixteenthCount).toBeGreaterThan(0);
+    }
+  });
+
+  it('keeps base groove seamlessly through section end without toms when drumFillEnabled=false and drumBreakEnabled=false', () => {
+    const tomNotes = new Set<number>([41, 43, 45, 47, 48, 50]);
+    const cymbalPitches = new Set<number>([42, 46, 51, 53]);
+    const song = createSong('');
+    song.members.drums.patternPreset = 'jpop_melodic';
+    const section = createSection({
+      type: 'Verse',
+      bars: 4,
+      energy: 'Mid',
+      drumHat16thEnabled: false,
+      drumFillEnabled: false,
+      drumBreakEnabled: false,
+    });
+
+    const res = generateDrumResult({
+      song,
+      section,
+      sectionIndex: 0,
+      style: 'A',
+      seed: 42,
+      params: resolveInstrumentParams(song, section, 'drums', 'A'),
+    });
+
+    const lastBarStart = 3 * TICKS_PER_BAR;
+    const lastBarEnd = 4 * TICKS_PER_BAR;
+    const lastBarEvents = res.events.filter(
+      (e) => e.tick >= lastBarStart && e.tick < lastBarEnd
+    );
+    const lastBarToms = lastBarEvents.filter((e) => tomNotes.has(e.note));
+    expect(lastBarToms.length).toBe(0);
+
+    // Base groove continues through beats 3-4 of final bar
+    const lateBarCymbals = lastBarEvents.filter(
+      (e) => e.tick >= lastBarStart + 960 && cymbalPitches.has(e.note)
+    );
+    expect(lateBarCymbals.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('generates tom fill in final bar when drumFillEnabled=true and drumBreakEnabled=false', () => {
+    const tomNotes = new Set<number>([41, 43, 45, 47, 48, 50]);
+    const song = createSong('');
+    song.members.drums.patternPreset = 'jpop_melodic';
+    const section = createSection({
+      type: 'Pre-Chorus',
+      bars: 4,
+      energy: 'High',
+      drumFillEnabled: true,
+      drumBreakEnabled: false,
+    });
+
+    const res = generateDrumResult({
+      song,
+      section,
+      sectionIndex: 0,
+      style: 'A',
+      seed: 10,
+      params: resolveInstrumentParams(song, section, 'drums', 'A'),
+    });
+
+    const lastBarStart = 3 * TICKS_PER_BAR;
+    const lastBarEnd = 4 * TICKS_PER_BAR;
+    const lastBarToms = res.events.filter(
+      (e) => e.tick >= lastBarStart + 960 && e.tick < lastBarEnd && tomNotes.has(e.note)
+    );
+    expect(lastBarToms.length).toBeGreaterThan(0);
+  });
+
+  it('creates a silent break window in the latter half of the final bar when drumBreakEnabled=true', () => {
+    const tomNotes = new Set<number>([41, 43, 45, 47, 48, 50]);
+    const song = createSong('');
+    song.members.drums.patternPreset = 'jpop_melodic';
+
+    // 1. Break only (drumFillEnabled=false, drumBreakEnabled=true): beat 3 hit + silence in [1200..1920)
+    const breakOnlySec = createSection({
+      type: 'Pre-Chorus',
+      bars: 4,
+      energy: 'High',
+      drumFillEnabled: false,
+      drumBreakEnabled: true,
+    });
+    const breakOnlyRes = generateDrumResult({
+      song,
+      section: breakOnlySec,
+      sectionIndex: 0,
+      style: 'A',
+      seed: 21,
+      params: resolveInstrumentParams(song, breakOnlySec, 'drums', 'A'),
+    });
+    const lastBarStart = 3 * TICKS_PER_BAR;
+    const lastBarEnd = 4 * TICKS_PER_BAR;
+    const silentAfterHit = breakOnlyRes.events.filter(
+      (e) => e.tick >= lastBarStart + 1200 && e.tick < lastBarEnd
+    );
+    expect(silentAfterHit).toEqual([]);
+    expect(
+      breakOnlyRes.events.some(
+        (e) => e.tick === lastBarStart + 960 && e.note === GM_DRUM.KICK
+      )
+    ).toBe(true);
+
+    // 2. Fill + Break combo (drumFillEnabled=true, drumBreakEnabled=true): fill on beats 2-3, dead silence on beat 4 [1440..1920)
+    const comboSec = createSection({
+      type: 'Pre-Chorus',
+      bars: 4,
+      energy: 'High',
+      drumFillEnabled: true,
+      drumBreakEnabled: true,
+    });
+    const comboRes = generateDrumResult({
+      song,
+      section: comboSec,
+      sectionIndex: 0,
+      style: 'A',
+      seed: 21,
+      params: resolveInstrumentParams(song, comboSec, 'drums', 'A'),
+    });
+    const comboBeat4Events = comboRes.events.filter(
+      (e) => e.tick >= lastBarStart + 1440 && e.tick < lastBarEnd
+    );
+    expect(comboBeat4Events).toEqual([]);
+    const comboFillToms = comboRes.events.filter(
+      (e) =>
+        e.tick >= lastBarStart + 480 &&
+        e.tick < lastBarStart + 1440 &&
+        tomNotes.has(e.note)
+    );
+    expect(comboFillToms.length).toBeGreaterThan(0);
+  });
 });

@@ -703,6 +703,8 @@ export function generateGrooveSkeleton(
   const events: InternalDrumEvent[] = [];
   const hatDensity = section.hatDensity;
   const kickDensity = section.kickDensity;
+  const drumHat16thEnabled =
+    input.drumHat16thEnabled ?? section.drumHat16thEnabled ?? false;
   const isTrapMode =
     drumPreset === 'trap_sparse' ||
     drumPreset === 'trap_active' ||
@@ -808,7 +810,10 @@ export function generateGrooveSkeleton(
       } else if (
         drumPreset === 'straight_16' ||
         dna.defaultHhSubdivision === 16 ||
-        (dna.id === 'jpop_melodic' && energy === 'high' && song.bpm <= 125)
+        (drumHat16thEnabled &&
+          dna.id === 'jpop_melodic' &&
+          energy === 'high' &&
+          song.bpm <= 125)
       ) {
         step = SIXTEENTH_TICKS;
       }
@@ -891,6 +896,64 @@ export function generateGrooveSkeleton(
             velocity: 62,
             limb: 'LF',
             role: 'hh_pedal',
+            fixedTiming: true,
+          });
+        }
+      }
+
+      // Optional 16th-note hat/ride ornamentation when explicitly enabled on 8th-note grooves
+      if (
+        drumHat16thEnabled &&
+        step === EIGHTH_TICKS &&
+        cymbalMode !== 'crash_ride'
+      ) {
+        const sixteenthOrnamentSlots = [120, 360, 600, 840, 1080, 1320, 1560, 1800];
+        const ornamentNote: number =
+          cymbalMode === 'ride_bow' || cymbalMode === 'ride_bell'
+            ? GM_DRUM.RIDE
+            : GM_DRUM.CLOSED_HH;
+        const ornamentRole: DrumEventRole =
+          ornamentNote === GM_DRUM.RIDE ? 'ride' : 'hh_closed';
+        const ornamentDur = ornamentNote === GM_DRUM.RIDE ? 110 : 85;
+        const eligibleSlots = sixteenthOrnamentSlots.filter((off) => {
+          if (isSilentDownbeatWindow && off < 240) return false;
+          if (
+            meta.barEndAnticipationTick !== null &&
+            barStart + off >= meta.barEndAnticipationTick
+          ) {
+            return false;
+          }
+          return true;
+        });
+
+        let placedCount = 0;
+        for (const off of eligibleSlots) {
+          if (rng() < 0.42) {
+            pushEv({
+              note: ornamentNote,
+              tick: barStart + off,
+              duration: ornamentDur,
+              velocity: 60,
+              limb: 'RH',
+              role: ornamentRole,
+              fixedTiming: true,
+            });
+            placedCount++;
+          }
+        }
+        // Guarantee at least one deterministic 16th ornament per eligible bar when enabled
+        if (placedCount === 0 && eligibleSlots.length > 0) {
+          const fallbackOff =
+            eligibleSlots.includes(360)
+              ? 360
+              : eligibleSlots[rngInt(rng, 0, eligibleSlots.length - 1)];
+          pushEv({
+            note: ornamentNote,
+            tick: barStart + fallbackOff,
+            duration: ornamentDur,
+            velocity: 60,
+            limb: 'RH',
+            role: ornamentRole,
             fixedTiming: true,
           });
         }
@@ -1230,14 +1293,30 @@ export function injectMusicalFills(
     song.members.drums.patternPreset ??
     'auto';
 
-  // Skip structural fill injection on external loop, minimal density=1, explicit Outro density test, four_on_floor 1-bar, or minimal preset Take B
-  if (
-    Boolean(section.uploadedDrumLoop ?? song.uploadedDrumLoop) ||
+  const drumFillEnabled =
+    input.drumFillEnabled ?? section.drumFillEnabled ?? true;
+  const drumBreakEnabled =
+    input.drumBreakEnabled ?? section.drumBreakEnabled ?? false;
+
+  // Skip external drum loops always
+  if (Boolean(section.uploadedDrumLoop ?? song.uploadedDrumLoop)) {
+    return skeletonEvents;
+  }
+
+  // When both tom fills and breaks are disabled, run straight through on base groove
+  if (!drumFillEnabled && !drumBreakEnabled) {
+    return skeletonEvents;
+  }
+
+  // Legacy structural fill skip conditions (still allow explicit section-end break)
+  const skipLegacyFill =
+    !drumFillEnabled ||
     (section.hatDensity === 1 && section.kickDensity === 1) ||
     (section.type === 'Outro' && section.hatDensity !== undefined) ||
     (drumPreset === 'four_on_floor' && section.bars <= 1) ||
-    (drumPreset === 'simple_minimal' && style === 'B')
-  ) {
+    (drumPreset === 'simple_minimal' && style === 'B');
+
+  if (skipLegacyFill && !drumBreakEnabled) {
     return skeletonEvents;
   }
 
@@ -1245,6 +1324,123 @@ export function injectMusicalFills(
 
   for (const meta of barMetas) {
     const { barIndex: b, barStart, barEnd, energy } = meta;
+
+    // Section-end Break handling (takes precedence on final bar)
+    if (meta.isSectionEnd && drumBreakEnabled) {
+      if (!drumFillEnabled) {
+        // Punchy beat-3 hit (960) + complete silence for the remainder of the bar [961..barEnd)
+        const hitTick = barStart + 960;
+        for (let i = events.length - 1; i >= 0; i--) {
+          if (events[i].tick >= hitTick && events[i].tick < barEnd) {
+            events.splice(i, 1);
+          }
+        }
+        events.push({
+          note: GM_DRUM.KICK,
+          tick: hitTick,
+          duration: 120,
+          velocity: 118,
+          limb: 'RF',
+          role: 'kick',
+          isAnchor: true,
+          fixedTiming: true,
+        });
+        events.push({
+          note: dna.accentCymbalNote,
+          tick: hitTick,
+          duration: 240,
+          velocity: 114,
+          limb: 'RH',
+          role: 'crash',
+          isAnchor: true,
+          fixedTiming: true,
+        });
+        continue;
+      }
+
+      // Dramatic Fill + Break combo: short fill on beats 2-3 [480..1440), then dead-stop silence on beat 4 [1440..barEnd)
+      const fillStart = barStart + 480;
+      const fillEnd = Math.min(barEnd, barStart + 1440);
+      for (let i = events.length - 1; i >= 0; i--) {
+        if (events[i].tick >= fillStart && events[i].tick < barEnd) {
+          events.splice(i, 1);
+        }
+      }
+
+      if (fillEnd - fillStart >= 240) {
+        const useLinear = rng() < dna.linearFillWeight;
+        const stepsCount = Math.max(2, Math.floor((fillEnd - fillStart) / SIXTEENTH_TICKS));
+        const fillNotes: Array<{ note: number; role: DrumEventRole; stepOffset: number }> = [];
+
+        if (useLinear) {
+          const linear8: Array<{ note: number; role: DrumEventRole }> = [
+            { note: GM_DRUM.SNARE, role: 'tom_fill' },
+            { note: GM_DRUM.HIGH_TOM_50, role: 'tom_fill' },
+            { note: GM_DRUM.KICK, role: 'kick_linear' },
+            { note: GM_DRUM.HI_MID_TOM, role: 'tom_fill' },
+            { note: GM_DRUM.LOW_MID_TOM, role: 'tom_fill' },
+            { note: GM_DRUM.KICK, role: 'kick_linear' },
+            { note: GM_DRUM.HIGH_FLOOR_TOM, role: 'tom_fill' },
+            { note: GM_DRUM.LOW_FLOOR_TOM, role: 'tom_fill' },
+          ];
+          const limit = Math.min(stepsCount, linear8.length);
+          for (let s = 0; s < limit; s++) {
+            fillNotes.push({
+              note: linear8[s].note,
+              role: linear8[s].role,
+              stepOffset: s * SIXTEENTH_TICKS,
+            });
+          }
+        } else {
+          const tomDescent = [
+            GM_DRUM.SNARE,
+            GM_DRUM.HIGH_TOM_50,
+            GM_DRUM.HI_MID_TOM,
+            GM_DRUM.LOW_MID_TOM,
+            GM_DRUM.LOW_TOM,
+            GM_DRUM.HIGH_FLOOR_TOM,
+          ];
+          const hitStep = style === 'C' ? SIXTEENTH_TICKS : EIGHTH_TICKS;
+          const count = Math.max(2, Math.floor((fillEnd - fillStart) / hitStep));
+          for (let s = 0; s < count; s++) {
+            const idx = Math.min(
+              tomDescent.length - 1,
+              Math.floor((s / Math.max(1, count - 1)) * (tomDescent.length - 1))
+            );
+            fillNotes.push({
+              note: tomDescent[idx],
+              role: 'tom_fill',
+              stepOffset: s * hitStep,
+            });
+          }
+        }
+
+        const totalFillSteps = Math.max(1, fillNotes.length);
+        for (let idx = 0; idx < fillNotes.length; idx++) {
+          const fn = fillNotes[idx];
+          const t = fillStart + fn.stepOffset;
+          if (t >= fillEnd || t >= sectionEnd) continue;
+          const progress = idx / Math.max(1, totalFillSteps);
+          const crescVel = clampRange(
+            Math.round(122 * (0.76 + 0.24 * Math.pow(progress, 1.2))),
+            45,
+            126
+          );
+          events.push({
+            note: fn.note,
+            tick: t,
+            duration: fn.role === 'kick_linear' ? 120 : 140,
+            velocity: fn.role === 'kick_linear' ? 84 : crescVel,
+            limb: fn.role === 'kick_linear' ? 'RF' : idx % 2 === 0 ? 'RH' : 'LH',
+            role: fn.role,
+            fixedTiming: true,
+          });
+        }
+      }
+      continue;
+    }
+
+    if (skipLegacyFill) continue;
 
     let fillLengthTicks = 0;
     if (meta.isSectionEnd || meta.isEightBarEnd) {

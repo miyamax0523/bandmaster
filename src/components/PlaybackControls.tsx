@@ -36,47 +36,56 @@ export function PlaybackControls({
     sectionSpans.find((s) => s.sectionId === activeSectionId) ?? null;
 
   return (
-    <section className="transport-bar" aria-label="Playback Controls">
-      <div className="mode-toggle-row" role="group" aria-label="再生モード">
-        <button
-          type="button"
-          className={`btn mode-btn ${playbackMode === 'song' ? 'btn-primary' : 'btn-secondary'}`}
-          onClick={() => onChangePlaybackMode('song')}
-        >
-          🎵 通し再生（全曲）
-        </button>
-        <button
-          type="button"
-          className={`btn mode-btn ${playbackMode === 'section' ? 'btn-accent' : 'btn-secondary'}`}
-          disabled={!activeSpan}
-          onClick={() => onChangePlaybackMode('section')}
-        >
-          🔁 このセクションだけ再生（ループ）
-        </button>
-      </div>
+    <section
+      className="transport-bar transport-bar--top"
+      aria-label="Playback Controls"
+    >
+      <div className="transport-top-row">
+        <div className="transport-buttons">
+          {previewState.status === 'playing' ? (
+            <button
+              type="button"
+              className="btn btn-primary transport-action-btn"
+              onClick={onPause}
+            >
+              ⏸ 一時停止
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="btn btn-primary transport-action-btn"
+              onClick={onPlay}
+              disabled={previewState.totalTicks === 0}
+            >
+              ▶ 再生
+            </button>
+          )}
+          <button
+            type="button"
+            className="btn btn-secondary transport-action-btn"
+            onClick={onStop}
+          >
+            ⏹ 停止
+          </button>
+        </div>
 
-      <div className="transport-buttons">
-        {previewState.status === 'playing' ? (
+        <div className="mode-toggle-row" role="group" aria-label="再生モード">
           <button
             type="button"
-            className="btn btn-primary"
-            onClick={onPause}
+            className={`btn mode-btn ${playbackMode === 'song' ? 'btn-primary' : 'btn-secondary'}`}
+            onClick={() => onChangePlaybackMode('song')}
           >
-            ⏸ 一時停止
+            🎵 全曲
           </button>
-        ) : (
           <button
             type="button"
-            className="btn btn-primary"
-            onClick={onPlay}
-            disabled={previewState.totalTicks === 0}
+            className={`btn mode-btn ${playbackMode === 'section' ? 'btn-accent' : 'btn-secondary'}`}
+            disabled={!activeSpan}
+            onClick={() => onChangePlaybackMode('section')}
           >
-            ▶ 再生
+            🔁 セクションループ
           </button>
-        )}
-        <button type="button" className="btn btn-secondary" onClick={onStop}>
-          ⏹ 停止
-        </button>
+        </div>
       </div>
 
       <div className="transport-seek">
@@ -95,9 +104,6 @@ export function PlaybackControls({
         />
         <span className="bpm-badge">{previewState.bpm} BPM</span>
       </div>
-      <p className="hint-text">
-        ※モバイルPWA/バックグラウンド切替時は端末仕様により再生が中断される場合があります（復帰時に自動再同期します）。
-      </p>
     </section>
   );
 }

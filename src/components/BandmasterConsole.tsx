@@ -4,17 +4,18 @@ import { extractDrumLoopFromMidi } from '../lib/midiParser';
 import { isAutoTacet, isSectionPartEnabled } from '../lib/noteSelector';
 import { PATTERN_PRESET_GROUPS } from '../lib/patternPresets';
 import { useHorizontalSwipe } from '../lib/touchSwipe';
-import type {
-  ChordSlot,
-  CopiedPartPhrase,
-  DensityLevel,
-  DrumAnticipationMode,
-  DrumLoopData,
-  InstrumentType,
-  KeyboardDensityLevel,
-  SongConfig,
-  TakeStyle,
-  VocalHarmonyMode,
+import {
+  getDefaultDrumFillEnabled,
+  type ChordSlot,
+  type CopiedPartPhrase,
+  type DensityLevel,
+  type DrumAnticipationMode,
+  type DrumLoopData,
+  type InstrumentType,
+  type KeyboardDensityLevel,
+  type SongConfig,
+  type TakeStyle,
+  type VocalHarmonyMode,
 } from '../types/song';
 import type { BandState } from '../types/track';
 import { ChordTimelineEditor } from './ChordTimelineEditor';
@@ -63,6 +64,9 @@ interface BandmasterConsoleProps {
   onChangeSectionBassChromatic: (sectionId: string, enabled: boolean) => void;
   onChangeSectionBassFillEnabled: (sectionId: string, enabled: boolean) => void;
   onRerollSectionBassFill: (sectionId: string) => void;
+  onSetSectionDrumHat16thEnabled: (sectionId: string, enabled: boolean) => void;
+  onSetSectionDrumFillEnabled: (sectionId: string, enabled: boolean) => void;
+  onSetSectionDrumBreakEnabled: (sectionId: string, enabled: boolean) => void;
   onCopyTimelineToAllSections: (sourceSectionId: string) => void;
   onToggleSectionPart: (sectionId: string, inst: InstrumentType) => void;
   onOpenVocalModal: (sectionId: string) => void;
@@ -122,6 +126,9 @@ export function BandmasterConsole({
   onChangeSectionBassChromatic,
   onChangeSectionBassFillEnabled,
   onRerollSectionBassFill,
+  onSetSectionDrumHat16thEnabled,
+  onSetSectionDrumFillEnabled,
+  onSetSectionDrumBreakEnabled,
   onCopyTimelineToAllSections,
   onToggleSectionPart,
   onOpenVocalModal,
@@ -467,6 +474,58 @@ export function BandmasterConsole({
                       })}
                     </div>
                   </div>
+
+                  {(() => {
+                    const hat16thOn = section.drumHat16thEnabled ?? false;
+                    const fillOn =
+                      section.drumFillEnabled ??
+                      getDefaultDrumFillEnabled(section.type, section.bars);
+                    const breakOn = section.drumBreakEnabled ?? false;
+                    return (
+                      <div
+                        className="drum-pro-controls"
+                        role="group"
+                        aria-label="Drums 表現設定"
+                      >
+                        <button
+                          type="button"
+                          className={`chip-btn drum-pro-btn ${hat16thOn ? 'chip-active' : ''}`}
+                          aria-pressed={hat16thOn}
+                          disabled={cell.locked || !effectivelyEnabled}
+                          onClick={() =>
+                            onSetSectionDrumHat16thEnabled(section.id, !hat16thOn)
+                          }
+                          title="8分刻み時の16分ハット／ライド装飾を切り替え"
+                        >
+                          🎩 16分装飾: {hat16thOn ? 'ON' : 'OFF'}
+                        </button>
+                        <button
+                          type="button"
+                          className={`chip-btn drum-pro-btn ${fillOn ? 'chip-active' : ''}`}
+                          aria-pressed={fillOn}
+                          disabled={cell.locked || !effectivelyEnabled}
+                          onClick={() =>
+                            onSetSectionDrumFillEnabled(section.id, !fillOn)
+                          }
+                          title="セクション末尾や節目でのタム回しフィルを切り替え"
+                        >
+                          🥁 タム回し: {fillOn ? 'ON' : 'OFF'}
+                        </button>
+                        <button
+                          type="button"
+                          className={`chip-btn drum-pro-btn ${breakOn ? 'chip-active' : ''}`}
+                          aria-pressed={breakOn}
+                          disabled={cell.locked || !effectivelyEnabled}
+                          onClick={() =>
+                            onSetSectionDrumBreakEnabled(section.id, !breakOn)
+                          }
+                          title="セクション最終小節後半の無音ブレイクを切り替え"
+                        >
+                          ⏸️ ブレイク: {breakOn ? 'ON' : 'OFF'}
+                        </button>
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
 

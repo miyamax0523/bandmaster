@@ -177,6 +177,15 @@ export interface CopiedPartPhrase {
   vocalMelody?: VocalMelodyData;
 }
 
+export function getDefaultDrumFillEnabled(
+  sectionType?: SectionType | string,
+  bars?: number
+): boolean {
+  if (sectionType === 'Pre-Chorus' || sectionType === 'Bridge') return true;
+  if (bars !== undefined && bars >= 8) return true;
+  return false;
+}
+
 export interface Section {
   id: string;
   type: SectionType;
@@ -185,6 +194,9 @@ export interface Section {
   energy: EnergyLevel;
   kickMode: KickMode;
   drumAnticipationMode?: DrumAnticipationMode; // default 'sync'
+  drumHat16thEnabled?: boolean; // default false
+  drumFillEnabled?: boolean; // default via getDefaultDrumFillEnabled
+  drumBreakEnabled?: boolean; // default false
   hatDensity?: DensityLevel; // 1..5 (default 3)
   kickDensity?: DensityLevel; // 1..5 (default 3)
   keyboardDensity?: KeyboardDensityLevel; // 1..7 (default 4)

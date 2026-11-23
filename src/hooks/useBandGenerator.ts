@@ -16,6 +16,9 @@ import {
   selectInstrumentTake,
   setSectionBassChromatic,
   setSectionBassFillEnabled,
+  setSectionDrumBreakEnabled as applySectionDrumBreakEnabled,
+  setSectionDrumFillEnabled as applySectionDrumFillEnabled,
+  setSectionDrumHat16thEnabled as applySectionDrumHat16thEnabled,
   setSectionUnisonRiff,
   setSectionVocalMelody,
   toggleCellLock,
@@ -317,6 +320,9 @@ export function useBandGenerator() {
       bars: 4,
       energy: 'Mid',
       kickMode: 'acoustic',
+      drumHat16thEnabled: false,
+      drumFillEnabled: false,
+      drumBreakEnabled: false,
       hatDensity: 3,
       kickDensity: 3,
       keyboardDensity: 4,
@@ -627,6 +633,30 @@ export function useBandGenerator() {
     [song, bandState, commitChange]
   );
 
+  const setSectionDrumHat16thEnabled = useCallback(
+    (sectionId: string, enabled: boolean) => {
+      const res = applySectionDrumHat16thEnabled(song, bandState, sectionId, enabled);
+      commitChange(res.song, res.bandState, true, true);
+    },
+    [song, bandState, commitChange]
+  );
+
+  const setSectionDrumFillEnabled = useCallback(
+    (sectionId: string, enabled: boolean) => {
+      const res = applySectionDrumFillEnabled(song, bandState, sectionId, enabled);
+      commitChange(res.song, res.bandState, true, true);
+    },
+    [song, bandState, commitChange]
+  );
+
+  const setSectionDrumBreakEnabled = useCallback(
+    (sectionId: string, enabled: boolean) => {
+      const res = applySectionDrumBreakEnabled(song, bandState, sectionId, enabled);
+      commitChange(res.song, res.bandState, true, true);
+    },
+    [song, bandState, commitChange]
+  );
+
   const copyTimelineToAllSections = useCallback(
     (sourceSectionId: string) => {
       const src = song.sections.find((s) => s.id === sourceSectionId);
@@ -689,6 +719,9 @@ export function useBandGenerator() {
     changeSectionBassChromatic,
     changeSectionBassFillEnabled,
     rerollBassFill,
+    setSectionDrumHat16thEnabled,
+    setSectionDrumFillEnabled,
+    setSectionDrumBreakEnabled,
     copyTimelineToAllSections,
     pastePartPhrase,
     loadSnapshotData,

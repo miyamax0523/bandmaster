@@ -55,6 +55,9 @@ export function App() {
     changeSectionBassChromatic,
     changeSectionBassFillEnabled,
     rerollBassFill,
+    setSectionDrumHat16thEnabled,
+    setSectionDrumFillEnabled,
+    setSectionDrumBreakEnabled,
     copyTimelineToAllSections,
     pastePartPhrase,
     loadSnapshotData,
@@ -151,36 +154,50 @@ export function App() {
         </div>
       )}
 
-      <nav className="tab-nav" aria-label="Main Navigation">
-        <button
-          type="button"
-          className={`tab-btn ${activeTab === 'song' ? 'active' : ''}`}
-          onClick={() => setActiveTab('song')}
-        >
-          ⚙ SONG
-        </button>
-        <button
-          type="button"
-          className={`tab-btn ${activeTab === 'arrangement' ? 'active' : ''}`}
-          onClick={() => setActiveTab('arrangement')}
-        >
-          🎼 ARRANGE
-        </button>
-        <button
-          type="button"
-          className={`tab-btn ${activeTab === 'members' ? 'active' : ''}`}
-          onClick={() => setActiveTab('members')}
-        >
-          🎸 MEMBERS
-        </button>
-        <button
-          type="button"
-          className={`tab-btn ${activeTab === 'console' ? 'active' : ''}`}
-          onClick={() => setActiveTab('console')}
-        >
-          🎛 CONSOLE
-        </button>
-      </nav>
+      <div className="top-sticky-dock">
+        <nav className="tab-nav" aria-label="Main Navigation">
+          <button
+            type="button"
+            className={`tab-btn ${activeTab === 'song' ? 'active' : ''}`}
+            onClick={() => setActiveTab('song')}
+          >
+            ⚙ SONG
+          </button>
+          <button
+            type="button"
+            className={`tab-btn ${activeTab === 'arrangement' ? 'active' : ''}`}
+            onClick={() => setActiveTab('arrangement')}
+          >
+            🎼 ARRANGE
+          </button>
+          <button
+            type="button"
+            className={`tab-btn ${activeTab === 'members' ? 'active' : ''}`}
+            onClick={() => setActiveTab('members')}
+          >
+            🎸 MEMBERS
+          </button>
+          <button
+            type="button"
+            className={`tab-btn ${activeTab === 'console' ? 'active' : ''}`}
+            onClick={() => setActiveTab('console')}
+          >
+            🎛 CONSOLE
+          </button>
+        </nav>
+
+        <PlaybackControls
+          previewState={audio.previewState}
+          playbackMode={audio.playbackMode}
+          activeSectionId={selectedSectionId}
+          sectionSpans={audio.sectionSpans}
+          onPlay={audio.play}
+          onPause={audio.pause}
+          onStop={audio.stop}
+          onSeek={audio.seek}
+          onChangePlaybackMode={audio.setPlaybackMode}
+        />
+      </div>
 
       <main className="main-layout">
         <div className="primary-col">
@@ -252,6 +269,9 @@ export function App() {
               onChangeSectionBassChromatic={changeSectionBassChromatic}
               onChangeSectionBassFillEnabled={changeSectionBassFillEnabled}
               onRerollSectionBassFill={rerollBassFill}
+              onSetSectionDrumHat16thEnabled={setSectionDrumHat16thEnabled}
+              onSetSectionDrumFillEnabled={setSectionDrumFillEnabled}
+              onSetSectionDrumBreakEnabled={setSectionDrumBreakEnabled}
               onCopyTimelineToAllSections={copyTimelineToAllSections}
               onToggleSectionPart={toggleSectionPart}
               onOpenVocalModal={(id) => setVocalModalSectionId(id)}
@@ -268,17 +288,6 @@ export function App() {
         </div>
 
         <aside className="side-col">
-          <PlaybackControls
-            previewState={audio.previewState}
-            playbackMode={audio.playbackMode}
-            activeSectionId={selectedSectionId}
-            sectionSpans={audio.sectionSpans}
-            onPlay={audio.play}
-            onPause={audio.pause}
-            onStop={audio.stop}
-            onSeek={audio.seek}
-            onChangePlaybackMode={audio.setPlaybackMode}
-          />
           <TrackControls
             mixer={audio.previewState.mixer}
             onToggleMute={audio.setTrackMute}
