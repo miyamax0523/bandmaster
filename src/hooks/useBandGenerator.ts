@@ -12,7 +12,10 @@ import {
   pushUndoSnapshot,
   regenerateInstrumentCell,
   reorderSectionsInSong,
+  rerollSectionBassFill,
   selectInstrumentTake,
+  setSectionBassChromatic,
+  setSectionBassFillEnabled,
   setSectionUnisonRiff,
   setSectionVocalMelody,
   toggleCellLock,
@@ -303,6 +306,9 @@ export function useBandGenerator() {
       keyboardDensity: 4,
       vocalDensity: 3,
       vocalHarmony: 'off',
+      bassChromaticEnabled: false,
+      bassFillEnabled: false,
+      bassFillSeed: 0,
       patternPresets: createDefaultPartPresets(nextSong.members),
       enabledParts: createDefaultEnabledParts(),
       chords: createUniformChordTimeline(['Em', 'C', 'G', 'D'], 4),
@@ -581,6 +587,30 @@ export function useBandGenerator() {
     [song, bandState, commitChange]
   );
 
+  const changeSectionBassChromatic = useCallback(
+    (sectionId: string, enabled: boolean) => {
+      const res = setSectionBassChromatic(song, bandState, sectionId, enabled);
+      commitChange(res.song, res.bandState, true, true);
+    },
+    [song, bandState, commitChange]
+  );
+
+  const changeSectionBassFillEnabled = useCallback(
+    (sectionId: string, enabled: boolean) => {
+      const res = setSectionBassFillEnabled(song, bandState, sectionId, enabled);
+      commitChange(res.song, res.bandState, true, true);
+    },
+    [song, bandState, commitChange]
+  );
+
+  const rerollBassFill = useCallback(
+    (sectionId: string) => {
+      const res = rerollSectionBassFill(song, bandState, sectionId);
+      commitChange(res.song, res.bandState, true, true);
+    },
+    [song, bandState, commitChange]
+  );
+
   const copyTimelineToAllSections = useCallback(
     (sourceSectionId: string) => {
       const src = song.sections.find((s) => s.id === sourceSectionId);
@@ -640,6 +670,9 @@ export function useBandGenerator() {
     changeSectionPartPreset,
     changeSectionChordTimeline,
     changeSectionDrumAnticipationMode,
+    changeSectionBassChromatic,
+    changeSectionBassFillEnabled,
+    rerollBassFill,
     copyTimelineToAllSections,
     pastePartPhrase,
     loadSnapshotData,

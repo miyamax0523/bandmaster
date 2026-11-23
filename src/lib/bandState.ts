@@ -93,6 +93,9 @@ export function cloneSection(sec: Section): Section {
     ...sec,
     drumAnticipationMode: sec.drumAnticipationMode ?? 'sync',
     vocalHarmony: sec.vocalHarmony ?? 'off',
+    bassChromaticEnabled: sec.bassChromaticEnabled ?? false,
+    bassFillEnabled: sec.bassFillEnabled ?? false,
+    bassFillSeed: sec.bassFillSeed ?? 0,
     chords: normalizeSectionChords(sec.chords, sec.bars),
     patternPresets: clonedPresets
       ? { ...clonedPresets }
@@ -181,6 +184,12 @@ export function generateCellTakes(
       seed: seeds[style],
       params,
       drumNotes: instrument === 'bass' ? drumNotesForBass : undefined,
+      kickTicks:
+        instrument === 'bass'
+          ? drumNotesForBass
+              .filter((n) => n.pitch === 35 || n.pitch === 36)
+              .map((n) => n.startTick)
+          : undefined,
       keyboardDensity:
         instrument === 'keyboard' ? (section.keyboardDensity ?? 4) : undefined,
       prevVocalAvgPitch: instrument === 'vocal' ? prevVocalAvgPitch : undefined,
@@ -1540,10 +1549,95 @@ export function applyArrangementPresetToSong(
     keyboardDensity: s.keyboardDensity ?? 4,
     vocalDensity: s.vocalDensity ?? 3,
     vocalHarmony: s.vocalHarmony ?? 'off',
+    bassChromaticEnabled: s.bassChromaticEnabled ?? false,
+    bassFillEnabled: s.bassFillEnabled ?? false,
+    bassFillSeed: s.bassFillSeed ?? 0,
     patternPresets: createDefaultPartPresets(nextSong.members),
     enabledParts: s.enabledParts ? { ...s.enabledParts } : createDefaultEnabledParts(),
   }));
 
   const nextState = generateAllSections(nextSong, undefined, baseSeed, true);
   return { song: nextSong, bandState: nextState };
+}
+
+function regenerateSectionBassOnly(
+  song: SongConfig,
+  bandState: BandState,
+  sectionId: string
+): BandState {
+  const secIdx = song.sections.findIndex((s) => s.id === sectionId);
+  if (secIdx === -1) return bandState;
+  const sec = song.sections[secIdx];
+  const nextState = cloneBandState(bandState);
+  const existingSec = nextState.cellsBySection[sectionId];
+  if (!existingSec) {
+    return generateAllSections(song, nextState, 6200 + secIdx, false);
+  }
+  if (existingSec.bass.locked) {
+    return nextState;
+  }
+  const drumNotes = getSelectedDrumNotes(existingSec);
+  const takes = generateCellTakes(
+    song,
+    sec,
+    secIdx,
+    'bass',
+    { ...existingSec.bass.seeds },
+    drumNotes,
+    undefined
+  );
+  existingSec.bass = {
+    ...existingSec.bass,
+    engineVersion: CURRENT_ENGINE_VERSION,
+    takes,
+  };
+  return nextState;
+}
+
+export function setSectionBassChromatic(
+  song: SongConfig,
+  bandState: BandState,
+  sectionId: string,
+  enabled: boolean
+): { song: SongConfig; bandState: BandState } {
+  const nextSong = cloneSongConfig(song);
+  const secIdx = nextSong.sections.findIndex((s) => s.id === sectionId);
+  if (secIdx === -1) return { song, bandState };
+  nextSong.sections[secIdx].bassChromaticEnabled = enabled;
+  return {
+    song: nextSong,
+    bandState: regenerateSectionBassOnly(nextSong, bandState, sectionId),
+  };
+}
+
+export function setSectionBassFillEnabled(
+  song: SongConfig,
+  bandState: BandState,
+  sectionId: string,
+  enabled: boolean
+): { song: SongConfig; bandState: BandState } {
+  const nextSong = cloneSongConfig(song);
+  const secIdx = nextSong.sections.findIndex((s) => s.id === sectionId);
+  if (secIdx === -1) return { song, bandState };
+  nextSong.sections[secIdx].bassFillEnabled = enabled;
+  return {
+    song: nextSong,
+    bandState: regenerateSectionBassOnly(nextSong, bandState, sectionId),
+  };
+}
+
+export function rerollSectionBassFill(
+  song: SongConfig,
+  bandState: BandState,
+  sectionId: string
+): { song: SongConfig; bandState: BandState } {
+  const nextSong = cloneSongConfig(song);
+  const secIdx = nextSong.sections.findIndex((s) => s.id === sectionId);
+  if (secIdx === -1) return { song, bandState };
+  nextSong.sections[secIdx].bassFillSeed =
+    (nextSong.sections[secIdx].bassFillSeed ?? 0) + 1;
+  return {
+    song: nextSong,
+    bandState: regenerateSectionBassOnly(nextSong, bandState, sectionId),
+  };
 }

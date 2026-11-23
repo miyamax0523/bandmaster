@@ -1,9 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { generateBassNotes } from '../src/engines/bassEngine';
+import {
+  BASS_MAX_PITCH,
+  BASS_MIN_PITCH,
+  generateBassNotes,
+} from '../src/engines/bassEngine';
 import {
   createUniformChordTimeline,
+  getActiveChordAtTick,
+  getTimelineBoundaryChanges,
   shiftChordBoundary,
 } from '../src/lib/chordTimeline';
+import { getScalePitchClasses } from '../src/lib/chordUtils';
 import { resolveInstrumentParams } from '../src/lib/keywordParser';
 import { TICKS_PER_BAR, type Section, type SongConfig } from '../src/types/song';
 
@@ -390,5 +397,340 @@ describe('bassEngine', () => {
     expect(bar0Pcs.has(6)).toBe(true); // F# root
     // Natural fifth of F# is C# (1) - should not appear as fifth on F#dim7 in melodic_walk
     expect(bar0Pcs.has(1)).toBe(false);
+  });
+
+  it('guarantees zero out-of-scale/out-of-chord notes when bassChromaticEnabled is false across all 5 genre DNAs and substitute chords', () => {
+    const genreConfigs: Array<{ name: string; preset: string; bassStyle?: SongConfig['members']['bass']['bassStyle'] }> = [
+      { name: 'alt_heavy_rock', preset: 'auto', bassStyle: 'Root Sync' },
+      { name: 'emo_jrock', preset: 'jrock_anticipation' },
+      { name: 'jpop_melodic', preset: 'kick_lock' },
+      { name: 'fusion_funk', preset: 'slap_funk' },
+      { name: 'chill_lofi_ballad', preset: 'melodic_walk' },
+    ];
+
+    // 8-bar timeline with diatonic, passing dim7 (C#dim7), tritone sub (Db7), modal interchange (Fm7, Bb7), secondary dom (E7), and 240-tick anticipation
+    const baseTimeline = createUniformChordTimeline(
+      ['C', 'C#dim7', 'Dm7', 'Db7', 'Fm7', 'Bb7', 'E7', 'Am7'],
+      8
+    );
+    const anticipatedTimeline = shiftChordBoundary(baseTimeline, 2, -0.5);
+
+    for (const cfg of genreConfigs) {
+      for (const bassFillEnabled of [false, true]) {
+        const song = createSong({
+          patternPreset: cfg.preset,
+          bassStyle: cfg.bassStyle ?? 'Root Sync',
+        });
+        song.key = 'C';
+        song.scale = 'Major';
+
+        const section = createSection({
+          bars: 8,
+          energy: 'Mid',
+          chords: anticipatedTimeline,
+          bassChromaticEnabled: false,
+          bassFillEnabled,
+          bassFillSeed: 2,
+        });
+
+        const notes = generateBassNotes({
+          song,
+          section,
+          sectionIndex: 0,
+          style: 'A',
+          seed: 42,
+          params: resolveInstrumentParams(song, section, 'bass', 'A'),
+          kickTicks: [0, 960, 1920, 2880, 3600, 4800, 5760, 6720],
+        });
+
+        expect(notes.length).toBeGreaterThan(0);
+
+        const keyScalePcs = new Set(getScalePitchClasses(song.key, song.scale));
+        for (const note of notes) {
+          const active = getActiveChordAtTick(
+            section.chords,
+            note.startTick,
+            song.key,
+            song.scale,
+            section.bars
+          );
+          const activeChord = active.parsed;
+          const chordPcs = new Set(
+            activeChord.intervals.map((iv) => (activeChord.rootSemitone + iv) % 12)
+          );
+          if (activeChord.bassSemitone !== undefined) {
+            chordPcs.add(activeChord.bassSemitone % 12);
+          }
+          const pc = note.pitch % 12;
+          const allowed = keyScalePcs.has(pc) || chordPcs.has(pc);
+          expect(
+            allowed,
+            `Out-of-scale note pitch=${note.pitch} (pc=${pc}) at tick=${note.startTick} in ${cfg.name} (fill=${bassFillEnabled}) over ${active.slot.chord}`
+          ).toBe(true);
+        }
+      }
+    }
+  });
+
+  it('protects chord tones on strong beats / changes / long tones while allowing chromatic approaches & b5 when bassChromaticEnabled is true', () => {
+    const song = createSong({ patternPreset: 'slap_funk' });
+    song.key = 'C';
+    song.scale = 'Major';
+
+    const timeline = shiftChordBoundary(
+      createUniformChordTimeline(['C', 'Am7', 'Dm7', 'G7'], 4),
+      1,
+      -0.5
+    );
+    const boundaryTicks = new Set(
+      getTimelineBoundaryChanges(timeline, 4, song.key, song.scale).map((c) => c.changeTick)
+    );
+    const keyScalePcs = new Set(getScalePitchClasses(song.key, song.scale));
+
+    let chromaticApproachFound = false;
+
+    for (const seed of [1, 2, 3, 5, 8, 13, 21]) {
+      const section = createSection({
+        bars: 4,
+        energy: 'High',
+        chords: timeline,
+        bassChromaticEnabled: true,
+        bassFillEnabled: false,
+      });
+
+      const notes = generateBassNotes({
+        song,
+        section,
+        sectionIndex: 0,
+        style: 'A',
+        seed,
+        params: resolveInstrumentParams(song, section, 'bass', 'A'),
+        kickTicks: [0, 960, 1680, 2880, 3840, 4800, 5760, 6720],
+      });
+
+      for (const note of notes) {
+        const activeChord = getActiveChordAtTick(
+          section.chords,
+          note.startTick,
+          song.key,
+          song.scale,
+          section.bars
+        ).parsed;
+        const chordPcs = new Set(
+          activeChord.intervals.map((iv) => (activeChord.rootSemitone + iv) % 12)
+        );
+        if (activeChord.bassSemitone !== undefined) {
+          chordPcs.add(activeChord.bassSemitone % 12);
+        }
+
+        const localTick = note.startTick % TICKS_PER_BAR;
+        const isStrongOrChange =
+          localTick === 0 || localTick === 960 || boundaryTicks.has(note.startTick);
+        const pc = note.pitch % 12;
+
+        if (isStrongOrChange) {
+          expect(chordPcs.has(pc)).toBe(true);
+        }
+        if (note.durationTicks >= 480) {
+          expect(keyScalePcs.has(pc) || chordPcs.has(pc)).toBe(true);
+        }
+        if (!isStrongOrChange && note.durationTicks <= 240 && !keyScalePcs.has(pc) && !chordPcs.has(pc)) {
+          chromaticApproachFound = true;
+        }
+      }
+    }
+
+    expect(chromaticApproachFound).toBe(true);
+  });
+
+  it('strictly isolates bassFillSeed to fill windows without altering core groove bars', () => {
+    const checkIsolation = (bars: number, nonFillBars: number[], fillWindows: Array<[number, number]>) => {
+      const song = createSong({ patternPreset: 'jrock_anticipation' });
+      const chords = createUniformChordTimeline(['Em', 'C', 'G', 'D'], bars);
+
+      const gen = (bassFillEnabled: boolean, bassFillSeed: number) => {
+        const section = createSection({
+          bars,
+          energy: 'High',
+          chords,
+          bassChromaticEnabled: false,
+          bassFillEnabled,
+          bassFillSeed,
+        });
+        return generateBassNotes({
+          song,
+          section,
+          sectionIndex: 0,
+          style: 'A',
+          seed: 77,
+          params: resolveInstrumentParams(song, section, 'bass', 'A'),
+          kickTicks: Array.from({ length: bars }, (_, b) => b * TICKS_PER_BAR),
+        });
+      };
+
+      const offNotes = gen(false, 0);
+      const fill0 = gen(true, 0);
+      const fill1 = gen(true, 1);
+      const fill2 = gen(true, 2);
+
+      const inNonFillRegion = (tick: number) => {
+        const bar = Math.floor(tick / TICKS_PER_BAR);
+        if (nonFillBars.includes(bar)) return true;
+        // Beats 1-2 of fill bars (0 <= localTick < 960)
+        return tick % TICKS_PER_BAR < 960;
+      };
+
+      // Non-fill bars and beats 1-2 of fill bars must be 100% identical across all variants
+      expect(fill0.filter((n) => inNonFillRegion(n.startTick))).toEqual(
+        offNotes.filter((n) => inNonFillRegion(n.startTick))
+      );
+      expect(fill1.filter((n) => inNonFillRegion(n.startTick))).toEqual(
+        offNotes.filter((n) => inNonFillRegion(n.startTick))
+      );
+      expect(fill2.filter((n) => inNonFillRegion(n.startTick))).toEqual(
+        offNotes.filter((n) => inNonFillRegion(n.startTick))
+      );
+
+      // Fill windows must contain notes and vary when bassFillSeed changes
+      const [wStart, wEnd] = fillWindows[fillWindows.length - 1];
+      const wOff = offNotes.filter((n) => n.startTick >= wStart && n.startTick < wEnd);
+      const w0 = fill0.filter((n) => n.startTick >= wStart && n.startTick < wEnd);
+      const w1 = fill1.filter((n) => n.startTick >= wStart && n.startTick < wEnd);
+      const w2 = fill2.filter((n) => n.startTick >= wStart && n.startTick < wEnd);
+      expect(w0.length).toBeGreaterThan(0);
+      const anyDiff =
+        JSON.stringify(w0) !== JSON.stringify(w1) ||
+        JSON.stringify(w0) !== JSON.stringify(w2) ||
+        JSON.stringify(w0) !== JSON.stringify(wOff);
+      expect(anyDiff).toBe(true);
+    };
+
+    // 8-bar section: bars 0,1,2,4,5,6 untouched; fills at bar 3 (6720-7680) and bar 7 (14400-15360)
+    checkIsolation(8, [0, 1, 2, 4, 5, 6], [
+      [6720, 7680],
+      [14400, 15360],
+    ]);
+
+    // 4-bar section: bars 0,2 untouched; fills at bar 1 (2880-3840) and bar 3 (6720-7680)
+    checkIsolation(4, [0, 2], [
+      [2880, 3840],
+      [6720, 7680],
+    ]);
+  });
+
+  it('achieves high kick synchronization (>= 85%) and 100% chord-change sync including 240-tick anticipations', () => {
+    const song = createSong({ patternPreset: 'auto' });
+    const timeline = shiftChordBoundary(
+      createUniformChordTimeline(['Em', 'C', 'G', 'D'], 4),
+      1,
+      -0.5
+    );
+    const section = createSection({
+      bars: 4,
+      energy: 'High',
+      chords: timeline,
+    });
+    const kickTicks = [0, 480, 960, 1680, 2400, 2880, 3840, 4320, 4800, 5760, 6240, 6720];
+
+    const notes = generateBassNotes({
+      song,
+      section,
+      sectionIndex: 0,
+      style: 'A',
+      seed: 11,
+      params: resolveInstrumentParams(song, section, 'bass', 'A'),
+      kickTicks,
+    });
+
+    const noteStarts = new Set(notes.map((n) => n.startTick));
+    const syncedKicks = kickTicks.filter((t) => noteStarts.has(t)).length;
+    expect(syncedKicks / kickTicks.length).toBeGreaterThanOrEqual(0.85);
+
+    const changes = getTimelineBoundaryChanges(timeline, 4, song.key, song.scale);
+    for (const ch of changes) {
+      expect(noteStarts.has(ch.changeTick)).toBe(true);
+    }
+  });
+
+  it('enforces MODO Bass articulation, strict monophony, range [28, 55], velocity tiers, and determinism', () => {
+    const song = createSong({ patternPreset: 'slap_funk' });
+    const section = createSection({
+      bars: 4,
+      energy: 'High',
+      chords: createUniformChordTimeline(['Em', 'C', 'G', 'D'], 4),
+      bassFillEnabled: true,
+      bassFillSeed: 1,
+    });
+    const params = resolveInstrumentParams(song, section, 'bass', 'A');
+    const input = {
+      song,
+      section,
+      sectionIndex: 0,
+      style: 'A' as const,
+      seed: 99,
+      params,
+      kickTicks: [0, 960, 1920, 2880, 3840, 4800, 5760, 6720],
+    };
+
+    const run1 = generateBassNotes(input);
+    const run2 = generateBassNotes(input);
+    expect(run1).toEqual(run2);
+    expect(run1.length).toBeGreaterThan(0);
+
+    const sectionEnd = section.bars * TICKS_PER_BAR;
+    for (let i = 0; i < run1.length; i++) {
+      const curr = run1[i];
+      expect(curr.pitch).toBeGreaterThanOrEqual(BASS_MIN_PITCH);
+      expect(curr.pitch).toBeLessThanOrEqual(BASS_MAX_PITCH);
+      expect(curr.startTick).toBeGreaterThanOrEqual(0);
+      expect(curr.startTick + curr.durationTicks).toBeLessThanOrEqual(sectionEnd);
+
+      const localTick = curr.startTick % TICKS_PER_BAR;
+      if (localTick === 0 || localTick === 960) {
+        expect(curr.velocity).toBeGreaterThanOrEqual(95);
+        expect(curr.velocity).toBeLessThanOrEqual(118);
+      }
+
+      if (curr.velocity <= 65) {
+        // Ghost note tier
+        expect(curr.velocity).toBeGreaterThanOrEqual(45);
+        expect(curr.durationTicks).toBeGreaterThanOrEqual(60);
+        expect(curr.durationTicks).toBeLessThanOrEqual(90);
+      }
+
+      if (i + 1 < run1.length) {
+        const next = run1[i + 1];
+        expect(curr.startTick + curr.durationTicks).toBeLessThanOrEqual(next.startTick);
+      }
+    }
+
+    // Verify 15..30 ticks release gap on same-pitch <= 8th-note repetitions in auto preset
+    const steadySong = createSong({ patternPreset: 'auto' });
+    const steadySec = createSection({
+      bars: 2,
+      energy: 'High',
+      chords: createUniformChordTimeline(['Em', 'Em'], 2),
+    });
+    const steadyNotes = generateBassNotes({
+      song: steadySong,
+      section: steadySec,
+      sectionIndex: 0,
+      style: 'A',
+      seed: 5,
+      params: resolveInstrumentParams(steadySong, steadySec, 'bass', 'A'),
+      kickTicks: [0, 480, 960, 1440, 1920, 2400, 2880, 3360],
+    });
+    const samePitchGaps: number[] = [];
+    for (let i = 0; i < steadyNotes.length - 1; i++) {
+      const curr = steadyNotes[i];
+      const next = steadyNotes[i + 1];
+      const span = next.startTick - curr.startTick;
+      if (curr.pitch === next.pitch && span <= 240 && curr.velocity > 65) {
+        samePitchGaps.push(next.startTick - (curr.startTick + curr.durationTicks));
+      }
+    }
+    if (samePitchGaps.length > 0) {
+      expect(samePitchGaps.every((g) => g >= 15 && g <= 30)).toBe(true);
+    }
   });
 });

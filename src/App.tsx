@@ -51,6 +51,9 @@ export function App() {
     changeSectionPartPreset,
     changeSectionChordTimeline,
     changeSectionDrumAnticipationMode,
+    changeSectionBassChromatic,
+    changeSectionBassFillEnabled,
+    rerollBassFill,
     copyTimelineToAllSections,
     pastePartPhrase,
     loadSnapshotData,
@@ -225,6 +228,9 @@ export function App() {
               onChangeSectionPatternPreset={changeSectionPartPreset}
               onChangeSectionChordTimeline={changeSectionChordTimeline}
               onChangeSectionDrumAnticipationMode={changeSectionDrumAnticipationMode}
+              onChangeSectionBassChromatic={changeSectionBassChromatic}
+              onChangeSectionBassFillEnabled={changeSectionBassFillEnabled}
+              onRerollSectionBassFill={rerollBassFill}
               onCopyTimelineToAllSections={copyTimelineToAllSections}
               onToggleSectionPart={toggleSectionPart}
               onOpenVocalModal={(id) => setVocalModalSectionId(id)}

@@ -52,6 +52,7 @@ export interface EngineInput {
   seed: number;
   params: ResolvedInstrumentParams;
   drumNotes?: MidiNote[];
+  kickTicks?: number[];
   keyboardDensity?: KeyboardDensityLevel;
   prevVocalAvgPitch?: number;
 }

@@ -232,6 +232,9 @@ export function hydrateProject(stored: StoredBandProject): {
       keyboardDensity: rawSec.keyboardDensity ?? 4,
       vocalDensity: rawSec.vocalDensity ?? 3,
       vocalHarmony: rawSec.vocalHarmony ?? 'off',
+      bassChromaticEnabled: rawSec.bassChromaticEnabled ?? false,
+      bassFillEnabled: rawSec.bassFillEnabled ?? false,
+      bassFillSeed: rawSec.bassFillSeed ?? 0,
       patternPresets: {
         ...createDefaultPartPresets(song.members),
         ...(rawSec.patternPresets ?? rawSec.partPresets ?? {}),

@@ -1806,6 +1806,25 @@ input[type='range'] {
   color: var(--text-muted);
 }
 
+.bass-pro-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.bass-pro-btn {
+  flex: 1 1 auto;
+  min-height: 36px;
+  padding: 5px 10px;
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.bass-pro-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .timeline-mod-row,
 .timeline-chord-chips {
   display: flex;

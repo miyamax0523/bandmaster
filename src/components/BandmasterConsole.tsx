@@ -60,6 +60,9 @@ interface BandmasterConsoleProps {
     sectionId: string,
     mode: DrumAnticipationMode
   ) => void;
+  onChangeSectionBassChromatic: (sectionId: string, enabled: boolean) => void;
+  onChangeSectionBassFillEnabled: (sectionId: string, enabled: boolean) => void;
+  onRerollSectionBassFill: (sectionId: string) => void;
   onCopyTimelineToAllSections: (sourceSectionId: string) => void;
   onToggleSectionPart: (sectionId: string, inst: InstrumentType) => void;
   onOpenVocalModal: (sectionId: string) => void;
@@ -116,6 +119,9 @@ export function BandmasterConsole({
   onChangeSectionPatternPreset,
   onChangeSectionChordTimeline,
   onChangeSectionDrumAnticipationMode,
+  onChangeSectionBassChromatic,
+  onChangeSectionBassFillEnabled,
+  onRerollSectionBassFill,
   onCopyTimelineToAllSections,
   onToggleSectionPart,
   onOpenVocalModal,
@@ -464,6 +470,56 @@ export function BandmasterConsole({
                       })}
                     </div>
                   </div>
+                </div>
+              )}
+
+              {key === 'bass' && (
+                <div className="bass-pro-controls" role="group" aria-label="Bass 表現設定">
+                  <button
+                    type="button"
+                    className={`chip-btn bass-pro-btn ${
+                      section.bassFillEnabled ? 'chip-active' : ''
+                    }`}
+                    aria-pressed={Boolean(section.bassFillEnabled)}
+                    disabled={cell.locked || !effectivelyEnabled}
+                    onClick={() =>
+                      onChangeSectionBassFillEnabled(
+                        section.id,
+                        !section.bassFillEnabled
+                      )
+                    }
+                    title="4/8小節目末尾のベースおかず（フィルイン）を切り替え"
+                  >
+                    🎸 おかず: {section.bassFillEnabled ? 'ON' : 'OFF'}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-secondary bass-pro-btn"
+                    disabled={
+                      !section.bassFillEnabled || cell.locked || !effectivelyEnabled
+                    }
+                    onClick={() => onRerollSectionBassFill(section.id)}
+                    title="基本グルーヴを保ったままおかずフレーズだけ入替"
+                  >
+                    🎲 おかず入替
+                  </button>
+                  <button
+                    type="button"
+                    className={`chip-btn bass-pro-btn ${
+                      section.bassChromaticEnabled ? 'chip-active' : ''
+                    }`}
+                    aria-pressed={Boolean(section.bassChromaticEnabled)}
+                    disabled={cell.locked || !effectivelyEnabled}
+                    onClick={() =>
+                      onChangeSectionBassChromatic(
+                        section.id,
+                        !section.bassChromaticEnabled
+                      )
+                    }
+                    title="弱拍・経過音への半音アプローチ／♭5経過音を許可"
+                  >
+                    ♯ 半音経過: {section.bassChromaticEnabled ? 'ON' : 'OFF'}
+                  </button>
                 </div>
               )}
 

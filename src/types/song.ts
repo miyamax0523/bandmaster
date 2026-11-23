@@ -190,6 +190,9 @@ export interface Section {
   keyboardDensity?: KeyboardDensityLevel; // 1..7 (default 4)
   vocalDensity?: DensityLevel; // 1..5 (default 3)
   vocalHarmony?: VocalHarmonyMode; // default 'off'
+  bassChromaticEnabled?: boolean; // default false
+  bassFillEnabled?: boolean; // default false
+  bassFillSeed?: number; // default 0
   partPresets?: Partial<Record<InstrumentType, string>>;
   patternPresets?: Partial<Record<InstrumentType, string>>;
   chords: ChordSlot[];
