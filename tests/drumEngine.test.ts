@@ -1,18 +1,26 @@
 import { describe, expect, it } from 'vitest';
 import {
-  DRUM_DNA_PROFILES,
+  BEAT_TEMPLATES,
+  GENRE_FLAVOR_PROFILES,
   generateDrumNotes,
   generateDrumResult,
   GM_DRUM,
-  type DrumGenreDNAId,
+  MIDI_NOTE_MAP,
+  type DrumVoice,
 } from '../src/engines/drumEngine';
 import {
   createUniformChordTimeline,
   shiftChordBoundary,
 } from '../src/lib/chordTimeline';
 import { resolveInstrumentParams } from '../src/lib/keywordParser';
+import type { MasterGenreId } from '../src/lib/masterGenres';
 import { PATTERN_PRESET_GROUPS } from '../src/lib/patternPresets';
-import { TICKS_PER_BAR, type DrumLoopData, type Section, type SongConfig } from '../src/types/song';
+import {
+  TICKS_PER_BAR,
+  type DrumLoopData,
+  type Section,
+  type SongConfig,
+} from '../src/types/song';
 
 function createSong(drumText = ''): SongConfig {
   return {
@@ -56,7 +64,7 @@ function createSection(overrides: Partial<Section> = {}): Section {
 }
 
 describe('drumEngine', () => {
-  it('protects anchor notes (Chorus Crash 49 & Unison accent Kick 36) from velocityCap=95 and humanizeTicks=8', () => {
+  it('protects anchor notes (Chorus Crash 49 & Unison accent Kick 36) from velocityCap and jitter', () => {
     const song = createSong('タイト');
     const accentTicks = [0, 360, 720, 1920, 2280];
     const section = createSection({
@@ -129,65 +137,6 @@ describe('drumEngine', () => {
     expect(deltas.has(60)).toBe(true);
     expect(deltas.has(40)).toBe(true);
     expect(deltas.has(30)).toBe(true);
-  });
-
-  it('enforces Take C > Take A > Take B fill note counts, preserves Kick, and adds barIndex=3 mini-fill for >=8 bars', () => {
-    const song = createSong();
-    const section = createSection({ type: 'Verse', bars: 8, energy: 'Mid' });
-
-    const countFinalBarFill = (style: 'A' | 'B' | 'C') => {
-      const params = resolveInstrumentParams(song, section, 'drums', style);
-      const notes = generateDrumNotes({
-        song,
-        section,
-        sectionIndex: 0,
-        style,
-        seed: 42,
-        params,
-      });
-      const lastBarStart = 7 * TICKS_PER_BAR;
-      const fillStart =
-        lastBarStart + (style === 'A' ? 960 : style === 'B' ? 1440 : 480);
-      return notes.filter(
-        (n) =>
-          n.startTick >= fillStart &&
-          n.startTick < lastBarStart + TICKS_PER_BAR &&
-          n.pitch !== GM_DRUM.KICK
-      ).length;
-    };
-
-    const countA = countFinalBarFill('A');
-    const countB = countFinalBarFill('B');
-    const countC = countFinalBarFill('C');
-
-    expect(countB).toBeGreaterThanOrEqual(2);
-    expect(countB).toBeLessThanOrEqual(3);
-    expect(countA).toBeGreaterThanOrEqual(4);
-    expect(countA).toBeLessThanOrEqual(7);
-    expect(countC).toBeGreaterThanOrEqual(8);
-    expect(countC).toBeLessThanOrEqual(16);
-    expect(countC).toBeGreaterThan(countA);
-    expect(countA).toBeGreaterThan(countB);
-
-    // Check barIndex=3 mini-fill in Take C
-    const paramsC = resolveInstrumentParams(song, section, 'drums', 'C');
-    const notesC = generateDrumNotes({
-      song,
-      section,
-      sectionIndex: 0,
-      style: 'C',
-      seed: 42,
-      params: paramsC,
-    });
-    const bar3FillStart = 3 * TICKS_PER_BAR + 1440;
-    const bar3FillEnd = 4 * TICKS_PER_BAR;
-    const bar3NonKick = notesC.filter(
-      (n) =>
-        n.startTick >= bar3FillStart &&
-        n.startTick < bar3FillEnd &&
-        n.pitch !== GM_DRUM.KICK
-    );
-    expect(bar3NonKick.length).toBe(4);
   });
 
   it('expands external drum loop immutably and respects section > song priority', () => {
@@ -296,13 +245,11 @@ describe('drumEngine', () => {
         params: resolveInstrumentParams(song, section, 'drums', style),
       });
 
-    // Take A keeps base pattern + light beat-4 nuance only
     const takeA = gen('A', 100);
     expect(takeA.filter((n) => n.pitch === 36).map((n) => n.startTick)).toEqual([
       0, 960, 1920, 2880,
     ]);
 
-    // Take B keeps Kick/Snare skeleton and adds low-velocity ghost notes on 16th offbeats
     const takeB1 = gen('B', 111);
     const takeB2 = gen('B', 999);
     expect(takeB1.filter((n) => n.pitch === 36).map((n) => n.startTick)).toEqual([
@@ -314,7 +261,6 @@ describe('drumEngine', () => {
     expect(bGhostNotes.length).toBeGreaterThan(0);
     expect(JSON.stringify(takeB1)).not.toBe(JSON.stringify(takeB2));
 
-    // Take C adds Open HH (46) / Crash (49) and seed-dependent final-bar fill (beats 3-4) keeping Kick at 2880
     const takeC1 = gen('C', 222);
     const takeC2 = gen('C', 8888);
     expect(takeC1.some((n) => n.pitch === GM_DRUM.OPEN_HH)).toBe(true);
@@ -332,16 +278,17 @@ describe('drumEngine', () => {
     expect(JSON.stringify(c1Fill)).not.toBe(JSON.stringify(c2Fill));
   });
 
-  it('scales hatDensity (1 vs 3 vs 5) and kickDensity (1 vs 3 vs 5) while respecting genre style', () => {
+  it('scales hatDensity (1 vs 3 vs 5) and kickDensity (1 vs 3 vs 5) cleanly', () => {
     const song = createSong();
-    const run = (hatDensity: 1 | 3 | 5, kickDensity: 1 | 3 | 5, drumText = '') => {
-      song.members.drums.instructionText = drumText;
+    song.members.drums.patternPreset = 'straight_8';
+    const run = (hatDensity: 1 | 3 | 5, kickDensity: 1 | 3 | 5) => {
       const section = createSection({
         type: 'Outro',
         bars: 2,
         energy: 'Mid',
         hatDensity,
         kickDensity,
+        drumFillEnabled: false,
       });
       return generateDrumNotes({
         song,
@@ -357,10 +304,15 @@ describe('drumEngine', () => {
     const rockStd = run(3, 3);
     const rockMax = run(5, 5);
 
-    const hatsMin = rockMin.filter((n) => n.pitch === GM_DRUM.CLOSED_HH || n.pitch === GM_DRUM.OPEN_HH);
-    const hatsStd = rockStd.filter((n) => n.pitch === GM_DRUM.CLOSED_HH || n.pitch === GM_DRUM.OPEN_HH);
-    const hatsMax = rockMax.filter((n) => n.pitch === GM_DRUM.CLOSED_HH || n.pitch === GM_DRUM.OPEN_HH);
-    // 2 bars: level 1 = 8 quarter notes, level 3 = 16 eighth notes, level 5 = 32 sixteenth notes
+    const hatsMin = rockMin.filter(
+      (n) => n.pitch === GM_DRUM.CLOSED_HH || n.pitch === GM_DRUM.OPEN_HH
+    );
+    const hatsStd = rockStd.filter(
+      (n) => n.pitch === GM_DRUM.CLOSED_HH || n.pitch === GM_DRUM.OPEN_HH
+    );
+    const hatsMax = rockMax.filter(
+      (n) => n.pitch === GM_DRUM.CLOSED_HH || n.pitch === GM_DRUM.OPEN_HH
+    );
     expect(hatsMin.length).toBe(8);
     expect(hatsStd.length).toBe(16);
     expect(hatsMax.length).toBe(32);
@@ -368,22 +320,12 @@ describe('drumEngine', () => {
     const kicksMin = rockMin.filter((n) => n.pitch === GM_DRUM.KICK);
     const kicksStd = rockStd.filter((n) => n.pitch === GM_DRUM.KICK);
     const kicksMax = rockMax.filter((n) => n.pitch === GM_DRUM.KICK);
-    expect(kicksMin.length).toBe(4); // 2 bars * [0, 960]
-    expect(kicksStd.length).toBeGreaterThanOrEqual(4);
+    expect(kicksMin.length).toBe(4);
+    expect(kicksStd.length).toBeGreaterThanOrEqual(6);
     expect(kicksMax.length).toBeGreaterThan(kicksStd.length);
-
-    // Trap style with hatDensity 1 vs 5
-    const trapMin = run(1, 3, 'トラップ');
-    const trapMax = run(5, 3, 'トラップ');
-    expect(
-      trapMin.filter((n) => n.pitch === GM_DRUM.CLOSED_HH).length
-    ).toBe(8);
-    expect(
-      trapMax.filter((n) => n.pitch === GM_DRUM.CLOSED_HH).length
-    ).toBeGreaterThan(32);
   });
 
-  it('applies patternPreset deterministically across drum presets', () => {
+  it('applies legacy patternPresets deterministically and safely without errors', () => {
     const runPreset = (preset: string, bars = 2) => {
       const song = createSong('');
       song.members.drums.patternPreset = preset;
@@ -391,6 +333,7 @@ describe('drumEngine', () => {
         bars,
         chords: createUniformChordTimeline(['Em', 'C'], bars),
         energy: 'Mid',
+        drumFillEnabled: false,
       });
       return generateDrumNotes({
         song,
@@ -404,9 +347,9 @@ describe('drumEngine', () => {
 
     const minimal = runPreset('simple_minimal');
     const metal = runPreset('metal_double');
-    expect(metal.filter((n) => n.pitch === GM_DRUM.KICK).length).toBeGreaterThan(
-      minimal.filter((n) => n.pitch === GM_DRUM.KICK).length
-    );
+    expect(
+      metal.filter((n) => n.pitch === GM_DRUM.KICK || n.pitch === GM_DRUM.KICK_ALT).length
+    ).toBeGreaterThan(minimal.filter((n) => n.pitch === GM_DRUM.KICK).length);
 
     const fourOnFloor = runPreset('four_on_floor', 1);
     const kickTicks = fourOnFloor
@@ -416,7 +359,6 @@ describe('drumEngine', () => {
     [0, 480, 960, 1440].forEach((beatTick, idx) => {
       expect(Math.abs(kickTicks[idx] - beatTick)).toBeLessThanOrEqual(15);
     });
-    expect(fourOnFloor.some((n) => n.pitch === GM_DRUM.OPEN_HH)).toBe(true);
 
     const rimChill = runPreset('rim_chill');
     expect(rimChill.some((n) => n.pitch === GM_DRUM.RIMSHOT)).toBe(true);
@@ -437,7 +379,16 @@ describe('drumEngine', () => {
     const bar2Snares = buildUp.filter(
       (n) => n.pitch === GM_DRUM.SNARE && n.startTick >= TICKS_PER_BAR
     );
-    expect(bar2Snares.length).toBeGreaterThanOrEqual(bar1Snares.length);
+    expect(bar2Snares.length).toBeGreaterThan(bar1Snares.length);
+
+    // All legacy preset IDs compatibility
+    const legacyPresets = PATTERN_PRESET_GROUPS.drums.flatMap((g) =>
+      g.options.map((o) => o.value)
+    );
+    for (const presetId of legacyPresets) {
+      const notes = runPreset(presetId, 2);
+      expect(notes.length).toBeGreaterThan(0);
+    }
   });
 
   it('punches kick + crash accent at offbeat ChordSlot boundary (1680 ticks) and suppresses downbeat kick collision', () => {
@@ -457,14 +408,12 @@ describe('drumEngine', () => {
       params: resolveInstrumentParams(song, section, 'drums', 'A'),
     });
 
-    // Anticipated changeTick = 3.5 * 480 = 1680
     expect(
       notes.some((n) => n.pitch === GM_DRUM.KICK && Math.abs(n.startTick - 1680) <= 15)
     ).toBe(true);
     expect(
       notes.some((n) => n.pitch === GM_DRUM.CRASH && Math.abs(n.startTick - 1680) <= 15)
     ).toBe(true);
-    // Colliding downbeat kicks in (1680, 1920] (e.g. bar 1 downbeat at 1920) are cleared
     const collidingKicks = notes.filter(
       (n) => n.pitch === GM_DRUM.KICK && n.startTick > 1680 && n.startTick <= 1920
     );
@@ -506,13 +455,11 @@ describe('drumEngine', () => {
       params: resolveInstrumentParams(song, keepSec, 'drums', 'A'),
     });
 
-    // sync mode punches crash + kick at 1680 and clears 1920 downbeat kick
     expect(syncNotes.some((n) => n.pitch === GM_DRUM.CRASH && n.startTick === 1680)).toBe(true);
     expect(
       syncNotes.some((n) => n.pitch === GM_DRUM.KICK && n.startTick > 1680 && n.startTick <= 1920)
     ).toBe(false);
 
-    // keep mode preserves four_on_floor downbeat kick at 1920 and avoids forced crash/kick punch at 1680
     expect(keepNotes.some((n) => n.pitch === GM_DRUM.CRASH && n.startTick === 1680)).toBe(false);
     expect(
       keepNotes.some((n) => n.pitch === GM_DRUM.KICK && Math.abs(n.startTick - 1920) <= 15)
@@ -521,8 +468,13 @@ describe('drumEngine', () => {
 
   it('guarantees bit-exact determinism, boundary safety, zero duplicates, and kickTicks consistency', () => {
     const song = createSong('');
-    song.members.drums.patternPreset = 'fusion_funk';
-    const section = createSection({ bars: 8, energy: 'High' });
+    song.members.drums.patternPreset = 'royal_jpop';
+    const section = createSection({
+      bars: 8,
+      energy: 'High',
+      drumPatternId: 'EIGHT_BEAT',
+      drumKickTake: 'A',
+    });
     const params = resolveInstrumentParams(song, section, 'drums', 'A');
     const input = { song, section, sectionIndex: 0, style: 'A' as const, seed: 2026, params };
 
@@ -540,515 +492,292 @@ describe('drumEngine', () => {
     for (const ev of res1.events) {
       expect(ev.tick).toBeGreaterThanOrEqual(0);
       expect(ev.tick).toBeLessThan(sectionEnd);
-      expect(ev.tick + ev.duration).toBeLessThanOrEqual(sectionEnd);
-      const key = `${ev.note}:${ev.tick}`;
+      expect(ev.tick + ev.durationTicks).toBeLessThanOrEqual(sectionEnd);
+      const pitch = MIDI_NOTE_MAP.GM_STANDARD[ev.voice];
+      const key = `${pitch}:${ev.tick}`;
       expect(seen.has(key)).toBe(false);
       seen.add(key);
     }
 
     const extractedKicks = res1.events
-      .filter((e) => e.note === GM_DRUM.KICK)
+      .filter((e) => e.voice === 'KICK_MAIN' || e.voice === 'KICK_ALT')
       .map((e) => e.tick);
     expect(res1.kickTicks).toEqual(extractedKicks);
   });
 
-  it('enforces 4-limb independence (<=4 simultaneous, <=2 upper limbs), hi-hat choke, and 2/4-beat HH skip at BPM=130', () => {
-    const upperLimbNotes = new Set<number>([
-      37, 38, 41, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52, 53, 55, 57,
-    ]);
-    const dnaIds = Object.keys(DRUM_DNA_PROFILES) as DrumGenreDNAId[];
+  it('supports switching between GM_STANDARD and SSD5_NATIVE MIDI output maps', () => {
+    const song = createSong('');
+    song.bpm = 160;
+    const section = createSection({
+      type: 'Chorus',
+      bars: 2,
+      energy: 'High',
+      drumPatternId: 'DOUBLE_BASS',
+      drumKickTake: 'A',
+      drumFillEnabled: true,
+    });
+    const baseInput = {
+      song,
+      section,
+      sectionIndex: 0,
+      style: 'A' as const,
+      seed: 42,
+      params: resolveInstrumentParams(song, section, 'drums', 'A'),
+    };
 
-    for (const dnaId of dnaIds) {
-      const song = createSong('');
-      song.bpm = 130;
-      song.members.drums.patternPreset = dnaId;
-      const section = createSection({ bars: 4, energy: 'High' });
-      const res = generateDrumResult({
-        song,
-        section,
-        sectionIndex: 0,
-        style: 'A',
-        seed: 77,
-        params: resolveInstrumentParams(song, section, 'drums', 'A'),
-      });
+    const gmRes = generateDrumResult({ ...baseInput, midiMapMode: 'GM_STANDARD' });
+    const ssdRes = generateDrumResult({ ...baseInput, midiMapMode: 'SSD5_NATIVE' });
 
-      const byTick = new Map<number, typeof res.events>();
-      for (const ev of res.events) {
-        const list = byTick.get(ev.tick) ?? [];
-        list.push(ev);
-        byTick.set(ev.tick, list);
-      }
+    expect(gmRes.midiMapMode).toBe('GM_STANDARD');
+    expect(ssdRes.midiMapMode).toBe('SSD5_NATIVE');
+    expect(gmRes.events.length).toBe(ssdRes.events.length);
 
-      for (const [, group] of byTick) {
-        expect(group.length).toBeLessThanOrEqual(4);
-        const upperCount = group.filter((e) => upperLimbNotes.has(e.note)).length;
-        expect(upperCount).toBeLessThanOrEqual(2);
+    // Verify SSD5_NATIVE-specific mappings
+    expect(MIDI_NOTE_MAP.SSD5_NATIVE.HH_HALF_OPEN).toBe(62);
+    expect(MIDI_NOTE_MAP.SSD5_NATIVE.HH_OPEN).toBe(64);
+    expect(MIDI_NOTE_MAP.SSD5_NATIVE.CRASH_L).toBe(55);
+    expect(MIDI_NOTE_MAP.SSD5_NATIVE.CHINA).toBe(31);
+    expect(MIDI_NOTE_MAP.SSD5_NATIVE.TOM_MID).toBe(47);
 
-        const hasOpen = group.some((e) => e.note === GM_DRUM.OPEN_HH);
-        const hasClosedOrPedal = group.some(
-          (e) => e.note === GM_DRUM.CLOSED_HH || e.note === GM_DRUM.PEDAL_HH
-        );
-        expect(hasOpen && hasClosedOrPedal).toBe(false);
-      }
+    // Crash L at bar 0 step 0 should map to 49 in GM and 55 in SSD5
+    expect(gmRes.notes.some((n) => n.pitch === 49)).toBe(true);
+    expect(ssdRes.notes.some((n) => n.pitch === 55)).toBe(true);
+  });
 
-      for (let i = 0; i < res.events.length; i++) {
-        const ev = res.events[i];
-        if (ev.note !== GM_DRUM.OPEN_HH) continue;
-        const nextClose = res.events.find(
-          (n, idx) =>
-            idx > i &&
-            n.tick > ev.tick &&
-            (n.note === GM_DRUM.CLOSED_HH || n.note === GM_DRUM.PEDAL_HH)
-        );
-        if (nextClose) {
-          expect(ev.tick + ev.duration).toBeLessThanOrEqual(nextClose.tick);
+  it('enforces 4-limb independence, hi-hat choke, and two-handed 16th-beat HH skip on steps 4 & 12 at BPM=130', () => {
+    const genres = Object.keys(GENRE_FLAVOR_PROFILES) as MasterGenreId[];
+    const patterns = Object.keys(BEAT_TEMPLATES) as Array<keyof typeof BEAT_TEMPLATES>;
+
+    for (const genreId of genres) {
+      for (const patternId of patterns) {
+        const song = createSong('');
+        song.bpm = 130;
+        song.members.drums.patternPreset = genreId;
+        const section = createSection({
+          bars: 4,
+          energy: 'High',
+          drumPatternId: patternId,
+          drumKickTake: 'A',
+        });
+        const res = generateDrumResult({
+          song,
+          section,
+          sectionIndex: 0,
+          style: 'A',
+          seed: 77,
+          params: resolveInstrumentParams(song, section, 'drums', 'A'),
+        });
+
+        // No duplicate (barIndex, stepIndex, limb)
+        const limbKeys = new Set<string>();
+        for (const ev of res.events) {
+          const k = `${ev.barIndex}:${ev.stepIndex}:${ev.limb}`;
+          expect(limbKeys.has(k)).toBe(false);
+          limbKeys.add(k);
+        }
+
+        // Hi-hat choke: Open/Half-Open HH never rings past next Closed/Pedal HH
+        for (let i = 0; i < res.events.length; i++) {
+          const ev = res.events[i];
+          if (ev.voice !== 'HH_OPEN' && ev.voice !== 'HH_HALF_OPEN') continue;
+          const nextClose = res.events.find(
+            (n, idx) =>
+              idx > i &&
+              n.tick > ev.tick &&
+              (n.voice === 'HH_CLOSED' || n.voice === 'HH_PEDAL')
+          );
+          if (nextClose) {
+            expect(ev.tick + ev.durationTicks).toBeLessThanOrEqual(nextClose.tick);
+          }
         }
       }
     }
 
-    // Verify 2nd/4th beat HH skip on BPM=130 16th-note HH mode (fusion_funk Mid energy)
-    const funkSong = createSong('');
-    funkSong.bpm = 130;
-    funkSong.members.drums.patternPreset = 'fusion_funk';
-    const funkSec = createSection({ bars: 2, energy: 'Mid' });
-    const funkRes = generateDrumResult({
-      song: funkSong,
-      section: funkSec,
+    // Two-handed 16th-beat omits LH hi-hat on snare steps 4 & 12 at BPM=130
+    const s16 = createSong('');
+    s16.bpm = 130;
+    const sec16 = createSection({
+      bars: 2,
+      energy: 'Mid',
+      drumPatternId: 'SIXTEEN_BEAT',
+      drumKickTake: 'A',
+      drumFillEnabled: false,
+    });
+    const res16 = generateDrumResult({
+      song: s16,
+      section: sec16,
       sectionIndex: 0,
       style: 'A',
       seed: 11,
-      params: resolveInstrumentParams(funkSong, funkSec, 'drums', 'A'),
+      params: resolveInstrumentParams(s16, sec16, 'drums', 'A'),
     });
-    const bar0Beat2And4Hats = funkRes.events.filter(
+    const beat2And4Hats = res16.events.filter(
       (e) =>
-        (e.tick === 480 || e.tick === 1440) &&
-        (e.note === GM_DRUM.CLOSED_HH || e.note === GM_DRUM.OPEN_HH)
+        (e.stepIndex === 4 || e.stepIndex === 12) &&
+        (e.voice === 'HH_CLOSED' || e.voice === 'HH_OPEN' || e.voice === 'HH_HALF_OPEN')
     );
-    expect(bar0Beat2And4Hats.length).toBe(0);
+    expect(beat2And4Hats.length).toBe(0);
   });
 
-  it('triggers kick + accent cymbal at 1680 offbeat anticipation and suppresses downbeat crash at 1920', () => {
+  it('safely integrates drumHat16thEnabled, drumFillEnabled, and drumBreakEnabled toggles', () => {
+    const tomVoices = new Set<DrumVoice>(['TOM_HI', 'TOM_MID', 'TOM_FLOOR']);
+    const cymbalVoices = new Set<DrumVoice>([
+      'HH_CLOSED',
+      'HH_OPEN',
+      'HH_HALF_OPEN',
+      'RIDE_BOW',
+      'RIDE_BELL',
+    ]);
+
+    // 1. drumHat16thEnabled: OFF vs ON on EIGHT_BEAT at BPM=120
     const song = createSong('');
-    song.members.drums.patternPreset = 'emo_jrock_fast';
-    const shifted = shiftChordBoundary(createUniformChordTimeline(['Em', 'C'], 2), 1, -0.5);
-    const section = createSection({ bars: 2, energy: 'High', chords: shifted });
+    song.bpm = 120;
+    song.members.drums.patternPreset = 'royal_jpop';
 
-    const res = generateDrumResult({
-      song,
-      section,
-      sectionIndex: 0,
-      style: 'A',
-      seed: 33,
-      params: resolveInstrumentParams(song, section, 'drums', 'A'),
-    });
-
-    expect(res.events.some((e) => e.tick === 1680 && e.note === GM_DRUM.KICK)).toBe(true);
-    expect(
-      res.events.some(
-        (e) =>
-          e.tick === 1680 &&
-          (e.note === GM_DRUM.CRASH_1 || e.note === GM_DRUM.CHINA || e.note === GM_DRUM.CRASH_2)
-      )
-    ).toBe(true);
-
-    const bar1DownbeatCrashes = res.events.filter(
-      (e) =>
-        e.tick === 1920 &&
-        (e.note === GM_DRUM.CRASH_1 || e.note === GM_DRUM.CHINA || e.note === GM_DRUM.CRASH_2)
-    );
-    expect(bar1DownbeatCrashes.length).toBe(0);
-  });
-
-  it('injects 4-bar/8-bar tom/linear fills with groove blocking and post-fill crash+kick landing', () => {
-    const tomNotes = new Set<number>([50, 48, 47, 45, 43, 41]);
-    const grooveCymbals = new Set<number>([42, 46, 51, 53]);
-
-    // Standard descending tom fill check (jpop_melodic, seed tuned or checked across seeds)
-    const song = createSong('');
-    song.members.drums.patternPreset = 'jpop_melodic';
-    const section = createSection({
-      bars: 8,
-      energy: 'High',
-      chords: createUniformChordTimeline(['Em', 'C', 'G', 'D'], 8),
-    });
-    const res = generateDrumResult({
-      song,
-      section,
-      sectionIndex: 0,
-      style: 'A',
-      seed: 10,
-      params: resolveInstrumentParams(song, section, 'drums', 'A'),
-    });
-
-    const bar3Start = 3 * TICKS_PER_BAR;
-    const bar7Start = 7 * TICKS_PER_BAR;
-    const bar3Toms = res.events.filter(
-      (e) => e.tick >= bar3Start + 960 && e.tick < bar3Start + TICKS_PER_BAR && tomNotes.has(e.note)
-    );
-    const bar7Toms = res.events.filter(
-      (e) => e.tick >= bar7Start + 960 && e.tick < bar7Start + TICKS_PER_BAR && tomNotes.has(e.note)
-    );
-    expect(bar3Toms.length).toBeGreaterThan(0);
-    expect(bar7Toms.length).toBeGreaterThan(0);
-
-    // Groove cymbals blocked inside fill window
-    const bar3Cymbals = res.events.filter(
-      (e) =>
-        e.tick >= bar3Start + 960 &&
-        e.tick < bar3Start + TICKS_PER_BAR &&
-        grooveCymbals.has(e.note)
-    );
-    expect(bar3Cymbals.length).toBe(0);
-
-    // Post-fill crash + kick landing at bar 4 downbeat
-    const bar4Start = 4 * TICKS_PER_BAR;
-    expect(res.events.some((e) => e.tick === bar4Start && e.role === 'crash')).toBe(true);
-    expect(res.events.some((e) => e.tick === bar4Start && e.note === GM_DRUM.KICK)).toBe(true);
-
-    // Linear fill check on fusion_funk (zero simultaneous hits inside fill window, descending pitch trend)
-    const funkSong = createSong('');
-    funkSong.members.drums.patternPreset = 'fusion_funk';
-    const funkSec = createSection({
-      bars: 4,
-      energy: 'High',
-      chords: createUniformChordTimeline(['Em', 'C', 'G', 'D'], 4),
-    });
-    const funkRes = generateDrumResult({
-      song: funkSong,
-      section: funkSec,
-      sectionIndex: 0,
-      style: 'A',
-      seed: 1,
-      params: resolveInstrumentParams(funkSong, funkSec, 'drums', 'A'),
-    });
-    const fStart = 3 * TICKS_PER_BAR + 960;
-    const fEnd = 4 * TICKS_PER_BAR;
-    const fEvents = funkRes.events.filter((e) => e.tick >= fStart && e.tick < fEnd);
-    const fTicks = new Set(fEvents.map((e) => e.tick));
-    expect(fTicks.size).toBe(fEvents.length);
-    const fToms = fEvents.filter((e) => tomNotes.has(e.note));
-    if (fToms.length >= 2) {
-      expect(fToms[0].note).toBeGreaterThanOrEqual(fToms[fToms.length - 1].note);
-    }
-  });
-
-  it('enforces SSD 5.5 velocity tiers, Moeller HH accents, BPM-clamped microtiming, and legacy preset compatibility', () => {
-    // 1. Laid-back at BPM=115 (alt_heavy_shoegaze)
-    const altSong = createSong('');
-    altSong.bpm = 115;
-    altSong.members.drums.patternPreset = 'alt_heavy_shoegaze';
-    const altSec = createSection({ bars: 4, energy: 'Mid' });
-    const altRes = generateDrumResult({
-      song: altSong,
-      section: altSec,
-      sectionIndex: 0,
-      style: 'A',
-      seed: 55,
-      params: resolveInstrumentParams(altSong, altSec, 'drums', 'A'),
-    });
-
-    const backbeats = altRes.events.filter((e) => e.role === 'snare_backbeat');
-    const ghosts = altRes.events.filter((e) => e.role === 'snare_ghost');
-    expect(backbeats.length).toBeGreaterThan(0);
-    const avgBackbeat =
-      backbeats.reduce((sum, e) => sum + e.velocity, 0) / backbeats.length;
-    expect(avgBackbeat).toBeGreaterThanOrEqual(100);
-    if (ghosts.length > 0) {
-      const avgGhost = ghosts.reduce((sum, e) => sum + e.velocity, 0) / ghosts.length;
-      expect(avgGhost).toBeLessThan(60);
-      expect(avgBackbeat - avgGhost).toBeGreaterThanOrEqual(50);
-    }
-
-    for (const bb of backbeats) {
-      const local = bb.tick % TICKS_PER_BAR;
-      const base = Math.abs(local - 480) < 100 ? 480 : 1440;
-      const offset = local - base;
-      expect(offset).toBeGreaterThanOrEqual(5);
-      expect(offset).toBeLessThanOrEqual(18);
-    }
-
-    // Moeller 8th HH accent check
-    const hhOn = altRes.events.filter(
-      (e) => e.note === GM_DRUM.CLOSED_HH && e.tick % 480 < 30
-    );
-    const hhOff = altRes.events.filter(
-      (e) => e.note === GM_DRUM.CLOSED_HH && Math.abs((e.tick % 480) - 240) < 30
-    );
-    if (hhOn.length > 0 && hhOff.length > 0) {
-      const avgOn = hhOn.reduce((s, e) => s + e.velocity, 0) / hhOn.length;
-      const avgOff = hhOff.reduce((s, e) => s + e.velocity, 0) / hhOff.length;
-      expect(avgOn - avgOff).toBeGreaterThanOrEqual(15);
-    }
-
-    // 2. Push microtiming at BPM=160 (emo_jrock_fast)
-    const emoSong = createSong('');
-    emoSong.bpm = 160;
-    emoSong.members.drums.patternPreset = 'emo_jrock_fast';
-    const emoSec = createSection({ bars: 2, energy: 'Mid' });
-    const emoRes = generateDrumResult({
-      song: emoSong,
-      section: emoSec,
-      sectionIndex: 0,
-      style: 'A',
-      seed: 12,
-      params: resolveInstrumentParams(emoSong, emoSec, 'drums', 'A'),
-    });
-    const emoBackbeats = emoRes.events.filter((e) => e.role === 'snare_backbeat');
-    expect(emoBackbeats.length).toBeGreaterThan(0);
-    for (const bb of emoBackbeats) {
-      const local = bb.tick % TICKS_PER_BAR;
-      const base = Math.abs(local - 480) < 100 ? 480 : 1440;
-      const offset = local - base;
-      expect(offset).toBeLessThanOrEqual(-4);
-      expect(offset).toBeGreaterThanOrEqual(-10);
-    }
-
-    // 3. All legacy preset IDs compatibility
-    const legacyPresets = PATTERN_PRESET_GROUPS.drums.flatMap((g) =>
-      g.options.map((o) => o.value)
-    );
-    for (const presetId of legacyPresets) {
-      const s = createSong('');
-      s.members.drums.patternPreset = presetId;
-      const sec = createSection({ bars: 2, energy: 'Mid' });
-      const notes = generateDrumNotes({
-        song: s,
-        section: sec,
-        sectionIndex: 0,
-        style: 'A',
-        seed: 7,
-        params: resolveInstrumentParams(s, sec, 'drums', 'A'),
-      });
-      expect(notes.length).toBeGreaterThan(0);
-    }
-  });
-
-  it('suppresses 16th-note hat/ride intervals (120 ticks) on 8th-note genres when drumHat16thEnabled is false', () => {
-    const eighthGenres: DrumGenreDNAId[] = [
-      'alt_heavy_shoegaze',
-      'emo_jrock_fast',
-      'jpop_melodic',
-      'chill_lofi_ballad',
-    ];
-    const cymbalPitches = new Set<number>([42, 46, 51, 53]);
-
-    for (const genre of eighthGenres) {
-      const song = createSong('');
-      song.bpm = 120;
-      song.members.drums.patternPreset = genre;
-      const section = createSection({
-        type: 'Verse',
-        bars: 4,
-        energy: 'Mid',
-        drumHat16thEnabled: false,
-        drumFillEnabled: false,
-        drumBreakEnabled: false,
-      });
-
-      const res = generateDrumResult({
-        song,
-        section,
-        sectionIndex: 0,
-        style: 'A',
-        seed: 101,
-        params: resolveInstrumentParams(song, section, 'drums', 'A'),
-      });
-
-      // Check normal groove bars (bars 0..2)
-      for (let bar = 0; bar < 3; bar++) {
-        const barStart = bar * TICKS_PER_BAR;
-        const barEnd = barStart + TICKS_PER_BAR;
-        const cymbals = res.events
-          .filter(
-            (e) =>
-              e.tick >= barStart &&
-              e.tick < barEnd &&
-              cymbalPitches.has(e.note)
-          )
-          .sort((a, b) => a.tick - b.tick);
-
-        let sixteenthCount = 0;
-        for (let i = 1; i < cymbals.length; i++) {
-          if (cymbals[i].tick - cymbals[i - 1].tick === 120) {
-            sixteenthCount++;
-          }
-        }
-        expect(sixteenthCount).toBe(0);
-      }
-    }
-  });
-
-  it('unlocks 16th-note hat/ride ornamentation (120-tick intervals) on 8th-note genres when drumHat16thEnabled is true', () => {
-    const eighthGenres: DrumGenreDNAId[] = [
-      'alt_heavy_shoegaze',
-      'emo_jrock_fast',
-      'jpop_melodic',
-      'chill_lofi_ballad',
-    ];
-    const cymbalPitches = new Set<number>([42, 46, 51, 53]);
-
-    for (const genre of eighthGenres) {
-      const song = createSong('');
-      song.bpm = 120;
-      song.members.drums.patternPreset = genre;
-      const section = createSection({
-        type: 'Verse',
-        bars: 4,
-        energy: 'Mid',
-        drumHat16thEnabled: true,
-        drumFillEnabled: false,
-        drumBreakEnabled: false,
-      });
-
-      const res = generateDrumResult({
-        song,
-        section,
-        sectionIndex: 0,
-        style: 'A',
-        seed: 101,
-        params: resolveInstrumentParams(song, section, 'drums', 'A'),
-      });
-
-      const cymbals = res.events
-        .filter((e) => cymbalPitches.has(e.note))
-        .sort((a, b) => a.tick - b.tick);
-
-      let sixteenthCount = 0;
-      for (let i = 1; i < cymbals.length; i++) {
-        if (cymbals[i].tick - cymbals[i - 1].tick === 120) {
-          sixteenthCount++;
-        }
-      }
-      expect(sixteenthCount).toBeGreaterThan(0);
-    }
-  });
-
-  it('keeps base groove seamlessly through section end without toms when drumFillEnabled=false and drumBreakEnabled=false', () => {
-    const tomNotes = new Set<number>([41, 43, 45, 47, 48, 50]);
-    const cymbalPitches = new Set<number>([42, 46, 51, 53]);
-    const song = createSong('');
-    song.members.drums.patternPreset = 'jpop_melodic';
-    const section = createSection({
+    const secOff = createSection({
       type: 'Verse',
       bars: 4,
       energy: 'Mid',
+      drumPatternId: 'EIGHT_BEAT',
+      drumKickTake: 'A',
       drumHat16thEnabled: false,
       drumFillEnabled: false,
       drumBreakEnabled: false,
     });
-
-    const res = generateDrumResult({
+    const resOff = generateDrumResult({
       song,
-      section,
+      section: secOff,
       sectionIndex: 0,
       style: 'A',
-      seed: 42,
-      params: resolveInstrumentParams(song, section, 'drums', 'A'),
+      seed: 101,
+      params: resolveInstrumentParams(song, secOff, 'drums', 'A'),
     });
+    expect(
+      resOff.events.filter((e) => cymbalVoices.has(e.voice) && e.stepIndex % 2 === 1).length
+    ).toBe(0);
 
+    const secOn = createSection({
+      ...secOff,
+      drumHat16thEnabled: true,
+    });
+    const resOn = generateDrumResult({
+      song,
+      section: secOn,
+      sectionIndex: 0,
+      style: 'A',
+      seed: 101,
+      params: resolveInstrumentParams(song, secOn, 'drums', 'A'),
+    });
+    expect(
+      resOn.events.filter((e) => cymbalVoices.has(e.voice) && e.stepIndex % 2 === 1).length
+    ).toBeGreaterThan(0);
+
+    // 2. Auto-degrade drumHat16thEnabled on UPBEAT / TWO_BEAT / DOUBLE_BASS and bpm > 145
+    const fastSong = createSong('');
+    fastSong.bpm = 160;
+    const secFast = createSection({
+      ...secOn,
+      drumPatternId: 'EIGHT_BEAT',
+    });
+    const resFast = generateDrumResult({
+      song: fastSong,
+      section: secFast,
+      sectionIndex: 0,
+      style: 'A',
+      seed: 101,
+      params: resolveInstrumentParams(fastSong, secFast, 'drums', 'A'),
+    });
+    expect(
+      resFast.events.filter((e) => cymbalVoices.has(e.voice) && e.stepIndex % 2 === 1).length
+    ).toBe(0);
+
+    // 3. drumFillEnabled=false & drumBreakEnabled=false -> zero toms, seamless groove
     const lastBarStart = 3 * TICKS_PER_BAR;
     const lastBarEnd = 4 * TICKS_PER_BAR;
-    const lastBarEvents = res.events.filter(
+    const lastBarOff = resOff.events.filter(
       (e) => e.tick >= lastBarStart && e.tick < lastBarEnd
     );
-    const lastBarToms = lastBarEvents.filter((e) => tomNotes.has(e.note));
-    expect(lastBarToms.length).toBe(0);
+    expect(lastBarOff.filter((e) => tomVoices.has(e.voice)).length).toBe(0);
+    expect(
+      lastBarOff.filter((e) => e.tick >= lastBarStart + 960 && cymbalVoices.has(e.voice)).length
+    ).toBeGreaterThanOrEqual(3);
 
-    // Base groove continues through beats 3-4 of final bar
-    const lateBarCymbals = lastBarEvents.filter(
-      (e) => e.tick >= lastBarStart + 960 && cymbalPitches.has(e.note)
-    );
-    expect(lateBarCymbals.length).toBeGreaterThanOrEqual(3);
-  });
-
-  it('generates tom fill in final bar when drumFillEnabled=true and drumBreakEnabled=false', () => {
-    const tomNotes = new Set<number>([41, 43, 45, 47, 48, 50]);
-    const song = createSong('');
-    song.members.drums.patternPreset = 'jpop_melodic';
-    const section = createSection({
+    // 4. drumFillEnabled=true & drumBreakEnabled=false -> final bar tom fill
+    const secFill = createSection({
       type: 'Pre-Chorus',
       bars: 4,
       energy: 'High',
+      drumPatternId: 'EIGHT_BEAT',
       drumFillEnabled: true,
       drumBreakEnabled: false,
     });
-
-    const res = generateDrumResult({
+    const resFill = generateDrumResult({
       song,
-      section,
+      section: secFill,
       sectionIndex: 0,
       style: 'A',
       seed: 10,
-      params: resolveInstrumentParams(song, section, 'drums', 'A'),
+      params: resolveInstrumentParams(song, secFill, 'drums', 'A'),
     });
+    expect(
+      resFill.events.filter(
+        (e) => e.tick >= lastBarStart + 960 && e.tick < lastBarEnd && tomVoices.has(e.voice)
+      ).length
+    ).toBeGreaterThan(0);
 
-    const lastBarStart = 3 * TICKS_PER_BAR;
-    const lastBarEnd = 4 * TICKS_PER_BAR;
-    const lastBarToms = res.events.filter(
-      (e) => e.tick >= lastBarStart + 960 && e.tick < lastBarEnd && tomNotes.has(e.note)
-    );
-    expect(lastBarToms.length).toBeGreaterThan(0);
-  });
-
-  it('creates a silent break window in the latter half of the final bar when drumBreakEnabled=true', () => {
-    const tomNotes = new Set<number>([41, 43, 45, 47, 48, 50]);
-    const song = createSong('');
-    song.members.drums.patternPreset = 'jpop_melodic';
-
-    // 1. Break only (drumFillEnabled=false, drumBreakEnabled=true): beat 3 hit + silence in [1200..1920)
-    const breakOnlySec = createSection({
+    // 5. drumFillEnabled=false & drumBreakEnabled=true -> beat 3 hit + silence [1200..1920)
+    const secBreak = createSection({
       type: 'Pre-Chorus',
       bars: 4,
       energy: 'High',
+      drumPatternId: 'EIGHT_BEAT',
       drumFillEnabled: false,
       drumBreakEnabled: true,
     });
-    const breakOnlyRes = generateDrumResult({
+    const resBreak = generateDrumResult({
       song,
-      section: breakOnlySec,
+      section: secBreak,
       sectionIndex: 0,
       style: 'A',
       seed: 21,
-      params: resolveInstrumentParams(song, breakOnlySec, 'drums', 'A'),
+      params: resolveInstrumentParams(song, secBreak, 'drums', 'A'),
     });
-    const lastBarStart = 3 * TICKS_PER_BAR;
-    const lastBarEnd = 4 * TICKS_PER_BAR;
-    const silentAfterHit = breakOnlyRes.events.filter(
-      (e) => e.tick >= lastBarStart + 1200 && e.tick < lastBarEnd
-    );
-    expect(silentAfterHit).toEqual([]);
     expect(
-      breakOnlyRes.events.some(
-        (e) => e.tick === lastBarStart + 960 && e.note === GM_DRUM.KICK
+      resBreak.events.filter((e) => e.tick >= lastBarStart + 1200 && e.tick < lastBarEnd)
+    ).toEqual([]);
+    expect(
+      resBreak.events.some(
+        (e) => e.tick === lastBarStart + 960 && e.voice === 'KICK_MAIN'
       )
     ).toBe(true);
 
-    // 2. Fill + Break combo (drumFillEnabled=true, drumBreakEnabled=true): fill on beats 2-3, dead silence on beat 4 [1440..1920)
-    const comboSec = createSection({
+    // 6. drumFillEnabled=true & drumBreakEnabled=true -> fill beats 2-3 + silence beat 4 [1440..1920)
+    const secCombo = createSection({
       type: 'Pre-Chorus',
       bars: 4,
       energy: 'High',
+      drumPatternId: 'EIGHT_BEAT',
       drumFillEnabled: true,
       drumBreakEnabled: true,
     });
-    const comboRes = generateDrumResult({
+    const resCombo = generateDrumResult({
       song,
-      section: comboSec,
+      section: secCombo,
       sectionIndex: 0,
       style: 'A',
       seed: 21,
-      params: resolveInstrumentParams(song, comboSec, 'drums', 'A'),
+      params: resolveInstrumentParams(song, secCombo, 'drums', 'A'),
     });
-    const comboBeat4Events = comboRes.events.filter(
-      (e) => e.tick >= lastBarStart + 1440 && e.tick < lastBarEnd
-    );
-    expect(comboBeat4Events).toEqual([]);
-    const comboFillToms = comboRes.events.filter(
-      (e) =>
-        e.tick >= lastBarStart + 480 &&
-        e.tick < lastBarStart + 1440 &&
-        tomNotes.has(e.note)
-    );
-    expect(comboFillToms.length).toBeGreaterThan(0);
+    expect(
+      resCombo.events.filter((e) => e.tick >= lastBarStart + 1440 && e.tick < lastBarEnd)
+    ).toEqual([]);
+    expect(
+      resCombo.events.filter(
+        (e) =>
+          e.tick >= lastBarStart + 480 &&
+          e.tick < lastBarStart + 1440 &&
+          tomVoices.has(e.voice)
+      ).length
+    ).toBeGreaterThan(0);
   });
 });

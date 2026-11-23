@@ -19,6 +19,8 @@ import {
   setSectionDrumBreakEnabled as applySectionDrumBreakEnabled,
   setSectionDrumFillEnabled as applySectionDrumFillEnabled,
   setSectionDrumHat16thEnabled as applySectionDrumHat16thEnabled,
+  setSectionDrumKickTake as applySectionDrumKickTake,
+  setSectionDrumPatternId as applySectionDrumPatternId,
   setSectionUnisonRiff,
   setSectionVocalMelody,
   toggleCellLock,
@@ -48,6 +50,7 @@ import {
 import {
   createDefaultEnabledParts,
   createDefaultPartPresets,
+  type BeatPatternId,
   type ChordSlot,
   type CopiedPartPhrase,
   type DensityLevel,
@@ -55,6 +58,7 @@ import {
   type InstrumentType,
   type KeyboardDensityLevel,
   type KickMode,
+  type KickTake,
   type MemberConfig,
   type Section,
   type SongConfig,
@@ -657,6 +661,22 @@ export function useBandGenerator() {
     [song, bandState, commitChange]
   );
 
+  const setSectionDrumPatternId = useCallback(
+    (sectionId: string, patternId: BeatPatternId | 'auto') => {
+      const res = applySectionDrumPatternId(song, bandState, sectionId, patternId);
+      commitChange(res.song, res.bandState, true, true);
+    },
+    [song, bandState, commitChange]
+  );
+
+  const setSectionDrumKickTake = useCallback(
+    (sectionId: string, kickTake: KickTake | 'auto') => {
+      const res = applySectionDrumKickTake(song, bandState, sectionId, kickTake);
+      commitChange(res.song, res.bandState, true, true);
+    },
+    [song, bandState, commitChange]
+  );
+
   const copyTimelineToAllSections = useCallback(
     (sourceSectionId: string) => {
       const src = song.sections.find((s) => s.id === sourceSectionId);
@@ -722,6 +742,8 @@ export function useBandGenerator() {
     setSectionDrumHat16thEnabled,
     setSectionDrumFillEnabled,
     setSectionDrumBreakEnabled,
+    setSectionDrumPatternId,
+    setSectionDrumKickTake,
     copyTimelineToAllSections,
     pastePartPhrase,
     loadSnapshotData,

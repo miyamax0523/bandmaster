@@ -31,6 +31,16 @@ export type VocalHarmonyMode =
   | 'octave_down';
 export type KickMode = 'acoustic' | '808';
 export type DrumAnticipationMode = 'sync' | 'keep';
+export type BeatPatternId =
+  | 'EIGHT_BEAT'
+  | 'SIXTEEN_BEAT'
+  | 'FOUR_ON_FLOOR'
+  | 'UPBEAT'
+  | 'TWO_BEAT'
+  | 'BOUNCE'
+  | 'HALF_TIME'
+  | 'DOUBLE_BASS';
+export type KickTake = 'A' | 'B' | 'C';
 export type Bass808Behavior = 'octaveUp' | 'tacet' | 'normal';
 export type TakeStyle = 'A' | 'B' | 'C';
 export type InstrumentType = 'drums' | 'bass' | 'keyboard' | 'pad' | 'vocal';
@@ -194,6 +204,8 @@ export interface Section {
   energy: EnergyLevel;
   kickMode: KickMode;
   drumAnticipationMode?: DrumAnticipationMode; // default 'sync'
+  drumPatternId?: BeatPatternId | 'auto'; // default 'auto'
+  drumKickTake?: KickTake | 'auto'; // default 'auto'
   drumHat16thEnabled?: boolean; // default false
   drumFillEnabled?: boolean; // default via getDefaultDrumFillEnabled
   drumBreakEnabled?: boolean; // default false

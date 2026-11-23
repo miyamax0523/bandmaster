@@ -9,6 +9,7 @@ import {
   CURRENT_ENGINE_VERSION,
   getDefaultDrumFillEnabled,
   TICKS_PER_BAR,
+  type BeatPatternId,
   type ChordSlot,
   type CopiedPartPhrase,
   type DensityLevel,
@@ -17,6 +18,7 @@ import {
   type InstrumentType,
   type KeyboardDensityLevel,
   type KickMode,
+  type KickTake,
   type MidiNote,
   type Section,
   type SongConfig,
@@ -97,6 +99,8 @@ export function cloneSection(sec: Section): Section {
   return {
     ...sec,
     drumAnticipationMode: sec.drumAnticipationMode ?? 'sync',
+    drumPatternId: sec.drumPatternId ?? 'auto',
+    drumKickTake: sec.drumKickTake ?? 'auto',
     drumHat16thEnabled: sec.drumHat16thEnabled ?? false,
     drumFillEnabled:
       sec.drumFillEnabled ?? getDefaultDrumFillEnabled(sec.type, sec.bars),
@@ -225,6 +229,10 @@ export function generateCellTakes(
       bpm: song.bpm,
       keyboardDensity:
         instrument === 'keyboard' ? (section.keyboardDensity ?? 4) : undefined,
+      drumPatternId:
+        instrument === 'drums' ? (section.drumPatternId ?? 'auto') : undefined,
+      drumKickTake:
+        instrument === 'drums' ? (section.drumKickTake ?? 'auto') : undefined,
       drumHat16thEnabled:
         instrument === 'drums'
           ? (section.drumHat16thEnabled ?? false)
@@ -2197,6 +2205,48 @@ export function setSectionDrumBreakEnabled(
       bandState,
       sectionId,
       6330
+    ),
+  };
+}
+
+export function setSectionDrumPatternId(
+  song: SongConfig,
+  bandState: BandState,
+  sectionId: string,
+  patternId: BeatPatternId | 'auto'
+): { song: SongConfig; bandState: BandState } {
+  const nextSong = cloneSongConfig(song);
+  const secIdx = nextSong.sections.findIndex((s) => s.id === sectionId);
+  if (secIdx === -1) return { song, bandState };
+  nextSong.sections[secIdx].drumPatternId = patternId;
+  return {
+    song: nextSong,
+    bandState: regenerateSectionDrumsAndSyncBass(
+      nextSong,
+      bandState,
+      sectionId,
+      6340
+    ),
+  };
+}
+
+export function setSectionDrumKickTake(
+  song: SongConfig,
+  bandState: BandState,
+  sectionId: string,
+  kickTake: KickTake | 'auto'
+): { song: SongConfig; bandState: BandState } {
+  const nextSong = cloneSongConfig(song);
+  const secIdx = nextSong.sections.findIndex((s) => s.id === sectionId);
+  if (secIdx === -1) return { song, bandState };
+  nextSong.sections[secIdx].drumKickTake = kickTake;
+  return {
+    song: nextSong,
+    bandState: regenerateSectionDrumsAndSyncBass(
+      nextSong,
+      bandState,
+      sectionId,
+      6350
     ),
   };
 }

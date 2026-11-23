@@ -1,19 +1,31 @@
-import { type MidiNote, type SectionType } from '../types/song';
+import {
+  getDefaultDrumFillEnabled,
+  type BeatPatternId,
+  type KickTake,
+  type MidiNote,
+  type SectionType,
+} from '../types/song';
 import { getTimelineBoundaryChanges } from '../lib/chordTimeline';
+import { normalizeMasterGenreId, type MasterGenreId } from '../lib/masterGenres';
 import type { EngineInput } from './types';
 
-export const TPQN = 480;
-export const BEAT_TICKS = 480;
-export const BAR_TICKS = 1920;
-export const EIGHTH_TICKS = 240;
-export const SIXTEENTH_TICKS = 120;
-export const THIRTY_SECOND_TICKS = 60;
+// ===========================================================================
+// 1. Constants, Core Types & MIDI Output Maps (GM Standard / SSD 5.5 Native)
+// ===========================================================================
+export const TPQN = 480 as const;
+export const STEP_TICKS = 120 as const; // 16th note
+export const BAR_TICKS = 1920 as const; // 4/4 bar
+export const BEAT_TICKS = 480 as const;
+export const EIGHTH_TICKS = 240 as const;
+export const SIXTEENTH_TICKS = 120 as const;
 
 export const GM_DRUM = {
   KICK: 36,
+  KICK_ALT: 35,
   RIMSHOT: 37,
   SIDE_STICK: 37,
   SNARE: 38,
+  SNARE_RIMSHOT: 40,
   LOW_FLOOR_TOM: 41,
   CLOSED_HH: 42,
   FLOOR_TOM: 43,
@@ -35,214 +47,431 @@ export const GM_DRUM = {
   CRASH_2: 57,
 } as const;
 
+export type StepIndex =
+  | 0
+  | 1
+  | 2
+  | 3
+  | 4
+  | 5
+  | 6
+  | 7
+  | 8
+  | 9
+  | 10
+  | 11
+  | 12
+  | 13
+  | 14
+  | 15;
+
 export type Limb = 'RH' | 'LH' | 'RF' | 'LF';
 
-export type DrumGenreDNAId =
-  | 'alt_heavy_shoegaze'
-  | 'emo_jrock_fast'
-  | 'jpop_melodic'
-  | 'numetal_mixture'
-  | 'fusion_funk'
-  | 'chill_lofi_ballad';
+export type DrumVoice =
+  | 'KICK_MAIN'
+  | 'KICK_ALT'
+  | 'SNARE_MAIN'
+  | 'SNARE_RIMSHOT'
+  | 'SNARE_SIDESTICK'
+  | 'HH_CLOSED'
+  | 'HH_PEDAL'
+  | 'HH_HALF_OPEN'
+  | 'HH_OPEN'
+  | 'RIDE_BOW'
+  | 'RIDE_BELL'
+  | 'CRASH_L'
+  | 'CRASH_R'
+  | 'CHINA'
+  | 'TOM_HI'
+  | 'TOM_MID'
+  | 'TOM_FLOOR';
 
-export type SectionEnergy = 'low' | 'mid' | 'high';
+export type MidiMapMode = 'GM_STANDARD' | 'SSD5_NATIVE';
 
-export type CymbalMode =
-  | 'closed_hh'
-  | 'half_open_hh'
-  | 'ride_bow'
-  | 'ride_bell'
-  | 'crash_ride';
-
-export type DrumEventRole =
-  | 'kick'
-  | 'kick_ghost'
-  | 'kick_linear'
-  | 'snare_backbeat'
-  | 'snare_rim'
-  | 'snare_ghost'
-  | 'side_stick'
-  | 'flam_grace'
-  | 'hh_closed'
-  | 'hh_open'
-  | 'hh_pedal'
-  | 'ride'
-  | 'ride_bell'
-  | 'crash'
-  | 'tom_fill';
-
-export interface InternalDrumEvent {
-  note: number;
-  tick: number; // absolute tick in song/section timeline
-  duration: number; // ticks (>= 15)
-  velocity: number; // 1..127
-  limb: Limb;
-  role: DrumEventRole;
-  isAnchor?: boolean;
-  fixedTiming?: boolean;
-  fixedVelocity?: boolean;
-  minTickBound?: number;
-}
-
-export interface DrumDNAProfile {
-  id: DrumGenreDNAId;
-  singleHand16thLimitBpm: number;
-  defaultHhSubdivision: 8 | 16;
-  snareMicrotimingBaseTicks: number;
-  snareMaxMsOffset: number;
-  ghostNoteProbability: number;
-  doubleKickProbability: number;
-  allowTwinPedal: boolean;
-  linearFillWeight: number;
-  halfTimeCapable: boolean;
-  backbeatVelRange: [number, number];
-  climaxSnareVelRange: [number, number];
-  ghostVelRange: [number, number];
-  kickVelRange: [number, number];
-  ghostKickVelRange: [number, number];
-  useSideStickOnLowEnergy: boolean;
-  accentCymbalNote: number;
-}
-
-export const DRUM_DNA_PROFILES: Record<DrumGenreDNAId, DrumDNAProfile> = {
-  alt_heavy_shoegaze: {
-    id: 'alt_heavy_shoegaze',
-    singleHand16thLimitBpm: 95,
-    defaultHhSubdivision: 8,
-    snareMicrotimingBaseTicks: 10,
-    snareMaxMsOffset: 18,
-    ghostNoteProbability: 0.45,
-    doubleKickProbability: 0.35,
-    allowTwinPedal: false,
-    linearFillWeight: 0.25,
-    halfTimeCapable: true,
-    backbeatVelRange: [112, 125],
-    climaxSnareVelRange: [118, 127],
-    ghostVelRange: [34, 52],
-    kickVelRange: [108, 124],
-    ghostKickVelRange: [74, 88],
-    useSideStickOnLowEnergy: false,
-    accentCymbalNote: GM_DRUM.CHINA,
+export const MIDI_NOTE_MAP: Record<MidiMapMode, Record<DrumVoice, number>> = {
+  GM_STANDARD: {
+    KICK_MAIN: 36,
+    KICK_ALT: 35,
+    SNARE_MAIN: 38,
+    SNARE_RIMSHOT: 40,
+    SNARE_SIDESTICK: 37,
+    HH_CLOSED: 42,
+    HH_PEDAL: 44,
+    HH_HALF_OPEN: 46,
+    HH_OPEN: 46,
+    RIDE_BOW: 51,
+    RIDE_BELL: 53,
+    CRASH_L: 49,
+    CRASH_R: 57,
+    CHINA: 52,
+    TOM_HI: 48,
+    TOM_MID: 45,
+    TOM_FLOOR: 43,
   },
-  emo_jrock_fast: {
-    id: 'emo_jrock_fast',
-    singleHand16thLimitBpm: 100,
-    defaultHhSubdivision: 8,
-    snareMicrotimingBaseTicks: -6,
-    snareMaxMsOffset: 10,
-    ghostNoteProbability: 0.18,
-    doubleKickProbability: 0.55,
-    allowTwinPedal: true,
-    linearFillWeight: 0.4,
-    halfTimeCapable: false,
-    backbeatVelRange: [110, 124],
-    climaxSnareVelRange: [116, 127],
-    ghostVelRange: [28, 45],
-    kickVelRange: [108, 124],
-    ghostKickVelRange: [76, 88],
-    useSideStickOnLowEnergy: false,
-    accentCymbalNote: GM_DRUM.CRASH_1,
-  },
-  jpop_melodic: {
-    id: 'jpop_melodic',
-    singleHand16thLimitBpm: 100,
-    defaultHhSubdivision: 8,
-    snareMicrotimingBaseTicks: 2,
-    snareMaxMsOffset: 5,
-    ghostNoteProbability: 0.28,
-    doubleKickProbability: 0.2,
-    allowTwinPedal: false,
-    linearFillWeight: 0.3,
-    halfTimeCapable: false,
-    backbeatVelRange: [106, 120],
-    climaxSnareVelRange: [115, 125],
-    ghostVelRange: [26, 44],
-    kickVelRange: [105, 120],
-    ghostKickVelRange: [72, 86],
-    useSideStickOnLowEnergy: true,
-    accentCymbalNote: GM_DRUM.CRASH_1,
-  },
-  numetal_mixture: {
-    id: 'numetal_mixture',
-    singleHand16thLimitBpm: 95,
-    defaultHhSubdivision: 8,
-    snareMicrotimingBaseTicks: 1,
-    snareMaxMsOffset: 4,
-    ghostNoteProbability: 0.3,
-    doubleKickProbability: 0.5,
-    allowTwinPedal: true,
-    linearFillWeight: 0.35,
-    halfTimeCapable: true,
-    backbeatVelRange: [114, 127],
-    climaxSnareVelRange: [118, 127],
-    ghostVelRange: [30, 48],
-    kickVelRange: [110, 124],
-    ghostKickVelRange: [75, 88],
-    useSideStickOnLowEnergy: false,
-    accentCymbalNote: GM_DRUM.CHINA,
-  },
-  fusion_funk: {
-    id: 'fusion_funk',
-    singleHand16thLimitBpm: 95,
-    defaultHhSubdivision: 16,
-    snareMicrotimingBaseTicks: 6,
-    snareMaxMsOffset: 12,
-    ghostNoteProbability: 0.65,
-    doubleKickProbability: 0.45,
-    allowTwinPedal: false,
-    linearFillWeight: 0.8,
-    halfTimeCapable: false,
-    backbeatVelRange: [105, 120],
-    climaxSnareVelRange: [114, 125],
-    ghostVelRange: [25, 48],
-    kickVelRange: [105, 122],
-    ghostKickVelRange: [72, 86],
-    useSideStickOnLowEnergy: false,
-    accentCymbalNote: GM_DRUM.CRASH_2,
-  },
-  chill_lofi_ballad: {
-    id: 'chill_lofi_ballad',
-    singleHand16thLimitBpm: 90,
-    defaultHhSubdivision: 8,
-    snareMicrotimingBaseTicks: 12,
-    snareMaxMsOffset: 20,
-    ghostNoteProbability: 0.25,
-    doubleKickProbability: 0.1,
-    allowTwinPedal: false,
-    linearFillWeight: 0.2,
-    halfTimeCapable: false,
-    backbeatVelRange: [96, 112],
-    climaxSnareVelRange: [105, 118],
-    ghostVelRange: [25, 40],
-    kickVelRange: [95, 114],
-    ghostKickVelRange: [70, 82],
-    useSideStickOnLowEnergy: true,
-    accentCymbalNote: GM_DRUM.CRASH_1,
+  SSD5_NATIVE: {
+    KICK_MAIN: 36,
+    KICK_ALT: 35,
+    SNARE_MAIN: 38,
+    SNARE_RIMSHOT: 40,
+    SNARE_SIDESTICK: 37,
+    HH_CLOSED: 42,
+    HH_PEDAL: 44,
+    HH_HALF_OPEN: 62,
+    HH_OPEN: 64,
+    RIDE_BOW: 51,
+    RIDE_BELL: 53,
+    CRASH_L: 55,
+    CRASH_R: 57,
+    CHINA: 31,
+    TOM_HI: 48,
+    TOM_MID: 47,
+    TOM_FLOOR: 43,
   },
 };
 
-export interface BarAnalysisMeta {
-  barIndex: number;
-  barStart: number;
-  barEnd: number;
-  energy: SectionEnergy;
-  cymbalMode: CymbalMode;
-  barEndAnticipationTick: number | null;
-  midBarSyncopationTick: number | null;
-  precededByAnticipation: boolean;
-  isSectionEnd: boolean;
-  isEightBarEnd: boolean;
-  isFourBarEnd: boolean;
-  isTwoBarTurnaround: boolean;
+export type { BeatPatternId, KickTake };
+
+export type EventRole =
+  | 'SNARE_BACKBEAT'
+  | 'KICK_DOUBLE_RF'
+  | 'KICK_DOUBLE_LF'
+  | 'KICK_CORE'
+  | 'TIMEKEEP'
+  | 'CRASH_ACCENT'
+  | 'FILL_EVENT'
+  | 'KICK_CHORD_TRACK'
+  | 'ORNAMENT';
+
+export interface InternalDrumEvent {
+  readonly tick: number;
+  readonly durationTicks: number;
+  readonly voice: DrumVoice;
+  readonly velocity: number;
+  readonly limb: Limb;
+  readonly role: EventRole;
+  readonly barIndex: number;
+  readonly stepIndex: StepIndex;
+  readonly fixedTiming?: boolean;
+  readonly fixedVelocity?: boolean;
+  readonly isAnchor?: boolean;
+  readonly rawMidiPitch?: number;
+}
+
+// ===========================================================================
+// 2. Layer 1: 8 Basic Beat Skeletons × 3 Kick Takes (A / B / C)
+// ===========================================================================
+export interface BeatTemplate {
+  readonly id: BeatPatternId;
+  readonly label: string;
+  readonly snareSteps: readonly StepIndex[];
+  readonly snareStepsByTake?: Partial<Record<KickTake, readonly StepIndex[]>>;
+  readonly timekeepSteps: readonly StepIndex[];
+  readonly kickTakes: Record<KickTake, readonly StepIndex[]>;
+  readonly defaultTimekeepVoice: DrumVoice;
+  readonly supportsSwing16th: boolean;
+  readonly supportsHat16th: boolean;
+  readonly isDoubleBass?: boolean;
+}
+
+export const BEAT_TEMPLATES: Record<BeatPatternId, BeatTemplate> = {
+  EIGHT_BEAT: {
+    id: 'EIGHT_BEAT',
+    label: '王道8ビート',
+    snareSteps: [4, 12],
+    timekeepSteps: [0, 2, 4, 6, 8, 10, 12, 14],
+    kickTakes: {
+      A: [0, 8, 10], // ドッ・タン・ドド・タン
+      B: [0, 10], // ドッ・タン・ン・ド・タン（3拍目表抜き→3拍目裏）
+      C: [0, 2, 8, 10], // ドド・タン・ドド・タン
+    },
+    defaultTimekeepVoice: 'HH_CLOSED',
+    supportsSwing16th: false,
+    supportsHat16th: true,
+  },
+  SIXTEEN_BEAT: {
+    id: 'SIXTEEN_BEAT',
+    label: '16ビート',
+    snareSteps: [4, 12],
+    timekeepSteps: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+    kickTakes: {
+      A: [0, 7, 8, 10],
+      B: [0, 3, 6, 10, 14],
+      C: [0, 2, 7, 8, 10, 15],
+    },
+    defaultTimekeepVoice: 'HH_CLOSED',
+    supportsSwing16th: false,
+    supportsHat16th: false,
+  },
+  FOUR_ON_FLOOR: {
+    id: 'FOUR_ON_FLOOR',
+    label: '頭打ち・四つ打ち',
+    snareSteps: [4, 12],
+    timekeepSteps: [0, 4, 8, 12],
+    kickTakes: {
+      A: [0, 4, 8, 12],
+      B: [0, 4, 8, 10, 12, 14],
+      C: [0, 4, 8, 12, 14, 15],
+    },
+    defaultTimekeepVoice: 'HH_CLOSED',
+    supportsSwing16th: false,
+    supportsHat16th: true,
+  },
+  UPBEAT: {
+    id: 'UPBEAT',
+    label: '裏打ち・アップビート',
+    snareSteps: [4, 12],
+    timekeepSteps: [0, 2, 4, 6, 8, 10, 12, 14],
+    kickTakes: {
+      A: [0, 4, 8, 12],
+      B: [0, 8, 10],
+      C: [0, 4, 8, 10, 12],
+    },
+    defaultTimekeepVoice: 'HH_OPEN',
+    supportsSwing16th: false,
+    supportsHat16th: false,
+  },
+  TWO_BEAT: {
+    id: 'TWO_BEAT',
+    label: 'ツービート',
+    snareSteps: [2, 6, 10, 14],
+    timekeepSteps: [0, 2, 4, 6, 8, 10, 12, 14],
+    kickTakes: {
+      A: [0, 4, 8, 12],
+      B: [0, 3, 4, 8, 11, 12],
+      C: [0, 4, 7, 8, 12, 15],
+    },
+    defaultTimekeepVoice: 'HH_HALF_OPEN',
+    supportsSwing16th: false,
+    supportsHat16th: false,
+  },
+  BOUNCE: {
+    id: 'BOUNCE',
+    label: 'バウンス（跳ね系）',
+    snareSteps: [4, 12],
+    timekeepSteps: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+    kickTakes: {
+      A: [0, 4, 8, 12],
+      B: [0, 3, 6, 8, 10],
+      C: [0, 3, 4, 7, 8, 12, 15],
+    },
+    defaultTimekeepVoice: 'HH_CLOSED',
+    supportsSwing16th: true,
+    supportsHat16th: false,
+  },
+  HALF_TIME: {
+    id: 'HALF_TIME',
+    label: 'ハーフタイム',
+    snareSteps: [8],
+    timekeepSteps: [0, 2, 4, 6, 8, 10, 12, 14],
+    kickTakes: {
+      A: [0, 10],
+      B: [0, 6, 10, 14],
+      C: [0, 2, 5, 10, 11],
+    },
+    defaultTimekeepVoice: 'HH_HALF_OPEN',
+    supportsSwing16th: false,
+    supportsHat16th: true,
+  },
+  DOUBLE_BASS: {
+    id: 'DOUBLE_BASS',
+    label: 'ツーバス・ドコドコ',
+    snareSteps: [4, 12],
+    snareStepsByTake: {
+      C: [8],
+    },
+    timekeepSteps: [0, 2, 4, 6, 8, 10, 12, 14],
+    kickTakes: {
+      A: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+      B: [0, 2, 3, 4, 6, 7, 8, 10, 11, 12, 14, 15],
+      C: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+    },
+    defaultTimekeepVoice: 'CHINA',
+    supportsSwing16th: false,
+    supportsHat16th: false,
+    isDoubleBass: true,
+  },
+};
+
+export const ALL_BEAT_PATTERN_IDS: readonly BeatPatternId[] = [
+  'EIGHT_BEAT',
+  'SIXTEEN_BEAT',
+  'FOUR_ON_FLOOR',
+  'UPBEAT',
+  'TWO_BEAT',
+  'BOUNCE',
+  'HALF_TIME',
+  'DOUBLE_BASS',
+];
+
+// ===========================================================================
+// 3. Layer 2: 5 Master Genre Flavor Profiles & Section Deployment Mapping
+// ===========================================================================
+export interface GenreFlavorProfile {
+  readonly id: MasterGenreId;
+  readonly microtiming: {
+    readonly snareOffsetMs: number; // clamped to [-8, +8]
+    readonly kickBeforeSnareMs: number;
+    readonly maxJitterMs: number; // clamped to <= 2.5
+    readonly bounceSwingTicks: number; // +16..+24
+  };
+  readonly dynamics: {
+    readonly kickBaseVel: number;
+    readonly snareBaseVel: number;
+    readonly ghostSnareVel: number;
+    readonly timekeepOnBeatVel: number;
+    readonly timekeepOffBeatVel: number;
+    readonly timekeepSubVel: number;
+    readonly crashVel: number;
+    readonly doubleBassLfDelta: number; // -6..-12
+  };
+  readonly accentCymbal: DrumVoice;
+  readonly chorusTimekeepVoice: DrumVoice;
+  readonly highBpmDoubleBassCymbal: DrumVoice;
+}
+
+export const GENRE_FLAVOR_PROFILES: Record<MasterGenreId, GenreFlavorProfile> = {
+  alt_shoegaze: {
+    id: 'alt_shoegaze',
+    microtiming: {
+      snareOffsetMs: 5,
+      kickBeforeSnareMs: -2.5,
+      maxJitterMs: 2.0,
+      bounceSwingTicks: 18,
+    },
+    dynamics: {
+      kickBaseVel: 114,
+      snareBaseVel: 118,
+      ghostSnareVel: 42,
+      timekeepOnBeatVel: 94,
+      timekeepOffBeatVel: 70,
+      timekeepSubVel: 54,
+      crashVel: 116,
+      doubleBassLfDelta: -8,
+    },
+    accentCymbal: 'CHINA',
+    chorusTimekeepVoice: 'HH_HALF_OPEN',
+    highBpmDoubleBassCymbal: 'CHINA',
+  },
+  emo_jrock: {
+    id: 'emo_jrock',
+    microtiming: {
+      snareOffsetMs: -1.5,
+      kickBeforeSnareMs: -2.5,
+      maxJitterMs: 1.5,
+      bounceSwingTicks: 16,
+    },
+    dynamics: {
+      kickBaseVel: 115,
+      snareBaseVel: 118,
+      ghostSnareVel: 38,
+      timekeepOnBeatVel: 96,
+      timekeepOffBeatVel: 74,
+      timekeepSubVel: 56,
+      crashVel: 116,
+      doubleBassLfDelta: -8,
+    },
+    accentCymbal: 'CRASH_L',
+    chorusTimekeepVoice: 'HH_HALF_OPEN',
+    highBpmDoubleBassCymbal: 'CRASH_R',
+  },
+  numetal_mixture: {
+    id: 'numetal_mixture',
+    microtiming: {
+      snareOffsetMs: 0,
+      kickBeforeSnareMs: -2.5,
+      maxJitterMs: 1.5,
+      bounceSwingTicks: 16,
+    },
+    dynamics: {
+      kickBaseVel: 116,
+      snareBaseVel: 120,
+      ghostSnareVel: 40,
+      timekeepOnBeatVel: 95,
+      timekeepOffBeatVel: 72,
+      timekeepSubVel: 55,
+      crashVel: 118,
+      doubleBassLfDelta: -8,
+    },
+    accentCymbal: 'CHINA',
+    chorusTimekeepVoice: 'CHINA',
+    highBpmDoubleBassCymbal: 'CHINA',
+  },
+  royal_jpop: {
+    id: 'royal_jpop',
+    microtiming: {
+      snareOffsetMs: 1.5,
+      kickBeforeSnareMs: -2.5,
+      maxJitterMs: 2.0,
+      bounceSwingTicks: 20,
+    },
+    dynamics: {
+      kickBaseVel: 112,
+      snareBaseVel: 114,
+      ghostSnareVel: 36,
+      timekeepOnBeatVel: 92,
+      timekeepOffBeatVel: 66,
+      timekeepSubVel: 52,
+      crashVel: 114,
+      doubleBassLfDelta: -8,
+    },
+    accentCymbal: 'CRASH_L',
+    chorusTimekeepVoice: 'HH_HALF_OPEN',
+    highBpmDoubleBassCymbal: 'RIDE_BELL',
+  },
+  chill_ballad: {
+    id: 'chill_ballad',
+    microtiming: {
+      snareOffsetMs: 6,
+      kickBeforeSnareMs: -2.0,
+      maxJitterMs: 2.2,
+      bounceSwingTicks: 22,
+    },
+    dynamics: {
+      kickBaseVel: 102,
+      snareBaseVel: 104,
+      ghostSnareVel: 32,
+      timekeepOnBeatVel: 84,
+      timekeepOffBeatVel: 60,
+      timekeepSubVel: 46,
+      crashVel: 106,
+      doubleBassLfDelta: -8,
+    },
+    accentCymbal: 'CRASH_L',
+    chorusTimekeepVoice: 'RIDE_BOW',
+    highBpmDoubleBassCymbal: 'RIDE_BELL',
+  },
+};
+
+export interface SectionSkeletonLock {
+  readonly genreId: MasterGenreId;
+  readonly patternId: BeatPatternId;
+  readonly kickTake: KickTake;
+  readonly timekeepVoice: DrumVoice;
+  readonly snareVoice: DrumVoice;
+  readonly timekeepSteps: readonly StepIndex[];
+  readonly snareSteps: readonly StepIndex[];
+  readonly isTwoHanded16th: boolean;
+  readonly preChorusProgressiveKick: boolean; // A -> B lift in Pre-Chorus
+  readonly isDiscoBoogieLegacy: boolean;
+  readonly isTrapSubStepMode: boolean;
+  readonly isBuildUpLegacy: boolean;
+  readonly isMinimalLegacy: boolean;
 }
 
 export interface DrumGenerationResult {
   notes: MidiNote[];
   events: InternalDrumEvent[];
   kickTicks: number[];
-  profile: DrumDNAProfile;
+  patternId: BeatPatternId;
+  kickTake: KickTake;
+  genreId: MasterGenreId;
+  midiMapMode: MidiMapMode;
+  skeleton: SectionSkeletonLock;
 }
 
+// ===========================================================================
+// Deterministic Utilities
+// ===========================================================================
 /** Pure deterministic Mulberry32 PRNG returning [0, 1). */
 export function mulberry32(seed: number): () => number {
   let state = seed >>> 0;
@@ -254,255 +483,517 @@ export function mulberry32(seed: number): () => number {
   };
 }
 
+export function msToTicks(ms: number, bpm: number): number {
+  return Math.round(ms * bpm * 0.008);
+}
+
+export function clamp(val: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, val));
+}
+
 function rngInt(rng: () => number, min: number, max: number): number {
   if (max <= min) return min;
   return min + Math.floor(rng() * (max - min + 1));
 }
 
-function clampVelocity(v: number): number {
-  return Math.min(127, Math.max(1, Math.round(v)));
+function isKickVoice(voice: DrumVoice): boolean {
+  return voice === 'KICK_MAIN' || voice === 'KICK_ALT';
 }
 
-function clampRange(v: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, Math.round(v)));
+function isHiHatClosedOrPedalVoice(voice: DrumVoice): boolean {
+  return voice === 'HH_CLOSED' || voice === 'HH_PEDAL';
 }
 
-/** Maps legacy preset IDs and explicit DNA IDs to one of the 6 DrumDNAProfiles. */
-export function resolveDrumDNAProfile(
+function isHiHatOpenVoice(voice: DrumVoice): boolean {
+  return voice === 'HH_OPEN' || voice === 'HH_HALF_OPEN';
+}
+
+// ===========================================================================
+// Stage 1: Genre & Section Skeleton Lock
+// ===========================================================================
+export function resolveMasterGenreIdForDrum(
   presetId: string | undefined,
   bpm: number,
+  beatFeel?: string,
   sectionType?: SectionType | string
-): DrumDNAProfile {
+): MasterGenreId {
   const id = (presetId ?? 'auto').trim();
-  if (id in DRUM_DNA_PROFILES) {
-    return DRUM_DNA_PROFILES[id as DrumGenreDNAId];
+
+  // Direct canonical or legacy DNA IDs
+  if (
+    id === 'alt_shoegaze' ||
+    id === 'alt_heavy_shoegaze' ||
+    id === 'halftime_heavy' ||
+    id === 'breakdown_heavy'
+  ) {
+    return 'alt_shoegaze';
+  }
+  if (
+    id === 'emo_jrock' ||
+    id === 'emo_jrock_fast' ||
+    id === 'rock_drive' ||
+    id === 'jrock_anticipation'
+  ) {
+    return 'emo_jrock';
+  }
+  if (
+    id === 'numetal_mixture' ||
+    id === 'metal_double' ||
+    id === 'trap_sparse' ||
+    id === 'trap_active'
+  ) {
+    return 'numetal_mixture';
+  }
+  if (
+    id === 'chill_ballad' ||
+    id === 'chill_lofi_ballad' ||
+    id === 'rim_chill'
+  ) {
+    return 'chill_ballad';
+  }
+  if (
+    id === 'royal_jpop' ||
+    id === 'jpop_melodic' ||
+    id === 'fusion_funk' ||
+    id === 'straight_8' ||
+    id === 'straight_16' ||
+    id === 'four_on_floor' ||
+    id === 'bounce_shuffle' ||
+    id === 'disco_boogie_bounce'
+  ) {
+    return 'royal_jpop';
   }
 
-  switch (id) {
-    case 'halftime_heavy':
-    case 'breakdown_heavy':
-      return DRUM_DNA_PROFILES.alt_heavy_shoegaze;
-    case 'rock_drive':
-    case 'metal_double':
-    case 'jrock_anticipation':
-      return DRUM_DNA_PROFILES.emo_jrock_fast;
-    case 'trap_sparse':
-    case 'trap_active':
-      return DRUM_DNA_PROFILES.numetal_mixture;
-    case 'straight_16':
-    case 'four_on_floor':
-    case 'bounce_shuffle':
-    case 'disco_boogie_bounce':
-      return DRUM_DNA_PROFILES.fusion_funk;
-    case 'rim_chill':
-      return DRUM_DNA_PROFILES.chill_lofi_ballad;
-    case 'auto':
-    case 'straight_8':
-    case 'simple_minimal':
-    case 'build_up':
-    default: {
-      if (bpm <= 88 && (sectionType === 'Intro' || sectionType === 'Bridge')) {
-        return DRUM_DNA_PROFILES.chill_lofi_ballad;
+  // Infer from song characteristics when 'auto'
+  if (bpm <= 92 && (sectionType === 'Intro' || sectionType === 'Bridge' || beatFeel === 'Bounce')) {
+    return 'chill_ballad';
+  }
+  if (beatFeel === 'Half-Time') return 'alt_shoegaze';
+  if (beatFeel === 'Driving') return 'emo_jrock';
+
+  return normalizeMasterGenreId(id);
+}
+
+export function resolveSectionPatternAndTake(
+  genreId: MasterGenreId,
+  sectionType: SectionType | string,
+  bpm: number,
+  rng: () => number
+): {
+  patternId: BeatPatternId;
+  kickTake: KickTake;
+  snareVoiceOverride?: DrumVoice;
+  timekeepVoiceOverride?: DrumVoice;
+  preChorusProgressiveKick?: boolean;
+} {
+  switch (genreId) {
+    case 'alt_shoegaze':
+      switch (sectionType) {
+        case 'Intro':
+        case 'Verse':
+          return { patternId: 'EIGHT_BEAT', kickTake: 'B' };
+        case 'Pre-Chorus':
+          return {
+            patternId: 'FOUR_ON_FLOOR',
+            kickTake: 'A',
+            preChorusProgressiveKick: true,
+          };
+        case 'Chorus':
+          return rng() < 0.55
+            ? { patternId: 'HALF_TIME', kickTake: 'B' }
+            : { patternId: 'EIGHT_BEAT', kickTake: 'C' };
+        case 'Bridge':
+        case 'Outro':
+        default:
+          return { patternId: 'HALF_TIME', kickTake: 'A' };
       }
-      return DRUM_DNA_PROFILES.jpop_melodic;
-    }
+
+    case 'emo_jrock':
+      switch (sectionType) {
+        case 'Intro':
+          return { patternId: 'TWO_BEAT', kickTake: 'A' };
+        case 'Verse':
+          return rng() < 0.45
+            ? { patternId: 'UPBEAT', kickTake: 'A' }
+            : { patternId: 'EIGHT_BEAT', kickTake: 'A' };
+        case 'Pre-Chorus':
+          return { patternId: 'FOUR_ON_FLOOR', kickTake: 'B' };
+        case 'Chorus': {
+          const r = rng();
+          if (r < 0.35) return { patternId: 'TWO_BEAT', kickTake: 'A' };
+          if (r < 0.65) return { patternId: 'TWO_BEAT', kickTake: 'B' };
+          return { patternId: 'EIGHT_BEAT', kickTake: 'C' };
+        }
+        case 'Bridge':
+        case 'Outro':
+        default:
+          return { patternId: 'HALF_TIME', kickTake: 'A' };
+      }
+
+    case 'numetal_mixture':
+      switch (sectionType) {
+        case 'Intro':
+          return { patternId: 'HALF_TIME', kickTake: 'B' };
+        case 'Verse':
+          return {
+            patternId: 'EIGHT_BEAT',
+            kickTake: rng() < 0.5 ? 'A' : 'B',
+          };
+        case 'Pre-Chorus':
+          return { patternId: 'FOUR_ON_FLOOR', kickTake: 'B' };
+        case 'Chorus':
+          if (bpm >= 145) {
+            return {
+              patternId: 'DOUBLE_BASS',
+              kickTake: rng() < 0.6 ? 'A' : 'C',
+            };
+          }
+          return { patternId: 'EIGHT_BEAT', kickTake: 'C' };
+        case 'Bridge':
+        case 'Outro':
+        default:
+          return { patternId: 'HALF_TIME', kickTake: 'A' };
+      }
+
+    case 'chill_ballad':
+      switch (sectionType) {
+        case 'Intro':
+          return {
+            patternId: 'HALF_TIME',
+            kickTake: 'A',
+            timekeepVoiceOverride: 'HH_CLOSED',
+          };
+        case 'Verse':
+          return {
+            patternId: 'EIGHT_BEAT',
+            kickTake: 'A',
+            snareVoiceOverride: 'SNARE_SIDESTICK',
+            timekeepVoiceOverride: 'HH_CLOSED',
+          };
+        case 'Pre-Chorus':
+          return {
+            patternId: 'EIGHT_BEAT',
+            kickTake: 'A',
+            snareVoiceOverride: 'SNARE_MAIN',
+            timekeepVoiceOverride: 'HH_CLOSED',
+          };
+        case 'Chorus':
+          return {
+            patternId: 'HALF_TIME',
+            kickTake: 'A',
+            snareVoiceOverride: 'SNARE_MAIN',
+            timekeepVoiceOverride: 'RIDE_BOW',
+          };
+        case 'Bridge':
+        case 'Outro':
+        default:
+          return {
+            patternId: 'HALF_TIME',
+            kickTake: 'A',
+            snareVoiceOverride: 'SNARE_SIDESTICK',
+            timekeepVoiceOverride: 'HH_CLOSED',
+          };
+      }
+
+    case 'royal_jpop':
+    default:
+      switch (sectionType) {
+        case 'Intro':
+          return { patternId: 'EIGHT_BEAT', kickTake: 'A' };
+        case 'Verse': {
+          const r = rng();
+          if (r < 0.34) return { patternId: 'UPBEAT', kickTake: 'B' };
+          if (r < 0.66) return { patternId: 'BOUNCE', kickTake: 'A' };
+          return { patternId: 'EIGHT_BEAT', kickTake: 'A' };
+        }
+        case 'Pre-Chorus':
+          return {
+            patternId: 'FOUR_ON_FLOOR',
+            kickTake: 'A',
+            preChorusProgressiveKick: true,
+          };
+        case 'Chorus':
+          return {
+            patternId: 'EIGHT_BEAT',
+            kickTake: rng() < 0.5 ? 'A' : 'C',
+          };
+        case 'Bridge':
+        case 'Outro':
+        default:
+          return { patternId: 'HALF_TIME', kickTake: 'A' };
+      }
   }
 }
 
-function resolveSectionEnergy(
-  input: EngineInput
-): SectionEnergy {
-  const raw = input.section.energy;
-  if (raw === 'Low') return 'low';
-  if (raw === 'High') return 'high';
-  return 'mid';
-}
-
-const UPPER_LIMB_NOTES = new Set<number>([
-  GM_DRUM.SIDE_STICK,
-  GM_DRUM.SNARE,
-  GM_DRUM.LOW_FLOOR_TOM,
-  GM_DRUM.CLOSED_HH,
-  GM_DRUM.HIGH_FLOOR_TOM,
-  GM_DRUM.LOW_TOM,
-  GM_DRUM.OPEN_HH,
-  GM_DRUM.LOW_MID_TOM,
-  GM_DRUM.HI_MID_TOM,
-  GM_DRUM.CRASH_1,
-  GM_DRUM.HIGH_TOM_50,
-  GM_DRUM.RIDE,
-  GM_DRUM.CHINA,
-  GM_DRUM.RIDE_BELL,
-  GM_DRUM.SPLASH,
-  GM_DRUM.CRASH_2,
-]);
-
-const UPPER_PRIORITY: Record<DrumEventRole, number> = {
-  crash: 100,
-  snare_backbeat: 90,
-  snare_rim: 88,
-  tom_fill: 82,
-  side_stick: 78,
-  hh_open: 70,
-  ride_bell: 65,
-  ride: 60,
-  hh_closed: 55,
-  snare_ghost: 40,
-  flam_grace: 35,
-  kick: 10,
-  kick_ghost: 5,
-  kick_linear: 5,
-  hh_pedal: 5,
-};
-
-function isHiHatClosedOrPedal(note: number): boolean {
-  return note === GM_DRUM.CLOSED_HH || note === GM_DRUM.PEDAL_HH;
-}
-
-function isKickRole(role: DrumEventRole): boolean {
-  return role === 'kick' || role === 'kick_ghost' || role === 'kick_linear';
-}
-
-function inferRoleFromMidiPitch(pitch: number, velocity: number): DrumEventRole {
-  if (pitch === GM_DRUM.KICK) return velocity <= 88 ? 'kick_ghost' : 'kick';
-  if (pitch === GM_DRUM.SNARE) return velocity <= 60 ? 'snare_ghost' : 'snare_backbeat';
-  if (pitch === GM_DRUM.SIDE_STICK) return 'side_stick';
-  if (pitch === GM_DRUM.CLOSED_HH) return 'hh_closed';
-  if (pitch === GM_DRUM.OPEN_HH) return 'hh_open';
-  if (pitch === GM_DRUM.PEDAL_HH) return 'hh_pedal';
-  if (pitch === GM_DRUM.RIDE) return 'ride';
-  if (pitch === GM_DRUM.RIDE_BELL) return 'ride_bell';
-  if (pitch === GM_DRUM.CRASH_1 || pitch === GM_DRUM.CRASH_2 || pitch === GM_DRUM.CHINA || pitch === GM_DRUM.SPLASH) {
-    return 'crash';
-  }
-  return 'tom_fill';
-}
-
-function inferLimbFromMidiPitch(pitch: number): Limb {
-  if (pitch === GM_DRUM.KICK) return 'RF';
-  if (pitch === GM_DRUM.PEDAL_HH) return 'LF';
-  if (pitch === GM_DRUM.SNARE || pitch === GM_DRUM.SIDE_STICK) return 'LH';
-  return 'RH';
-}
-
-// ===========================================================================
-// Stage 1: Timeline "Kime" & Section Structure Analysis
-// ===========================================================================
-export function analyzeTimelineAndSections(
+export function lockSectionSkeleton(
   input: EngineInput,
-  dna: DrumDNAProfile
-): BarAnalysisMeta[] {
-  const { song, section } = input;
-  const totalBars = Math.max(1, section.bars);
-  const sectionEnd = totalBars * BAR_TICKS;
-  const energy = resolveSectionEnergy(input);
-  const drumAnticipationMode = section.drumAnticipationMode ?? 'sync';
+  rng: () => number
+): SectionSkeletonLock {
+  const { song, section, params } = input;
+  const bpm = input.bpm ?? song.bpm;
   const drumPreset =
     section.patternPresets?.drums ??
     section.partPresets?.drums ??
     song.members.drums.patternPreset ??
     'auto';
 
-  const barEndAntByBar = new Map<number, number>();
-  const midBarSyncByBar = new Map<number, number>();
+  const genreId = resolveMasterGenreIdForDrum(
+    drumPreset,
+    bpm,
+    song.beatFeel,
+    section.type
+  );
+  const flavor = GENRE_FLAVOR_PROFILES[genreId];
+  const explicitPattern = input.drumPatternId ?? section.drumPatternId;
+  const explicitTake = input.drumKickTake ?? section.drumKickTake;
 
-  if (drumAnticipationMode !== 'keep') {
-    const timelineChanges = getTimelineBoundaryChanges(
-      section.chords,
-      totalBars,
-      song.key,
-      song.scale
-    );
-    for (const ch of timelineChanges) {
-      const b = Math.floor(ch.changeTick / BAR_TICKS);
-      if (b < 0 || b >= totalBars) continue;
-      const barStart = b * BAR_TICKS;
-      const localTick = ch.changeTick - barStart;
-      if (ch.isOffbeat && Math.abs(localTick - 1680) <= 30) {
-        barEndAntByBar.set(b, barStart + 1680);
-      } else if (ch.isOffbeat && Math.abs(localTick - 720) <= 30) {
-        midBarSyncByBar.set(b, barStart + 720);
-      }
-    }
+  const autoResolved = resolveSectionPatternAndTake(
+    genreId,
+    section.type,
+    bpm,
+    rng
+  );
 
-    // Legacy preset jrock_anticipation guarantees bar-end anticipation at 1680 if not already set
-    if (drumPreset === 'jrock_anticipation') {
-      for (let b = 0; b < totalBars - 1; b++) {
-        if (!barEndAntByBar.has(b)) {
-          barEndAntByBar.set(b, b * BAR_TICKS + 1680);
+  let patternId: BeatPatternId = autoResolved.patternId;
+  let kickTake: KickTake = autoResolved.kickTake;
+  let snareVoice: DrumVoice = autoResolved.snareVoiceOverride ?? 'SNARE_MAIN';
+  let timekeepVoice: DrumVoice =
+    autoResolved.timekeepVoiceOverride ?? BEAT_TEMPLATES[patternId].defaultTimekeepVoice;
+  let preChorusProgressiveKick = Boolean(autoResolved.preChorusProgressiveKick);
+
+  const isExplicitPattern = Boolean(explicitPattern && explicitPattern !== 'auto');
+  const isDiscoBoogieLegacy = !isExplicitPattern && drumPreset === 'disco_boogie_bounce';
+  const isTrapSubStepMode =
+    !isExplicitPattern &&
+    (drumPreset === 'trap_sparse' ||
+      drumPreset === 'trap_active' ||
+      params.hatSubdivision === 4);
+  const isBuildUpLegacy = !isExplicitPattern && drumPreset === 'build_up';
+  const isMinimalLegacy = !isExplicitPattern && drumPreset === 'simple_minimal';
+
+  if (isExplicitPattern) {
+    patternId = explicitPattern as BeatPatternId;
+    preChorusProgressiveKick = false;
+  } else {
+    // Legacy preset mapping for 100% backwards compatibility
+    switch (drumPreset) {
+      case 'straight_8':
+      case 'jrock_anticipation':
+      case 'simple_minimal':
+        patternId = 'EIGHT_BEAT';
+        kickTake = 'A';
+        preChorusProgressiveKick = false;
+        break;
+      case 'straight_16':
+      case 'fusion_funk':
+        patternId = 'SIXTEEN_BEAT';
+        kickTake = 'A';
+        preChorusProgressiveKick = false;
+        break;
+      case 'four_on_floor':
+      case 'build_up':
+        patternId = 'FOUR_ON_FLOOR';
+        kickTake = 'A';
+        preChorusProgressiveKick = false;
+        break;
+      case 'bounce_shuffle':
+      case 'disco_boogie_bounce':
+        patternId = 'BOUNCE';
+        kickTake = 'A';
+        preChorusProgressiveKick = false;
+        break;
+      case 'halftime_heavy':
+      case 'breakdown_heavy':
+        patternId = 'HALF_TIME';
+        kickTake = 'B';
+        preChorusProgressiveKick = false;
+        break;
+      case 'metal_double':
+        patternId = 'DOUBLE_BASS';
+        kickTake = 'A';
+        preChorusProgressiveKick = false;
+        break;
+      case 'rock_drive':
+        patternId = bpm >= 155 ? 'TWO_BEAT' : 'EIGHT_BEAT';
+        kickTake = bpm >= 155 ? 'A' : 'C';
+        preChorusProgressiveKick = false;
+        break;
+      case 'rim_chill':
+        patternId = 'EIGHT_BEAT';
+        kickTake = 'A';
+        snareVoice = 'SNARE_SIDESTICK';
+        preChorusProgressiveKick = false;
+        break;
+      case 'trap_sparse':
+      case 'trap_active':
+        patternId = 'HALF_TIME';
+        kickTake = 'A';
+        preChorusProgressiveKick = false;
+        break;
+      default:
+        // Keyword/PlayStyle hints only when 'auto'
+        if (drumPreset === 'auto' && params.kickPattern === 'fourOnFloor') {
+          patternId = 'FOUR_ON_FLOOR';
+          kickTake = 'A';
         }
-      }
+        break;
     }
   }
 
-  const metas: BarAnalysisMeta[] = [];
-  for (let b = 0; b < totalBars; b++) {
-    const barStart = b * BAR_TICKS;
-    const barEnd = Math.min(sectionEnd, barStart + BAR_TICKS);
-    const barEndAnticipationTick = barEndAntByBar.get(b) ?? null;
-    const midBarSyncopationTick = midBarSyncByBar.get(b) ?? null;
-    const precededByAnticipation = b > 0 && barEndAntByBar.has(b - 1);
+  if (explicitTake && explicitTake !== 'auto') {
+    kickTake = explicitTake;
+    preChorusProgressiveKick = false;
+  }
 
-    let cymbalMode: CymbalMode = 'closed_hh';
-    if (energy === 'low') {
-      cymbalMode = dna.id === 'chill_lofi_ballad' && b % 2 === 1 ? 'ride_bow' : 'closed_hh';
-    } else if (energy === 'mid') {
-      if (dna.id === 'fusion_funk') {
-        cymbalMode = b % 2 === 1 ? 'ride_bow' : 'closed_hh';
-      } else if (
-        (section.type === 'Pre-Chorus' && b >= Math.floor(totalBars / 2)) ||
-        (b % 2 === 1 && dna.id === 'alt_heavy_shoegaze')
-      ) {
-        cymbalMode = 'half_open_hh';
+  const template = BEAT_TEMPLATES[patternId];
+
+  // Resolve timekeeping voice by pattern, genre & section energy
+  if (!autoResolved.timekeepVoiceOverride || isExplicitPattern) {
+    if (patternId === 'DOUBLE_BASS') {
+      timekeepVoice =
+        bpm >= 155 ? flavor.highBpmDoubleBassCymbal : 'HH_HALF_OPEN';
+    } else if (patternId === 'HALF_TIME') {
+      if (genreId === 'chill_ballad') {
+        timekeepVoice = section.type === 'Chorus' ? 'RIDE_BOW' : 'HH_CLOSED';
+      } else if (section.type === 'Chorus' || section.energy === 'High') {
+        timekeepVoice = flavor.chorusTimekeepVoice;
       } else {
-        cymbalMode = 'closed_hh';
+        timekeepVoice = 'HH_CLOSED';
       }
+    } else if (patternId === 'UPBEAT') {
+      timekeepVoice = 'HH_OPEN';
+    } else if (patternId === 'TWO_BEAT') {
+      timekeepVoice = section.energy === 'High' ? 'HH_HALF_OPEN' : 'HH_CLOSED';
+    } else if (patternId === 'FOUR_ON_FLOOR') {
+      timekeepVoice =
+        section.type === 'Pre-Chorus' || section.energy === 'High'
+          ? 'HH_HALF_OPEN'
+          : 'HH_CLOSED';
     } else {
-      // High energy
-      if (dna.id === 'fusion_funk') {
-        cymbalMode = 'ride_bell';
-      } else if (dna.id === 'chill_lofi_ballad') {
-        cymbalMode = 'ride_bow';
-      } else if (section.type === 'Chorus' || drumPreset === 'rock_drive') {
-        cymbalMode = b % 2 === 0 ? 'crash_ride' : 'half_open_hh';
-      } else {
-        cymbalMode = 'half_open_hh';
-      }
+      timekeepVoice =
+        section.type === 'Chorus' && section.energy === 'High'
+          ? flavor.chorusTimekeepVoice
+          : template.defaultTimekeepVoice;
     }
-
-    const isSectionEnd = b === totalBars - 1;
-    const isEightBarEnd = (b + 1) % 8 === 0;
-    const isFourBarEnd = (b + 1) % 4 === 0;
-    const isTwoBarTurnaround =
-      (b + 1) % 2 === 0 && !isFourBarEnd && !isEightBarEnd;
-
-    metas.push({
-      barIndex: b,
-      barStart,
-      barEnd,
-      energy,
-      cymbalMode,
-      barEndAnticipationTick,
-      midBarSyncopationTick,
-      precededByAnticipation,
-      isSectionEnd,
-      isEightBarEnd,
-      isFourBarEnd,
-      isTwoBarTurnaround,
-    });
   }
 
-  return metas;
+  // Resolve timekeeping steps
+  const isTwoHanded16th = patternId === 'SIXTEEN_BEAT' && bpm >= 100;
+  let timekeepSteps: StepIndex[];
+
+  if (patternId === 'DOUBLE_BASS') {
+    timekeepSteps = bpm >= 155 ? [0, 4, 8, 12] : [0, 2, 4, 6, 8, 10, 12, 14];
+  } else if (patternId === 'FOUR_ON_FLOOR') {
+    timekeepSteps =
+      section.type === 'Pre-Chorus' && section.energy === 'High'
+        ? [0, 2, 4, 6, 8, 10, 12, 14]
+        : [...template.timekeepSteps];
+  } else if (isTwoHanded16th) {
+    // Two-handed 16th: omit LH hi-hat on snare backbeat steps 4 and 12
+    timekeepSteps = template.timekeepSteps.filter((s) => s !== 4 && s !== 12);
+  } else {
+    timekeepSteps = [...template.timekeepSteps];
+  }
+
+  // Respect explicit hatDensity === 1 or 5 (when user explicitly changes density)
+  if (!isExplicitPattern && section.hatDensity === 1) {
+    timekeepSteps = [0, 4, 8, 12];
+  } else if (
+    !isExplicitPattern &&
+    section.hatDensity === 5 &&
+    (patternId === 'EIGHT_BEAT' || patternId === 'FOUR_ON_FLOOR' || patternId === 'HALF_TIME')
+  ) {
+    timekeepSteps = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+  }
+
+  const snareSteps =
+    template.snareStepsByTake?.[kickTake] ?? template.snareSteps;
+
+  return {
+    genreId,
+    patternId,
+    kickTake,
+    timekeepVoice,
+    snareVoice,
+    timekeepSteps,
+    snareSteps,
+    isTwoHanded16th,
+    preChorusProgressiveKick,
+    isDiscoBoogieLegacy,
+    isTrapSubStepMode,
+    isBuildUpLegacy,
+    isMinimalLegacy,
+  };
 }
 
 // ===========================================================================
-// Stage 2: Groove Skeleton Generation
+// Uploaded External Drum Loop Expansion (Backwards Compatible)
 // ===========================================================================
+function inferVoiceFromMidiPitch(pitch: number): DrumVoice {
+  switch (pitch) {
+    case 35:
+      return 'KICK_ALT';
+    case 36:
+      return 'KICK_MAIN';
+    case 37:
+      return 'SNARE_SIDESTICK';
+    case 38:
+      return 'SNARE_MAIN';
+    case 40:
+      return 'SNARE_RIMSHOT';
+    case 42:
+      return 'HH_CLOSED';
+    case 44:
+      return 'HH_PEDAL';
+    case 46:
+      return 'HH_OPEN';
+    case 51:
+      return 'RIDE_BOW';
+    case 53:
+      return 'RIDE_BELL';
+    case 49:
+      return 'CRASH_L';
+    case 57:
+      return 'CRASH_R';
+    case 52:
+      return 'CHINA';
+    case 48:
+    case 50:
+      return 'TOM_HI';
+    case 45:
+    case 47:
+      return 'TOM_MID';
+    case 43:
+    case 41:
+    default:
+      return 'TOM_FLOOR';
+  }
+}
+
+function inferLimbFromVoice(voice: DrumVoice): Limb {
+  if (voice === 'KICK_MAIN') return 'RF';
+  if (voice === 'KICK_ALT' || voice === 'HH_PEDAL') return 'LF';
+  if (voice === 'SNARE_MAIN' || voice === 'SNARE_RIMSHOT' || voice === 'SNARE_SIDESTICK') {
+    return 'LH';
+  }
+  return 'RH';
+}
+
+function inferRoleFromVoice(voice: DrumVoice, velocity: number): EventRole {
+  if (voice === 'KICK_MAIN' || voice === 'KICK_ALT') return 'KICK_CORE';
+  if (voice === 'SNARE_MAIN' || voice === 'SNARE_RIMSHOT' || voice === 'SNARE_SIDESTICK') {
+    return velocity <= 60 ? 'ORNAMENT' : 'SNARE_BACKBEAT';
+  }
+  if (voice === 'CRASH_L' || voice === 'CRASH_R' || voice === 'CHINA') return 'CRASH_ACCENT';
+  if (voice === 'TOM_HI' || voice === 'TOM_MID' || voice === 'TOM_FLOOR') return 'FILL_EVENT';
+  return 'TIMEKEEP';
+}
+
 function generateExternalLoopEvents(
   input: EngineInput,
   rng: () => number
 ): InternalDrumEvent[] {
-  const { song, section, style, params } = input;
+  const { song, section, style } = input;
   const loopSource = section.uploadedDrumLoop ?? song.uploadedDrumLoop;
   if (!loopSource) return [];
 
@@ -527,68 +1018,23 @@ function generateExternalLoopEvents(
         continue;
       }
       const velDelta = style === 'B' ? rngInt(rng, -10, 10) : 0;
-      const vel = clampVelocity(srcNote.velocity + velDelta);
+      const vel = clamp(srcNote.velocity + velDelta, 1, 127);
+      const voice = inferVoiceFromMidiPitch(srcNote.pitch);
+      const barIndex = Math.floor(absTick / BAR_TICKS);
+      const stepIndex = (Math.floor((absTick % BAR_TICKS) / STEP_TICKS) % 16) as StepIndex;
       events.push({
-        note: srcNote.pitch,
         tick: absTick,
-        duration: Math.max(15, srcNote.durationTicks),
+        durationTicks: Math.max(15, srcNote.durationTicks),
+        voice,
         velocity: vel,
-        limb: inferLimbFromMidiPitch(srcNote.pitch),
-        role: inferRoleFromMidiPitch(srcNote.pitch, vel),
+        limb: inferLimbFromVoice(voice),
+        role: inferRoleFromVoice(voice, vel),
+        barIndex,
+        stepIndex,
         fixedTiming: true,
-        fixedVelocity: style === 'A' || style === 'B',
+        fixedVelocity: true,
+        rawMidiPitch: srcNote.pitch,
       });
-    }
-  }
-
-  if (kickDensity >= 4) {
-    const kickExtras = kickDensity === 5 ? [360, 840, 1320, 1680] : [360, 1320];
-    for (let bar = 0; bar < section.bars; bar++) {
-      const barStart = bar * BAR_TICKS;
-      for (const off of kickExtras) {
-        const t = barStart + off;
-        if (t >= sectionEnd) continue;
-        if (!events.some((e) => e.note === GM_DRUM.KICK && Math.abs(e.tick - t) < 60)) {
-          events.push({
-            note: GM_DRUM.KICK,
-            tick: t,
-            duration: 120,
-            velocity: rngInt(rng, 105, 118),
-            limb: 'RF',
-            role: 'kick',
-            fixedTiming: true,
-          });
-        }
-      }
-    }
-  }
-
-  if (hatDensity >= 4) {
-    const hatStep = hatDensity === 5 ? 120 : 240;
-    for (let bar = 0; bar < section.bars; bar++) {
-      const barStart = bar * BAR_TICKS;
-      for (let off = 0; off < BAR_TICKS; off += hatStep) {
-        const t = barStart + off;
-        if (t >= sectionEnd) continue;
-        const hasHat = events.some(
-          (e) =>
-            e.tick === t &&
-            (e.note === GM_DRUM.CLOSED_HH ||
-              e.note === GM_DRUM.OPEN_HH ||
-              e.note === GM_DRUM.RIDE)
-        );
-        if (!hasHat && (hatDensity === 5 || rng() < 0.55)) {
-          events.push({
-            note: GM_DRUM.CLOSED_HH,
-            tick: t,
-            duration: 80,
-            velocity: rngInt(rng, 68, 86),
-            limb: 'RH',
-            role: 'hh_closed',
-            fixedTiming: true,
-          });
-        }
-      }
     }
   }
 
@@ -603,12 +1049,16 @@ function generateExternalLoopEvents(
         if (rng() < 0.35) {
           const isSnareGhost = rng() < 0.6;
           events.push({
-            note: isSnareGhost ? GM_DRUM.SNARE : GM_DRUM.CLOSED_HH,
             tick: t,
-            duration: 70,
+            durationTicks: 70,
+            voice: isSnareGhost ? 'SNARE_MAIN' : 'HH_CLOSED',
             velocity: rngInt(rng, 32, 50),
             limb: isSnareGhost ? 'LH' : 'RH',
-            role: isSnareGhost ? 'snare_ghost' : 'hh_closed',
+            role: 'ORNAMENT',
+            barIndex: bar,
+            stepIndex: (Math.floor(off / STEP_TICKS) % 16) as StepIndex,
+            fixedTiming: true,
+            fixedVelocity: true,
           });
         }
       }
@@ -616,1019 +1066,487 @@ function generateExternalLoopEvents(
   }
 
   if (style === 'C') {
-    const lastBarStart = (section.bars - 1) * BAR_TICKS;
+    const lastBarIndex = section.bars - 1;
+    const lastBarStart = lastBarIndex * BAR_TICKS;
     const fillStart = lastBarStart + 960;
-    // Remove non-kick events in final bar beats 3-4 for seed-dependent Take C fill
     for (let i = events.length - 1; i >= 0; i--) {
-      if (events[i].tick >= fillStart && events[i].note !== GM_DRUM.KICK) {
+      if (events[i].tick >= fillStart && !isKickVoice(events[i].voice)) {
         events.splice(i, 1);
       }
     }
-    const fillPool = [
-      GM_DRUM.SNARE,
-      GM_DRUM.HIGH_TOM_50,
-      GM_DRUM.HI_MID_TOM,
-      GM_DRUM.LOW_TOM,
-      GM_DRUM.HIGH_FLOOR_TOM,
-    ];
-    for (let off = 0; off < 960; off += SIXTEENTH_TICKS) {
+    const fillVoices: DrumVoice[] = ['SNARE_MAIN', 'TOM_HI', 'TOM_MID', 'TOM_FLOOR'];
+    for (let off = 0; off < 960; off += STEP_TICKS) {
       const t = fillStart + off;
       if (t >= sectionEnd) break;
-      const pitch = fillPool[rngInt(rng, 0, fillPool.length - 1)];
+      const voice = fillVoices[rngInt(rng, 0, fillVoices.length - 1)];
       events.push({
-        note: pitch,
         tick: t,
-        duration: 100,
-        velocity: clampVelocity(82 + Math.round((off / 960) * 32)),
-        limb: (off / SIXTEENTH_TICKS) % 2 === 0 ? 'RH' : 'LH',
-        role: 'tom_fill',
+        durationTicks: 100,
+        voice,
+        velocity: clamp(82 + Math.round((off / 960) * 32), 1, 127),
+        limb: (off / STEP_TICKS) % 2 === 0 ? 'RH' : 'LH',
+        role: 'FILL_EVENT',
+        barIndex: lastBarIndex,
+        stepIndex: (8 + off / STEP_TICKS) as StepIndex,
         fixedTiming: true,
+        fixedVelocity: true,
       });
     }
 
-    for (let bar = 0; bar < section.bars; bar++) {
-      const barStart = bar * BAR_TICKS;
-      if (bar === 0 && !events.some((e) => e.note === GM_DRUM.CRASH && e.tick === barStart)) {
-        events.push({
-          note: GM_DRUM.CRASH,
-          tick: barStart,
-          duration: 480,
-          velocity: 112,
-          limb: 'RH',
-          role: 'crash',
-          isAnchor: true,
-          fixedTiming: true,
-        });
-      }
-      if (bar === 0) {
-        const openTick = barStart + 720;
-        if (openTick < sectionEnd) {
-          events.push({
-            note: GM_DRUM.OPEN_HH,
-            tick: openTick,
-            duration: 220,
-            velocity: 92,
-            limb: 'RH',
-            role: 'hh_open',
-            fixedTiming: true,
-          });
-        }
-      }
+    if (!events.some((e) => e.voice === 'CRASH_L' && e.tick === 0)) {
+      events.push({
+        tick: 0,
+        durationTicks: 480,
+        voice: 'CRASH_L',
+        velocity: 112,
+        limb: 'RH',
+        role: 'CRASH_ACCENT',
+        barIndex: 0,
+        stepIndex: 0,
+        fixedTiming: true,
+        fixedVelocity: true,
+        isAnchor: true,
+      });
+    }
+    if (720 < sectionEnd) {
+      events.push({
+        tick: 720,
+        durationTicks: 220,
+        voice: 'HH_OPEN',
+        velocity: 92,
+        limb: 'RH',
+        role: 'ORNAMENT',
+        barIndex: 0,
+        stepIndex: 6,
+        fixedTiming: true,
+        fixedVelocity: true,
+      });
     }
   }
 
-  // Respect velocityCap if not anchor
-  void params;
   return events;
 }
 
-export function generateGrooveSkeleton(
+// ===========================================================================
+// Stage 2: Base Skeleton Expansion + Safe drumHat16thEnabled
+// ===========================================================================
+function expandBaseSkeleton(
   input: EngineInput,
-  dna: DrumDNAProfile,
-  barMetas: BarAnalysisMeta[],
+  lock: SectionSkeletonLock,
   rng: () => number
 ): InternalDrumEvent[] {
-  const { song, section, style, params } = input;
-  const sectionEnd = section.bars * BAR_TICKS;
-  const drumPreset =
-    section.patternPresets?.drums ??
-    section.partPresets?.drums ??
-    song.members.drums.patternPreset ??
-    'auto';
-
-  if (section.uploadedDrumLoop ?? song.uploadedDrumLoop) {
-    return generateExternalLoopEvents(input, rng);
-  }
+  const { song, section, params } = input;
+  const bpm = input.bpm ?? song.bpm;
+  const totalBars = Math.max(1, section.bars);
+  const template = BEAT_TEMPLATES[lock.patternId];
+  const flavor = GENRE_FLAVOR_PROFILES[lock.genreId];
+  const hat16thEnabled =
+    input.drumHat16thEnabled ?? section.drumHat16thEnabled ?? false;
 
   const events: InternalDrumEvent[] = [];
-  const hatDensity = section.hatDensity;
-  const kickDensity = section.kickDensity;
-  const drumHat16thEnabled =
-    input.drumHat16thEnabled ?? section.drumHat16thEnabled ?? false;
-  const isTrapMode =
-    drumPreset === 'trap_sparse' ||
-    drumPreset === 'trap_active' ||
-    params.hatSubdivision === 4;
-  const isDiscoBoogie = drumPreset === 'disco_boogie_bounce';
-  const isFourOnFloor =
-    drumPreset === 'four_on_floor' ||
-    (drumPreset === 'auto' && params.kickPattern === 'fourOnFloor');
-  const isRimChill = drumPreset === 'rim_chill';
-  const isBuildUp = drumPreset === 'build_up';
-  const isMinimal = drumPreset === 'simple_minimal';
-  const isMetalDouble = drumPreset === 'metal_double';
 
-  const pushEv = (ev: InternalDrumEvent) => {
-    if (ev.tick < 0 || ev.tick >= sectionEnd) return;
-    events.push(ev);
-  };
-
-  for (const meta of barMetas) {
-    const { barIndex: b, barStart, energy, cymbalMode } = meta;
-    const isSilentDownbeatWindow = meta.precededByAnticipation;
+  for (let barIndex = 0; barIndex < totalBars; barIndex++) {
+    const barStart = barIndex * BAR_TICKS;
+    const isBarAPrime = barIndex % 2 === 1;
 
     // -----------------------------------------------------------------------
-    // 1. Cymbal Work (RH)
+    // 2A. Legacy Disco Boogie exact groove (backwards compat)
     // -----------------------------------------------------------------------
-    if (isDiscoBoogie) {
-      // Exact disco_boogie_bounce hi-hat groove: 8th offbeats OpenHH + bounced 16th ClosedHH
-      const offbeats = [240, 720, 1200, 1680];
-      const closedStarts = [0, 136, 376, 480, 616, 856, 960, 1096, 1336, 1440, 1576, 1816];
-      for (const off of offbeats) {
-        if (isSilentDownbeatWindow && off < 240) continue;
-        pushEv({
-          note: GM_DRUM.OPEN_HH,
+    if (lock.isDiscoBoogieLegacy) {
+      for (const s of [0, 4, 8, 12] as const) {
+        events.push({
+          tick: barStart + s * STEP_TICKS,
+          durationTicks: 120,
+          voice: 'KICK_MAIN',
+          velocity: 112,
+          limb: 'RF',
+          role: 'KICK_CORE',
+          barIndex,
+          stepIndex: s,
+          fixedTiming: true,
+          fixedVelocity: true,
+        });
+      }
+      for (const s of [4, 12] as const) {
+        events.push({
+          tick: barStart + s * STEP_TICKS,
+          durationTicks: 120,
+          voice: 'SNARE_MAIN',
+          velocity: 114,
+          limb: 'LH',
+          role: 'SNARE_BACKBEAT',
+          barIndex,
+          stepIndex: s,
+          fixedTiming: true,
+          fixedVelocity: true,
+        });
+      }
+      const openOffs = [240, 720, 1200, 1680];
+      for (const off of openOffs) {
+        events.push({
           tick: barStart + off,
-          duration: 180,
+          durationTicks: 180,
+          voice: 'HH_OPEN',
           velocity: 92,
           limb: 'RH',
-          role: 'hh_open',
+          role: 'TIMEKEEP',
+          barIndex,
+          stepIndex: (off / STEP_TICKS) as StepIndex,
           fixedTiming: true,
           fixedVelocity: true,
         });
       }
+      const closedStarts = [0, 136, 376, 480, 616, 856, 960, 1096, 1336, 1440, 1576, 1816];
       for (const off of closedStarts) {
-        if (isSilentDownbeatWindow && off < 240) continue;
-        pushEv({
-          note: GM_DRUM.CLOSED_HH,
+        events.push({
           tick: barStart + off,
-          duration: 95,
+          durationTicks: 95,
+          voice: 'HH_CLOSED',
           velocity: off % 480 === 0 ? 94 : 74,
           limb: 'RH',
-          role: 'hh_closed',
+          role: 'TIMEKEEP',
+          barIndex,
+          stepIndex: (Math.floor(off / STEP_TICKS) % 16) as StepIndex,
           fixedTiming: true,
           fixedVelocity: true,
         });
       }
-    } else if (isTrapMode) {
-      const trapActive = drumPreset === 'trap_active' || (hatDensity !== undefined && hatDensity >= 4);
-      const hatStep = hatDensity === 1 ? 480 : hatDensity === 2 ? 240 : trapActive ? 120 : 240;
-      for (let off = 0; off < BAR_TICKS; off += hatStep) {
-        if (isSilentDownbeatWindow && off < 240) continue;
-        if (hatStep === 120 && song.bpm >= dna.singleHand16thLimitBpm && (off === 480 || off === 1440)) {
-          continue;
-        }
-        pushEv({
-          note: GM_DRUM.CLOSED_HH,
-          tick: barStart + off,
-          duration: 75,
-          velocity: off % 480 === 0 ? 92 : 66,
-          limb: 'RH',
-          role: 'hh_closed',
-          fixedTiming: true,
-        });
-      }
-      // Mixed 2/3/4 sub-step rolls on hatSubdivision === 4 or trap_active when hatDensity >= 3
-      if ((params.hatSubdivision === 4 || trapActive) && (hatDensity === undefined || hatDensity >= 3)) {
-        const rollSpots = [
-          { start: 360, div: 2 }, // 60 ticks
-          { start: 840, div: 3 }, // 40 ticks
-          { start: 1560, div: 4 }, // 30 ticks
-        ];
-        for (const spot of rollSpots) {
-          const step = Math.round(120 / spot.div);
-          for (let r = 1; r < spot.div; r++) {
-            pushEv({
-              note: GM_DRUM.CLOSED_HH,
-              tick: barStart + spot.start + r * step,
-              duration: Math.max(15, step - 5),
-              velocity: clampVelocity(58 + r * 6),
-              limb: 'RH',
-              role: 'hh_closed',
-              fixedTiming: true,
-            });
-          }
-        }
-      }
-    } else {
-      // Standard & DNA-driven cymbal work
-      let step = EIGHTH_TICKS;
-      if (hatDensity !== undefined) {
-        if (hatDensity === 1) step = 480;
-        else if (hatDensity === 2 || hatDensity === 3) step = 240;
-        else if (hatDensity >= 4) step = 120;
-      } else if (
-        drumPreset === 'straight_16' ||
-        dna.defaultHhSubdivision === 16 ||
-        (drumHat16thEnabled &&
-          dna.id === 'jpop_melodic' &&
-          energy === 'high' &&
-          song.bpm <= 125)
-      ) {
-        step = SIXTEENTH_TICKS;
-      }
-
-      const twoHand16thMode =
-        hatDensity === undefined &&
-        step === SIXTEENTH_TICKS &&
-        song.bpm >= dna.singleHand16thLimitBpm;
-
-      for (let off = 0; off < BAR_TICKS; off += step) {
-        if (isSilentDownbeatWindow && off < 240) continue;
-        // Physical RLRL alternation on fast 16th hi-hats skips beat 2 (480) and beat 4 (1440)
-        if (twoHand16thMode && (off === 480 || off === 1440)) {
-          continue;
-        }
-        // Skip beat 1 hat if section downbeat crash is placed there
-        if (off === 0 && b === 0 && !isSilentDownbeatWindow && section.type === 'Chorus') {
-          continue;
-        }
-
-        let note: number = GM_DRUM.CLOSED_HH;
-        let role: DrumEventRole = 'hh_closed';
-        let dur = step === 480 ? 220 : step === 240 ? 150 : 90;
-
-        if (cymbalMode === 'ride_bow') {
-          note = GM_DRUM.RIDE;
-          role = 'ride';
-          dur = 200;
-        } else if (cymbalMode === 'ride_bell') {
-          note = off % 480 === 0 ? GM_DRUM.RIDE_BELL : GM_DRUM.RIDE;
-          role = off % 480 === 0 ? 'ride_bell' : 'ride';
-          dur = 200;
-        } else if (cymbalMode === 'crash_ride') {
-          if (off % 480 === 0 || step === 240) {
-            note = b % 2 === 0 ? GM_DRUM.CRASH_1 : GM_DRUM.CRASH_2;
-            role = 'crash';
-            dur = 320;
-          } else {
-            continue;
-          }
-        } else if (cymbalMode === 'half_open_hh') {
-          if (isFourOnFloor) {
-            note = off % 480 === 240 ? GM_DRUM.OPEN_HH : GM_DRUM.CLOSED_HH;
-            role = off % 480 === 240 ? 'hh_open' : 'hh_closed';
-            dur = role === 'hh_open' ? 200 : 120;
-          } else {
-            note = GM_DRUM.OPEN_HH;
-            role = 'hh_open';
-            dur = 200;
-          }
-        } else if (isFourOnFloor && off % 480 === 240) {
-          note = GM_DRUM.OPEN_HH;
-          role = 'hh_open';
-          dur = 180;
-        }
-
-        const limb: Limb =
-          twoHand16thMode && off % 240 === 120 ? 'LH' : 'RH';
-
-        pushEv({
-          note,
-          tick: barStart + off,
-          duration: dur,
-          velocity: 85,
-          limb,
-          role,
-          fixedTiming: true,
-        });
-
-        // 4-limb coordination: LF Pedal HH on beats 2 & 4 when riding
-        if (
-          (cymbalMode === 'ride_bow' || cymbalMode === 'ride_bell') &&
-          (off === 480 || off === 1440) &&
-          !dna.allowTwinPedal
-        ) {
-          pushEv({
-            note: GM_DRUM.PEDAL_HH,
-            tick: barStart + off,
-            duration: 90,
-            velocity: 62,
-            limb: 'LF',
-            role: 'hh_pedal',
-            fixedTiming: true,
-          });
-        }
-      }
-
-      // Optional 16th-note hat/ride ornamentation when explicitly enabled on 8th-note grooves
-      if (
-        drumHat16thEnabled &&
-        step === EIGHTH_TICKS &&
-        cymbalMode !== 'crash_ride'
-      ) {
-        const sixteenthOrnamentSlots = [120, 360, 600, 840, 1080, 1320, 1560, 1800];
-        const ornamentNote: number =
-          cymbalMode === 'ride_bow' || cymbalMode === 'ride_bell'
-            ? GM_DRUM.RIDE
-            : GM_DRUM.CLOSED_HH;
-        const ornamentRole: DrumEventRole =
-          ornamentNote === GM_DRUM.RIDE ? 'ride' : 'hh_closed';
-        const ornamentDur = ornamentNote === GM_DRUM.RIDE ? 110 : 85;
-        const eligibleSlots = sixteenthOrnamentSlots.filter((off) => {
-          if (isSilentDownbeatWindow && off < 240) return false;
-          if (
-            meta.barEndAnticipationTick !== null &&
-            barStart + off >= meta.barEndAnticipationTick
-          ) {
-            return false;
-          }
-          return true;
-        });
-
-        let placedCount = 0;
-        for (const off of eligibleSlots) {
-          if (rng() < 0.42) {
-            pushEv({
-              note: ornamentNote,
-              tick: barStart + off,
-              duration: ornamentDur,
-              velocity: 60,
-              limb: 'RH',
-              role: ornamentRole,
-              fixedTiming: true,
-            });
-            placedCount++;
-          }
-        }
-        // Guarantee at least one deterministic 16th ornament per eligible bar when enabled
-        if (placedCount === 0 && eligibleSlots.length > 0) {
-          const fallbackOff =
-            eligibleSlots.includes(360)
-              ? 360
-              : eligibleSlots[rngInt(rng, 0, eligibleSlots.length - 1)];
-          pushEv({
-            note: ornamentNote,
-            tick: barStart + fallbackOff,
-            duration: ornamentDur,
-            velocity: 60,
-            limb: 'RH',
-            role: ornamentRole,
-            fixedTiming: true,
-          });
-        }
-      }
+      continue;
     }
 
     // -----------------------------------------------------------------------
-    // 2. Backbeat Snare / Side Stick / Half-Time / Two-Beat (LH)
+    // 2B. Kick Skeleton
     // -----------------------------------------------------------------------
-    const useHalfTime =
-      drumPreset === 'halftime_heavy' ||
-      (dna.halfTimeCapable && params.snareHalfTime);
-    const useTwoBeat =
-      dna.id === 'emo_jrock_fast' &&
-      energy === 'high' &&
-      song.bpm >= 150 &&
-      !useHalfTime &&
-      drumPreset !== 'straight_8';
+    let activeKickTake: KickTake = lock.kickTake;
+    if (lock.preChorusProgressiveKick && barIndex >= Math.floor(totalBars / 2)) {
+      activeKickTake = 'B';
+    }
 
-    if (useHalfTime) {
-      pushEv({
-        note: GM_DRUM.SNARE,
-        tick: barStart + 960,
-        duration: 180,
-        velocity: dna.backbeatVelRange[1],
-        limb: 'LH',
-        role: 'snare_backbeat',
-      });
-    } else if (useTwoBeat) {
-      for (const off of [240, 720, 1200, 1680]) {
-        pushEv({
-          note: GM_DRUM.SNARE,
-          tick: barStart + off,
-          duration: 140,
-          velocity: dna.backbeatVelRange[0] + 6,
-          limb: 'LH',
-          role: 'snare_backbeat',
-        });
-      }
-    } else if (isBuildUp) {
-      const step = b >= Math.max(1, Math.floor(section.bars / 2)) ? 120 : 240;
-      for (let off = 0; off < BAR_TICKS; off += step) {
-        if (isSilentDownbeatWindow && off < 240) continue;
-        pushEv({
-          note: GM_DRUM.SNARE,
-          tick: barStart + off,
-          duration: 100,
-          velocity: clampVelocity(82 + Math.round((off / BAR_TICKS) * 35)),
-          limb: off % 240 === 0 ? 'LH' : 'RH',
-          role: 'snare_backbeat',
-        });
-      }
-    } else {
-      const backbeatNote =
-        isRimChill || (energy === 'low' && dna.useSideStickOnLowEnergy && b === 0)
-          ? GM_DRUM.SIDE_STICK
-          : GM_DRUM.SNARE;
-      const backbeatRole: DrumEventRole =
-        backbeatNote === GM_DRUM.SIDE_STICK ? 'side_stick' : 'snare_backbeat';
+    let kickSteps: StepIndex[] = [...template.kickTakes[activeKickTake]];
 
-      for (const off of [480, 1440]) {
-        pushEv({
-          note: backbeatNote,
-          tick: barStart + off,
-          duration: 160,
-          velocity: dna.backbeatVelRange[0] + 6,
-          limb: 'LH',
-          role: backbeatRole,
-        });
+    if (lock.isMinimalLegacy || section.kickDensity === 1) {
+      kickSteps = [0, 8];
+    } else if (
+      section.kickDensity === 5 &&
+      lock.patternId !== 'DOUBLE_BASS' &&
+      !kickSteps.includes(14)
+    ) {
+      kickSteps = [...kickSteps, 14];
+    }
+
+    // Bar A' subtle tail pickup (never touches steps 0..7, never adds step 8 on EIGHT_BEAT Take B)
+    if (
+      isBarAPrime &&
+      !lock.isMinimalLegacy &&
+      section.kickDensity !== 1 &&
+      lock.patternId !== 'DOUBLE_BASS' &&
+      lock.patternId !== 'FOUR_ON_FLOOR'
+    ) {
+      if (lock.patternId === 'EIGHT_BEAT' && activeKickTake === 'B') {
+        if (rng() < 0.35 && !kickSteps.includes(14)) {
+          kickSteps.push(14);
+        }
+      } else if (lock.patternId === 'EIGHT_BEAT' && rng() < 0.4 && !kickSteps.includes(14)) {
+        kickSteps.push(14);
       }
     }
 
-    // -----------------------------------------------------------------------
-    // 3. Kick Skeleton (RF / LF)
-    // -----------------------------------------------------------------------
-    const kickOffsets = new Set<number>();
-    if (!isSilentDownbeatWindow) {
-      kickOffsets.add(0);
-    }
-    if (isDiscoBoogie || isFourOnFloor) {
-      if (!isSilentDownbeatWindow) kickOffsets.add(0);
-      kickOffsets.add(480);
-      kickOffsets.add(960);
-      kickOffsets.add(1440);
-    } else if (useTwoBeat) {
-      kickOffsets.add(0);
-      kickOffsets.add(480);
-      kickOffsets.add(960);
-      kickOffsets.add(1440);
-    } else if (isMetalDouble) {
-      for (let off = 0; off < BAR_TICKS; off += 120) {
-        if (isSilentDownbeatWindow && off < 240) continue;
-        kickOffsets.add(off);
-      }
-    } else if (kickDensity === 1 || isMinimal) {
-      if (!isSilentDownbeatWindow) kickOffsets.add(0);
-      kickOffsets.add(960);
-    } else {
-      if (!useHalfTime) {
-        kickOffsets.add(960);
+    for (const step of kickSteps) {
+      if (lock.patternId === 'DOUBLE_BASS') {
+        const isEven = step % 2 === 0;
+        events.push({
+          tick: barStart + step * STEP_TICKS,
+          durationTicks: 100,
+          voice: isEven ? 'KICK_MAIN' : 'KICK_ALT',
+          velocity: flavor.dynamics.kickBaseVel,
+          limb: isEven ? 'RF' : 'LF',
+          role: isEven ? 'KICK_DOUBLE_RF' : 'KICK_DOUBLE_LF',
+          barIndex,
+          stepIndex: step,
+        });
       } else {
-        kickOffsets.add(720);
-      }
-
-      // DNA-specific syncopations
-      const syncPool =
-        dna.id === 'fusion_funk'
-          ? [360, 720, 1080, 1320]
-          : dna.id === 'emo_jrock_fast'
-            ? [360, 840, 1320]
-            : dna.id === 'numetal_mixture'
-              ? [360, 600, 1200]
-              : dna.id === 'alt_heavy_shoegaze'
-                ? [720, 1200]
-                : [720, 1320];
-
-      const targetExtraCount =
-        kickDensity !== undefined && kickDensity >= 4
-          ? kickDensity === 5
-            ? 4
-            : 2
-          : energy === 'high'
-            ? 2
-            : energy === 'mid'
-              ? 1
-              : 0;
-
-      for (let idx = 0; idx < syncPool.length && idx < targetExtraCount; idx++) {
-        const off = syncPool[idx];
-        if (isSilentDownbeatWindow && off < 240) continue;
-        kickOffsets.add(off);
+        const isDownbeat = step === 0;
+        const velOffset = isDownbeat ? 4 : step % 4 === 0 ? 0 : -4;
+        events.push({
+          tick: barStart + step * STEP_TICKS,
+          durationTicks: 120,
+          voice: 'KICK_MAIN',
+          velocity: clamp(flavor.dynamics.kickBaseVel + velOffset, 1, 127),
+          limb: 'RF',
+          role: 'KICK_CORE',
+          barIndex,
+          stepIndex: step,
+        });
       }
     }
 
-    for (const off of kickOffsets) {
-      const isGhost =
-        !isMetalDouble &&
-        !isDiscoBoogie &&
-        !isFourOnFloor &&
-        off !== 0 &&
-        off !== 960 &&
-        off % 240 === 120 &&
-        rng() < 0.45;
-
-      pushEv({
-        note: GM_DRUM.KICK,
-        tick: barStart + off,
-        duration: 120,
-        velocity: isGhost ? dna.ghostKickVelRange[1] : dna.kickVelRange[1],
-        limb: 'RF',
-        role: isGhost ? 'kick_ghost' : 'kick',
-        isAnchor: isFourOnFloor || isDiscoBoogie,
-        fixedTiming: !isGhost,
+    // -----------------------------------------------------------------------
+    // 2C. Snare Backbeat Skeleton
+    // -----------------------------------------------------------------------
+    for (const step of lock.snareSteps) {
+      const snareVel =
+        lock.snareVoice === 'SNARE_SIDESTICK'
+          ? clamp(flavor.dynamics.snareBaseVel - 28, 65, 88)
+          : flavor.dynamics.snareBaseVel;
+      events.push({
+        tick: barStart + step * STEP_TICKS,
+        durationTicks: 120,
+        voice: lock.snareVoice,
+        velocity: snareVel,
+        limb: 'LH',
+        role: 'SNARE_BACKBEAT',
+        barIndex,
+        stepIndex: step,
       });
+    }
 
-      // Preceding 16th double-kick (e.g., 840 before 960)
-      if (
-        !isGhost &&
-        !isDiscoBoogie &&
-        !isFourOnFloor &&
-        !isMetalDouble &&
-        off === 960 &&
-        rng() < dna.doubleKickProbability &&
-        (!isSilentDownbeatWindow || off - 120 >= 240)
-      ) {
-        pushEv({
-          note: GM_DRUM.KICK,
-          tick: barStart + off - 120,
-          duration: 120,
-          velocity: dna.ghostKickVelRange[0] + 4,
-          limb: dna.allowTwinPedal ? 'LF' : 'RF',
-          role: 'kick_ghost',
+    // Pre-Chorus 2nd half / build_up snare+floor-tom 8th crescendo on FOUR_ON_FLOOR
+    if (
+      lock.patternId === 'FOUR_ON_FLOOR' &&
+      (lock.isBuildUpLegacy ||
+        (section.type === 'Pre-Chorus' && barIndex >= Math.floor(totalBars / 2))) &&
+      isBarAPrime
+    ) {
+      for (const s of [8, 10, 14] as const) {
+        const ramp = Math.round(((s - 8) / 6) * 20);
+        events.push({
+          tick: barStart + s * STEP_TICKS - 2,
+          durationTicks: 100,
+          voice: 'SNARE_MAIN',
+          velocity: clamp(86 + ramp, 70, 122),
+          limb: 'LH',
+          role: 'ORNAMENT',
+          barIndex,
+          stepIndex: s,
+          fixedTiming: true,
+        });
+        events.push({
+          tick: barStart + s * STEP_TICKS + 2,
+          durationTicks: 110,
+          voice: 'TOM_FLOOR',
+          velocity: clamp(84 + ramp, 70, 120),
+          limb: 'RH',
+          role: 'ORNAMENT',
+          barIndex,
+          stepIndex: s,
           fixedTiming: true,
         });
       }
     }
 
     // -----------------------------------------------------------------------
-    // 4. Section Head Crash (protected anchor when not preceded by anticipation)
+    // 2D. Timekeeping Cymbal Skeleton (RH / LH)
     // -----------------------------------------------------------------------
-    if (b === 0 && !isSilentDownbeatWindow && !isRimChill && !isMinimal) {
-      const isChorusAnchor = section.type === 'Chorus';
-      pushEv({
-        note: GM_DRUM.CRASH_1,
-        tick: barStart,
-        duration: 480,
-        velocity: isChorusAnchor ? 116 : 108,
-        limb: 'RH',
-        role: 'crash',
-        isAnchor: isChorusAnchor,
-        fixedTiming: true,
-      });
-    }
+    const placeSectionCrash =
+      barIndex === 0 && (section.type === 'Chorus' || section.energy === 'High');
 
-    // -----------------------------------------------------------------------
-    // 5. Offbeat Anticipation ("Kime" at 1680 / Mid-bar 720)
-    // -----------------------------------------------------------------------
-    if (meta.midBarSyncopationTick !== null) {
-      const mt = meta.midBarSyncopationTick;
-      pushEv({
-        note: GM_DRUM.KICK,
-        tick: mt,
-        duration: 120,
-        velocity: 114,
-        limb: 'RF',
-        role: 'kick',
-        isAnchor: true,
-        fixedTiming: true,
-      });
-      pushEv({
-        note: dna.id === 'numetal_mixture' ? GM_DRUM.SPLASH : GM_DRUM.OPEN_HH,
-        tick: mt,
-        duration: 200,
-        velocity: 104,
-        limb: 'RH',
-        role: dna.id === 'numetal_mixture' ? 'crash' : 'hh_open',
-        isAnchor: true,
-        fixedTiming: true,
-      });
-    }
-
-    if (meta.barEndAnticipationTick !== null) {
-      const at = meta.barEndAnticipationTick;
-      // Clear any conflicting kick immediately after anticipation inside (at, barEnd]
-      for (let i = events.length - 1; i >= 0; i--) {
-        if (events[i].tick > at && events[i].tick <= meta.barEnd && isKickRole(events[i].role)) {
-          events.splice(i, 1);
-        }
-      }
-      // Flam grace before snare backbeat at 1440 for tight anticipation setup
-      if (!isRimChill && !isDiscoBoogie) {
-        pushEv({
-          note: GM_DRUM.SNARE,
-          tick: barStart + 1415,
-          duration: 60,
-          velocity: 72,
-          limb: 'RH',
-          role: 'flam_grace',
-        });
-      }
-      pushEv({
-        note: GM_DRUM.KICK,
-        tick: at,
-        duration: 120,
-        velocity: 116,
-        limb: 'RF',
-        role: 'kick',
-        isAnchor: true,
-        fixedTiming: true,
-      });
-      pushEv({
-        note: isFourOnFloor ? GM_DRUM.CRASH_1 : dna.accentCymbalNote,
-        tick: at,
-        duration: 480,
-        velocity: 114,
-        limb: 'RH',
-        role: 'crash',
-        isAnchor: true,
-        fixedTiming: true,
-      });
-    }
-
-    // -----------------------------------------------------------------------
-    // 6. Snare Ghost Notes on empty 16th offbeats
-    // -----------------------------------------------------------------------
-    if (!isRimChill && !isDiscoBoogie && !isMinimal && !isBuildUp) {
-      const ghostSlots = [120, 360, 600, 840, 1080, 1320, 1560, 1800];
-      for (const off of ghostSlots) {
-        if (isSilentDownbeatWindow && off < 240) continue;
-        const t = barStart + off;
-        if (meta.barEndAnticipationTick !== null && t >= meta.barEndAnticipationTick - 60) {
-          continue;
-        }
-        if (events.some((e) => Math.abs(e.tick - t) < 40 && (isKickRole(e.role) || e.role === 'tom_fill'))) {
-          continue;
-        }
-        if (rng() < dna.ghostNoteProbability * 0.55) {
-          pushEv({
-            note: GM_DRUM.SNARE,
-            tick: t,
-            duration: 70,
-            velocity: rngInt(rng, dna.ghostVelRange[0], dna.ghostVelRange[1]),
-            limb: 'LH',
-            role: 'snare_ghost',
-          });
-        }
-      }
-    }
-  }
-
-  // Unison Riff Anchor Kicks (velocity === 110 exact)
-  if (section.unisonRiff && section.unisonRiff.accentTicks.length > 0) {
-    const riffLen = Math.max(1, section.unisonRiff.bars) * BAR_TICKS;
-    for (let base = 0; base < sectionEnd; base += riffLen) {
-      for (const rel of section.unisonRiff.accentTicks) {
-        const t = base + rel;
-        if (t < 0 || t >= sectionEnd) continue;
-        for (let i = events.length - 1; i >= 0; i--) {
-          if (events[i].tick === t && events[i].note === GM_DRUM.KICK) {
-            events.splice(i, 1);
-          }
-        }
+    for (const step of lock.timekeepSteps) {
+      // Bar 0 step 0 Chorus/High crash replaces HH on RH
+      if (placeSectionCrash && step === 0) {
         events.push({
-          note: GM_DRUM.KICK,
-          tick: t,
-          duration: 120,
-          velocity: 110,
-          limb: 'RF',
-          role: 'kick',
-          isAnchor: true,
+          tick: barStart,
+          durationTicks: 480,
+          voice: 'CRASH_L',
+          velocity: Math.max(114, flavor.dynamics.crashVel),
+          limb: 'RH',
+          role: 'CRASH_ACCENT',
+          barIndex,
+          stepIndex: 0,
           fixedTiming: true,
           fixedVelocity: true,
-        });
-      }
-    }
-  }
-
-  void style;
-  return events;
-}
-
-// ===========================================================================
-// Stage 3: 4-bar / 8-bar Tom Runs & Linear Fills
-// ===========================================================================
-export function injectMusicalFills(
-  input: EngineInput,
-  dna: DrumDNAProfile,
-  barMetas: BarAnalysisMeta[],
-  skeletonEvents: InternalDrumEvent[],
-  rng: () => number
-): InternalDrumEvent[] {
-  const { song, section, style } = input;
-  const sectionEnd = section.bars * BAR_TICKS;
-  const drumPreset =
-    section.patternPresets?.drums ??
-    section.partPresets?.drums ??
-    song.members.drums.patternPreset ??
-    'auto';
-
-  const drumFillEnabled =
-    input.drumFillEnabled ?? section.drumFillEnabled ?? true;
-  const drumBreakEnabled =
-    input.drumBreakEnabled ?? section.drumBreakEnabled ?? false;
-
-  // Skip external drum loops always
-  if (Boolean(section.uploadedDrumLoop ?? song.uploadedDrumLoop)) {
-    return skeletonEvents;
-  }
-
-  // When both tom fills and breaks are disabled, run straight through on base groove
-  if (!drumFillEnabled && !drumBreakEnabled) {
-    return skeletonEvents;
-  }
-
-  // Legacy structural fill skip conditions (still allow explicit section-end break)
-  const skipLegacyFill =
-    !drumFillEnabled ||
-    (section.hatDensity === 1 && section.kickDensity === 1) ||
-    (section.type === 'Outro' && section.hatDensity !== undefined) ||
-    (drumPreset === 'four_on_floor' && section.bars <= 1) ||
-    (drumPreset === 'simple_minimal' && style === 'B');
-
-  if (skipLegacyFill && !drumBreakEnabled) {
-    return skeletonEvents;
-  }
-
-  const events = skeletonEvents.slice();
-
-  for (const meta of barMetas) {
-    const { barIndex: b, barStart, barEnd, energy } = meta;
-
-    // Section-end Break handling (takes precedence on final bar)
-    if (meta.isSectionEnd && drumBreakEnabled) {
-      if (!drumFillEnabled) {
-        // Punchy beat-3 hit (960) + complete silence for the remainder of the bar [961..barEnd)
-        const hitTick = barStart + 960;
-        for (let i = events.length - 1; i >= 0; i--) {
-          if (events[i].tick >= hitTick && events[i].tick < barEnd) {
-            events.splice(i, 1);
-          }
-        }
-        events.push({
-          note: GM_DRUM.KICK,
-          tick: hitTick,
-          duration: 120,
-          velocity: 118,
-          limb: 'RF',
-          role: 'kick',
           isAnchor: true,
-          fixedTiming: true,
-        });
-        events.push({
-          note: dna.accentCymbalNote,
-          tick: hitTick,
-          duration: 240,
-          velocity: 114,
-          limb: 'RH',
-          role: 'crash',
-          isAnchor: true,
-          fixedTiming: true,
         });
         continue;
       }
 
-      // Dramatic Fill + Break combo: short fill on beats 2-3 [480..1440), then dead-stop silence on beat 4 [1440..barEnd)
-      const fillStart = barStart + 480;
-      const fillEnd = Math.min(barEnd, barStart + 1440);
-      for (let i = events.length - 1; i >= 0; i--) {
-        if (events[i].tick >= fillStart && events[i].tick < barEnd) {
-          events.splice(i, 1);
-        }
+      if (lock.patternId === 'UPBEAT') {
+        const isDownbeat = step % 4 === 0;
+        events.push({
+          tick: barStart + step * STEP_TICKS,
+          durationTicks: isDownbeat ? 80 : 210,
+          voice: isDownbeat ? 'HH_CLOSED' : 'HH_OPEN',
+          velocity: isDownbeat ? 64 : 96,
+          limb: 'RH',
+          role: 'TIMEKEEP',
+          barIndex,
+          stepIndex: step,
+        });
+        continue;
       }
 
-      if (fillEnd - fillStart >= 240) {
-        const useLinear = rng() < dna.linearFillWeight;
-        const stepsCount = Math.max(2, Math.floor((fillEnd - fillStart) / SIXTEENTH_TICKS));
-        const fillNotes: Array<{ note: number; role: DrumEventRole; stepOffset: number }> = [];
+      if (lock.patternId === 'TWO_BEAT') {
+        // Weak downbeat, strong upbeat accent
+        const isUpbeat = step % 4 === 2;
+        events.push({
+          tick: barStart + step * STEP_TICKS,
+          durationTicks: isUpbeat ? 160 : 90,
+          voice: lock.timekeepVoice,
+          velocity: isUpbeat ? 100 : 72,
+          limb: 'RH',
+          role: 'TIMEKEEP',
+          barIndex,
+          stepIndex: step,
+        });
+        continue;
+      }
 
-        if (useLinear) {
-          const linear8: Array<{ note: number; role: DrumEventRole }> = [
-            { note: GM_DRUM.SNARE, role: 'tom_fill' },
-            { note: GM_DRUM.HIGH_TOM_50, role: 'tom_fill' },
-            { note: GM_DRUM.KICK, role: 'kick_linear' },
-            { note: GM_DRUM.HI_MID_TOM, role: 'tom_fill' },
-            { note: GM_DRUM.LOW_MID_TOM, role: 'tom_fill' },
-            { note: GM_DRUM.KICK, role: 'kick_linear' },
-            { note: GM_DRUM.HIGH_FLOOR_TOM, role: 'tom_fill' },
-            { note: GM_DRUM.LOW_FLOOR_TOM, role: 'tom_fill' },
-          ];
-          const limit = Math.min(stepsCount, linear8.length);
-          for (let s = 0; s < limit; s++) {
-            fillNotes.push({
-              note: linear8[s].note,
-              role: linear8[s].role,
-              stepOffset: s * SIXTEENTH_TICKS,
-            });
-          }
-        } else {
-          const tomDescent = [
-            GM_DRUM.SNARE,
-            GM_DRUM.HIGH_TOM_50,
-            GM_DRUM.HI_MID_TOM,
-            GM_DRUM.LOW_MID_TOM,
-            GM_DRUM.LOW_TOM,
-            GM_DRUM.HIGH_FLOOR_TOM,
-          ];
-          const hitStep = style === 'C' ? SIXTEENTH_TICKS : EIGHTH_TICKS;
-          const count = Math.max(2, Math.floor((fillEnd - fillStart) / hitStep));
-          for (let s = 0; s < count; s++) {
-            const idx = Math.min(
-              tomDescent.length - 1,
-              Math.floor((s / Math.max(1, count - 1)) * (tomDescent.length - 1))
-            );
-            fillNotes.push({
-              note: tomDescent[idx],
-              role: 'tom_fill',
-              stepOffset: s * hitStep,
-            });
-          }
-        }
+      if (lock.patternId === 'BOUNCE') {
+        const isOpenSpot = step === 10 || step === 14;
+        const isQuarter = step % 4 === 0;
+        const isEighth = step % 2 === 0;
+        const vel = isOpenSpot
+          ? 94
+          : isQuarter
+            ? flavor.dynamics.timekeepOnBeatVel
+            : isEighth
+              ? flavor.dynamics.timekeepOffBeatVel
+              : flavor.dynamics.timekeepSubVel;
+        events.push({
+          tick: barStart + step * STEP_TICKS,
+          durationTicks: isOpenSpot ? 180 : 85,
+          voice: isOpenSpot ? 'HH_OPEN' : 'HH_CLOSED',
+          velocity: vel,
+          limb: step % 2 === 1 ? 'LH' : 'RH',
+          role: 'TIMEKEEP',
+          barIndex,
+          stepIndex: step,
+        });
+        continue;
+      }
 
-        const totalFillSteps = Math.max(1, fillNotes.length);
-        for (let idx = 0; idx < fillNotes.length; idx++) {
-          const fn = fillNotes[idx];
-          const t = fillStart + fn.stepOffset;
-          if (t >= fillEnd || t >= sectionEnd) continue;
-          const progress = idx / Math.max(1, totalFillSteps);
-          const crescVel = clampRange(
-            Math.round(122 * (0.76 + 0.24 * Math.pow(progress, 1.2))),
-            45,
-            126
-          );
+      if (lock.patternId === 'SIXTEEN_BEAT') {
+        const isOdd = step % 2 === 1;
+        const isQuarter = step % 4 === 0;
+        const vel = isQuarter
+          ? flavor.dynamics.timekeepOnBeatVel
+          : !isOdd
+            ? flavor.dynamics.timekeepOffBeatVel
+            : flavor.dynamics.timekeepSubVel;
+        events.push({
+          tick: barStart + step * STEP_TICKS,
+          durationTicks: 75,
+          voice: lock.timekeepVoice,
+          velocity: vel,
+          limb: lock.isTwoHanded16th && isOdd ? 'LH' : 'RH',
+          role: 'TIMEKEEP',
+          barIndex,
+          stepIndex: step,
+        });
+        continue;
+      }
+
+      // Standard timekeeping (EIGHT_BEAT, FOUR_ON_FLOOR, HALF_TIME, DOUBLE_BASS)
+      const isQuarter = step % 4 === 0;
+      const isEighth = step % 2 === 0;
+      const vel = isQuarter
+        ? flavor.dynamics.timekeepOnBeatVel
+        : isEighth
+          ? flavor.dynamics.timekeepOffBeatVel
+          : flavor.dynamics.timekeepSubVel;
+      events.push({
+        tick: barStart + step * STEP_TICKS,
+        durationTicks:
+          lock.timekeepVoice === 'HH_HALF_OPEN' || lock.timekeepVoice === 'RIDE_BOW'
+            ? 180
+            : 110,
+        voice: lock.timekeepVoice,
+        velocity: vel,
+        limb: 'RH',
+        role: 'TIMEKEEP',
+        barIndex,
+        stepIndex: step,
+      });
+    }
+
+    // -----------------------------------------------------------------------
+    // 2E. Safe drumHat16thEnabled Modifier (Stage 2)
+    // Auto-disabled for UPBEAT, TWO_BEAT, DOUBLE_BASS, SIXTEEN_BEAT, BOUNCE, or bpm > 145
+    // -----------------------------------------------------------------------
+    if (hat16thEnabled && template.supportsHat16th && bpm <= 145) {
+      const ornVoice: DrumVoice =
+        lock.timekeepVoice === 'RIDE_BOW' || lock.timekeepVoice === 'RIDE_BELL'
+          ? 'RIDE_BOW'
+          : 'HH_CLOSED';
+      const oddSteps: readonly StepIndex[] = [1, 3, 5, 7, 9, 11, 13, 15];
+      for (const s of oddSteps) {
+        events.push({
+          tick: barStart + s * STEP_TICKS,
+          durationTicks: 65,
+          voice: ornVoice,
+          velocity: flavor.dynamics.timekeepSubVel,
+          limb: 'LH',
+          role: 'ORNAMENT',
+          barIndex,
+          stepIndex: s,
+        });
+      }
+    }
+
+    // -----------------------------------------------------------------------
+    // 2F. Legacy Trap sub-step rolls when hatSubdivision === 4 or trap_active
+    // -----------------------------------------------------------------------
+    if (
+      lock.isTrapSubStepMode &&
+      (params.hatSubdivision === 4 ||
+        (section.patternPresets?.drums ?? song.members.drums.patternPreset) === 'trap_active') &&
+      (section.hatDensity === undefined || section.hatDensity >= 3)
+    ) {
+      const rollSpots = [
+        { start: 360, div: 2 }, // 60 ticks
+        { start: 840, div: 3 }, // 40 ticks
+        { start: 1560, div: 4 }, // 30 ticks
+      ];
+      for (const spot of rollSpots) {
+        const subStep = Math.round(120 / spot.div);
+        for (let r = 0; r < spot.div; r++) {
+          const t = barStart + spot.start + r * subStep;
           events.push({
-            note: fn.note,
             tick: t,
-            duration: fn.role === 'kick_linear' ? 120 : 140,
-            velocity: fn.role === 'kick_linear' ? 84 : crescVel,
-            limb: fn.role === 'kick_linear' ? 'RF' : idx % 2 === 0 ? 'RH' : 'LH',
-            role: fn.role,
+            durationTicks: Math.max(15, subStep - 5),
+            voice: 'HH_CLOSED',
+            velocity: clamp(58 + r * 6, 40, 96),
+            limb: 'RH',
+            role: 'ORNAMENT',
+            barIndex,
+            stepIndex: (Math.floor((spot.start + r * subStep) / STEP_TICKS) % 16) as StepIndex,
             fixedTiming: true,
           });
         }
       }
-      continue;
     }
+  }
 
-    if (skipLegacyFill) continue;
-
-    let fillLengthTicks = 0;
-    if (meta.isSectionEnd || meta.isEightBarEnd) {
-      if (style === 'C') fillLengthTicks = 1440; // beat 2..4 (12 steps)
-      else if (style === 'B') fillLengthTicks = 480; // beat 4 (2-3 notes)
-      else fillLengthTicks = 960; // beat 3..4 (4-7 notes)
-    } else if (meta.isFourBarEnd) {
-      fillLengthTicks = style === 'B' ? 480 : 960;
-    } else if (meta.isTwoBarTurnaround) {
-      const prob = energy === 'low' ? 0.2 : energy === 'mid' ? 0.45 : 0.65;
-      if (rng() < prob) {
-        fillLengthTicks = rng() < 0.6 ? 480 : 240;
-      }
-    }
-
-    if (fillLengthTicks <= 0) continue;
-
-    // Preserve barEndAnticipationTick (1680) as landing point by clamping fillEnd
-    const rawFillEnd =
-      meta.barEndAnticipationTick !== null
-        ? Math.min(barEnd, meta.barEndAnticipationTick)
-        : barEnd;
-    const fillStart = Math.max(barStart, rawFillEnd - fillLengthTicks);
-    const fillEnd = rawFillEnd;
-    if (fillEnd - fillStart < 240) continue;
-
-    // Block normal groove events inside [fillStart, fillEnd) except protected anchors
-    for (let i = events.length - 1; i >= 0; i--) {
-      const ev = events[i];
-      if (ev.tick >= fillStart && ev.tick < fillEnd && !ev.isAnchor) {
-        events.splice(i, 1);
-      }
-    }
-
-    const useLinear = rng() < dna.linearFillWeight;
-    const stepsCount = Math.max(2, Math.floor((fillEnd - fillStart) / SIXTEENTH_TICKS));
-
-    const fillNotes: Array<{ note: number; role: DrumEventRole; stepOffset: number }> = [];
-
-    if (useLinear) {
-      // Linear fill templates: zero simultaneous limbs, kick_linear as connective glue
-      const linear16: Array<{ note: number; role: DrumEventRole }> = [
-        { note: GM_DRUM.SNARE, role: 'tom_fill' },
-        { note: GM_DRUM.HIGH_TOM_50, role: 'tom_fill' },
-        { note: GM_DRUM.KICK, role: 'kick_linear' },
-        { note: GM_DRUM.HI_MID_TOM, role: 'tom_fill' },
-        { note: GM_DRUM.LOW_MID_TOM, role: 'tom_fill' },
-        { note: GM_DRUM.KICK, role: 'kick_linear' },
-        { note: GM_DRUM.HIGH_FLOOR_TOM, role: 'tom_fill' },
-        { note: GM_DRUM.LOW_FLOOR_TOM, role: 'tom_fill' },
-        { note: GM_DRUM.KICK, role: 'kick_linear' },
-        { note: GM_DRUM.SNARE, role: 'tom_fill' },
-        { note: GM_DRUM.HIGH_TOM_50, role: 'tom_fill' },
-        { note: GM_DRUM.KICK, role: 'kick_linear' },
-        { note: GM_DRUM.LOW_TOM, role: 'tom_fill' },
-        { note: GM_DRUM.HIGH_FLOOR_TOM, role: 'tom_fill' },
-        { note: GM_DRUM.KICK, role: 'kick_linear' },
-        { note: GM_DRUM.LOW_FLOOR_TOM, role: 'tom_fill' },
-      ];
-      const linear8: Array<{ note: number; role: DrumEventRole }> = [
-        { note: GM_DRUM.SNARE, role: 'tom_fill' },
-        { note: GM_DRUM.HIGH_TOM_50, role: 'tom_fill' },
-        { note: GM_DRUM.KICK, role: 'kick_linear' },
-        { note: GM_DRUM.HI_MID_TOM, role: 'tom_fill' },
-        { note: GM_DRUM.LOW_MID_TOM, role: 'tom_fill' },
-        { note: GM_DRUM.KICK, role: 'kick_linear' },
-        { note: GM_DRUM.HIGH_FLOOR_TOM, role: 'tom_fill' },
-        { note: GM_DRUM.LOW_FLOOR_TOM, role: 'tom_fill' },
-      ];
-      const linear4: Array<{ note: number; role: DrumEventRole }> = [
-        { note: GM_DRUM.SNARE, role: 'tom_fill' },
-        { note: GM_DRUM.HIGH_TOM_50, role: 'tom_fill' },
-        { note: GM_DRUM.KICK, role: 'kick_linear' },
-        { note: GM_DRUM.LOW_FLOOR_TOM, role: 'tom_fill' },
-      ];
-      const template =
-        stepsCount >= 12 ? linear16 : stepsCount >= 8 ? linear8 : linear4;
-      const limit = Math.min(stepsCount, template.length);
-      for (let s = 0; s < limit; s++) {
-        fillNotes.push({
-          note: template[s].note,
-          role: template[s].role,
-          stepOffset: s * SIXTEENTH_TICKS,
-        });
-      }
-    } else {
-      // Descending tom run: Snare(38) -> HighTom(50) -> HiMid(48) -> LowMid(47) -> Low(45) -> HighFloor(43) -> LowFloor(41)
-      const tomDescent = [
-        GM_DRUM.HIGH_TOM_50,
-        GM_DRUM.HI_MID_TOM,
-        GM_DRUM.LOW_MID_TOM,
-        GM_DRUM.LOW_TOM,
-        GM_DRUM.HIGH_FLOOR_TOM,
-        GM_DRUM.LOW_FLOOR_TOM,
-      ];
-      if (style === 'B') {
-        // Compact 2-3 hits
-        const compactHits = [
-          { note: GM_DRUM.SNARE, stepOffset: 0 },
-          { note: GM_DRUM.HIGH_TOM_50, stepOffset: 240 },
-          { note: GM_DRUM.HIGH_FLOOR_TOM, stepOffset: 360 },
-        ];
-        for (const h of compactHits) {
-          if (fillStart + h.stepOffset < fillEnd) {
-            fillNotes.push({ note: h.note, role: 'tom_fill', stepOffset: h.stepOffset });
-          }
-        }
-      } else {
-        const hitStep = style === 'C' ? SIXTEENTH_TICKS : EIGHTH_TICKS;
-        const count = Math.max(2, Math.floor((fillEnd - fillStart) / hitStep));
-        const snareHead = Math.max(1, Math.floor(count * 0.35));
-        for (let s = 0; s < count; s++) {
-          let note: number;
-          if (s < snareHead) {
-            note = GM_DRUM.SNARE;
-          } else {
-            const tomProgress = (s - snareHead) / Math.max(1, count - snareHead - 1);
-            const tomIdx = Math.min(
-              tomDescent.length - 1,
-              Math.floor(tomProgress * (tomDescent.length - 1))
-            );
-            note = tomDescent[tomIdx];
-          }
-          fillNotes.push({
-            note,
-            role: 'tom_fill',
-            stepOffset: s * hitStep,
-          });
+  // Unison Riff accent Kicks (protected anchors)
+  if (section.unisonRiff && section.unisonRiff.accentTicks.length > 0) {
+    const sectionEnd = totalBars * BAR_TICKS;
+    for (const accTick of section.unisonRiff.accentTicks) {
+      if (accTick < 0 || accTick >= sectionEnd) continue;
+      const barIndex = Math.floor(accTick / BAR_TICKS);
+      const stepIndex = (Math.floor((accTick % BAR_TICKS) / STEP_TICKS) % 16) as StepIndex;
+      // Remove non-anchor kick at exact same bar/step so anchor wins cleanly
+      for (let i = events.length - 1; i >= 0; i--) {
+        if (
+          events[i].barIndex === barIndex &&
+          events[i].stepIndex === stepIndex &&
+          isKickVoice(events[i].voice) &&
+          !events[i].isAnchor
+        ) {
+          events.splice(i, 1);
         }
       }
-    }
-
-    const totalFillSteps = Math.max(1, fillNotes.length);
-    for (let idx = 0; idx < fillNotes.length; idx++) {
-      const fn = fillNotes[idx];
-      const t = fillStart + fn.stepOffset;
-      if (t >= fillEnd || t >= sectionEnd) continue;
-      const progress = idx / Math.max(1, totalFillSteps);
-      const crescVel = clampRange(
-        Math.round(122 * (0.74 + 0.26 * Math.pow(progress, 1.2))),
-        45,
-        126
-      );
       events.push({
-        note: fn.note,
-        tick: t,
-        duration: fn.role === 'kick_linear' ? 120 : 140,
-        velocity: fn.role === 'kick_linear' ? 84 : crescVel,
-        limb: fn.role === 'kick_linear' ? 'RF' : idx % 2 === 0 ? 'RH' : 'LH',
-        role: fn.role,
+        tick: accTick,
+        durationTicks: 120,
+        voice: 'KICK_MAIN',
+        velocity: 110,
+        limb: 'RF',
+        role: 'KICK_CORE',
+        barIndex,
+        stepIndex,
         fixedTiming: true,
+        fixedVelocity: true,
+        isAnchor: true,
       });
-    }
-
-    // Guarantee Crash + Kick landing on next bar downbeat if fill ended at barEnd (1920)
-    // and next bar is NOT precededByAnticipation
-    const nextMeta = barMetas[b + 1];
-    if (
-      fillEnd === barEnd &&
-      nextMeta &&
-      !nextMeta.precededByAnticipation &&
-      nextMeta.barStart < sectionEnd
-    ) {
-      const downbeat = nextMeta.barStart;
-      if (!events.some((e) => e.tick === downbeat && e.role === 'crash')) {
-        events.push({
-          note: GM_DRUM.CRASH_1,
-          tick: downbeat,
-          duration: 480,
-          velocity: 116,
-          limb: 'RH',
-          role: 'crash',
-          isAnchor: true,
-          fixedTiming: true,
-        });
-      }
-      if (!events.some((e) => e.tick === downbeat && e.note === GM_DRUM.KICK)) {
-        events.push({
-          note: GM_DRUM.KICK,
-          tick: downbeat,
-          duration: 120,
-          velocity: 116,
-          limb: 'RF',
-          role: 'kick',
-          isAnchor: true,
-          fixedTiming: true,
-        });
-      }
     }
   }
 
@@ -1636,341 +1554,583 @@ export function injectMusicalFills(
 }
 
 // ===========================================================================
-// Stage 4: 4-Limb Independence (Limb Solver) & Hi-Hat Choke
+// Stage 3: Non-Destructive Chord Change & Offbeat Anticipation Tracking
 // ===========================================================================
-export function solveLimbsAndHiHatChoke(
-  rawEvents: InternalDrumEvent[],
-  dna: DrumDNAProfile
+function applyChordAndAnticipationTracking(
+  input: EngineInput,
+  lock: SectionSkeletonLock,
+  events: InternalDrumEvent[]
 ): InternalDrumEvent[] {
-  const sorted = rawEvents
-    .slice()
-    .sort((a, b) => a.tick - b.tick || UPPER_PRIORITY[b.role] - UPPER_PRIORITY[a.role]);
-
-  // 1. Hi-Hat same-tick mutual exclusion (OpenHH vs ClosedHH/PedalHH)
-  const byTick = new Map<number, InternalDrumEvent[]>();
-  for (const ev of sorted) {
-    const arr = byTick.get(ev.tick) ?? [];
-    arr.push(ev);
-    byTick.set(ev.tick, arr);
+  const { song, section } = input;
+  const totalBars = Math.max(1, section.bars);
+  const drumAnticipationMode = section.drumAnticipationMode ?? 'sync';
+  if (drumAnticipationMode === 'keep') {
+    return events;
   }
 
-  const afterHatClean: InternalDrumEvent[] = [];
-  for (const [, group] of Array.from(byTick.entries()).sort((a, b) => a[0] - b[0])) {
-    const hasOpen = group.some((e) => e.note === GM_DRUM.OPEN_HH);
-    const filtered = hasOpen
-      ? group.filter((e) => !isHiHatClosedOrPedal(e.note))
-      : group;
+  const drumPreset =
+    section.patternPresets?.drums ??
+    section.partPresets?.drums ??
+    song.members.drums.patternPreset ??
+    'auto';
+  const flavor = GENRE_FLAVOR_PROFILES[lock.genreId];
 
-    // 2. Foot independence (RF / LF)
-    const kicks = filtered.filter((e) => isKickRole(e.role));
-    const keptKicks: InternalDrumEvent[] = [];
-    if (kicks.length > 0) {
-      kicks.sort((a, b) => b.velocity - a.velocity);
-      keptKicks.push(kicks[0]);
+  const barEndAntBars = new Set<number>();
+  const midBarSyncBars = new Set<number>();
+
+  const timelineChanges = getTimelineBoundaryChanges(
+    section.chords,
+    totalBars,
+    song.key,
+    song.scale
+  );
+  for (const ch of timelineChanges) {
+    const b = Math.floor(ch.changeTick / BAR_TICKS);
+    if (b < 0 || b >= totalBars) continue;
+    const localTick = ch.changeTick - b * BAR_TICKS;
+    if (ch.isOffbeat && Math.abs(localTick - 1680) <= 30) {
+      barEndAntBars.add(b);
+    } else if (ch.isOffbeat && Math.abs(localTick - 720) <= 30) {
+      midBarSyncBars.add(b);
     }
+  }
 
-    // 3. Upper-limb (RH / LH) max-2 enforcement & same-limb conflict resolution
-    const uppers = filtered.filter((e) => UPPER_LIMB_NOTES.has(e.note));
-    const keptUppers: InternalDrumEvent[] = [];
-    uppers.sort((a, b) => {
-      if (a.isAnchor && !b.isAnchor) return -1;
-      if (!a.isAnchor && b.isAnchor) return 1;
-      return UPPER_PRIORITY[b.role] - UPPER_PRIORITY[a.role];
+  if (drumPreset === 'jrock_anticipation') {
+    for (let b = 0; b < totalBars - 1; b++) {
+      barEndAntBars.add(b);
+    }
+  }
+
+  if (barEndAntBars.size === 0 && midBarSyncBars.size === 0) {
+    return events;
+  }
+
+  let out = [...events];
+
+  for (const b of midBarSyncBars) {
+    const t = b * BAR_TICKS + 720;
+    out.push({
+      tick: t,
+      durationTicks: 120,
+      voice: 'KICK_MAIN',
+      velocity: clamp(flavor.dynamics.kickBaseVel, 1, 127),
+      limb: 'RF',
+      role: 'KICK_CHORD_TRACK',
+      barIndex: b,
+      stepIndex: 6,
+      fixedTiming: true,
+    });
+  }
+
+  for (const b of barEndAntBars) {
+    const antTick = b * BAR_TICKS + 1680; // Step 14
+    const nextBar = b + 1;
+
+    // Replace RH timekeep at Step 14 with Crash/OpenHH accent, and add KICK_CHORD_TRACK
+    out = out.filter(
+      (ev) => !(ev.barIndex === b && ev.stepIndex === 14 && ev.limb === 'RH')
+    );
+    out.push({
+      tick: antTick,
+      durationTicks: 120,
+      voice: 'KICK_MAIN',
+      velocity: clamp(flavor.dynamics.kickBaseVel + 4, 1, 127),
+      limb: 'RF',
+      role: 'KICK_CHORD_TRACK',
+      barIndex: b,
+      stepIndex: 14,
+      fixedTiming: true,
+    });
+    out.push({
+      tick: antTick,
+      durationTicks: 360,
+      voice: 'CRASH_L',
+      velocity: flavor.dynamics.crashVel,
+      limb: 'RH',
+      role: 'CRASH_ACCENT',
+      barIndex: b,
+      stepIndex: 14,
+      fixedTiming: true,
     });
 
-    const usedLimbs = new Set<Limb>();
-    for (const u of uppers) {
-      if (keptUppers.length >= 2) break;
-      let targetLimb = u.limb;
-      if (usedLimbs.has(targetLimb)) {
-        // Reassign to the other hand if physically reasonable (e.g., toms/snare/16th HH)
-        const altLimb: Limb = targetLimb === 'RH' ? 'LH' : 'RH';
-        if (
-          !usedLimbs.has(altLimb) &&
-          (u.role === 'tom_fill' ||
-            u.role === 'snare_backbeat' ||
-            u.role === 'snare_ghost' ||
-            u.role === 'flam_grace' ||
-            u.role === 'hh_closed')
-        ) {
-          targetLimb = altLimb;
-        } else {
-          continue;
-        }
+    // Suppress colliding downbeat kick & downbeat crash on next bar Step 0,
+    // while guaranteeing timekeeping continues at Step 0 (or Step 2)
+    if (nextBar < totalBars) {
+      out = out.filter(
+        (ev) =>
+          !(
+            ev.barIndex === nextBar &&
+            ev.stepIndex === 0 &&
+            (isKickVoice(ev.voice) || ev.role === 'CRASH_ACCENT') &&
+            !ev.isAnchor
+          )
+      );
+      const hasEarlyNextBarTimekeep = out.some(
+        (ev) =>
+          ev.barIndex === nextBar &&
+          (ev.stepIndex === 0 || ev.stepIndex === 2) &&
+          ev.role === 'TIMEKEEP'
+      );
+      if (!hasEarlyNextBarTimekeep) {
+        out.push({
+          tick: nextBar * BAR_TICKS,
+          durationTicks: 120,
+          voice: lock.timekeepVoice === 'HH_OPEN' ? 'HH_CLOSED' : lock.timekeepVoice,
+          velocity: flavor.dynamics.timekeepOnBeatVel,
+          limb: 'RH',
+          role: 'TIMEKEEP',
+          barIndex: nextBar,
+          stepIndex: 0,
+        });
       }
-      usedLimbs.add(targetLimb);
-      keptUppers.push({ ...u, limb: targetLimb });
-    }
-
-    const others = filtered.filter(
-      (e) => !isKickRole(e.role) && !UPPER_LIMB_NOTES.has(e.note)
-    );
-    afterHatClean.push(...keptKicks, ...keptUppers, ...others);
-  }
-
-  // 4. Sequential foot & upper-limb micro-window checks
-  afterHatClean.sort((a, b) => a.tick - b.tick || a.note - b.note);
-
-  let lastKick: InternalDrumEvent | null = null;
-  const finalSolved: InternalDrumEvent[] = [];
-
-  for (const ev of afterHatClean) {
-    if (isKickRole(ev.role)) {
-      if (lastKick && ev.tick - lastKick.tick < SIXTEENTH_TICKS) {
-        if (!dna.allowTwinPedal && ev.tick - lastKick.tick < 60 && !ev.isAnchor) {
-          continue;
-        }
-        ev.limb = dna.allowTwinPedal ? 'LF' : 'RF';
-      }
-      lastKick = ev;
-      finalSolved.push(ev);
-      continue;
-    }
-
-    if (ev.note === GM_DRUM.PEDAL_HH && lastKick && Math.abs(ev.tick - lastKick.tick) < 30 && lastKick.limb === 'LF') {
-      continue;
-    }
-
-    finalSolved.push(ev);
-  }
-
-  // Enforce <= 2 upper limbs within +-15 ticks window (allowing flam_grace + snare_backbeat pair)
-  const limbWindowChecked: InternalDrumEvent[] = [];
-  for (const ev of finalSolved) {
-    if (!UPPER_LIMB_NOTES.has(ev.note)) {
-      limbWindowChecked.push(ev);
-      continue;
-    }
-    const nearbyUppers = limbWindowChecked.filter(
-      (prev) => UPPER_LIMB_NOTES.has(prev.note) && Math.abs(ev.tick - prev.tick) <= 15
-    );
-    if (nearbyUppers.length < 2) {
-      limbWindowChecked.push(ev);
-    } else {
-      // Replace lowest-priority nearby upper if current is higher priority
-      let lowestIdx = -1;
-      let lowestPrio = UPPER_PRIORITY[ev.role];
-      for (let i = 0; i < limbWindowChecked.length; i++) {
-        const prev = limbWindowChecked[i];
-        if (
-          UPPER_LIMB_NOTES.has(prev.note) &&
-          Math.abs(ev.tick - prev.tick) <= 15 &&
-          !prev.isAnchor &&
-          UPPER_PRIORITY[prev.role] < lowestPrio
-        ) {
-          lowestPrio = UPPER_PRIORITY[prev.role];
-          lowestIdx = i;
-        }
-      }
-      if (lowestIdx !== -1) {
-        limbWindowChecked.splice(lowestIdx, 1, ev);
-      }
-    }
-  }
-
-  // 5. Open Hi-Hat Choke Mute Duration Trimming
-  for (let i = 0; i < limbWindowChecked.length; i++) {
-    const ev = limbWindowChecked[i];
-    if (ev.note !== GM_DRUM.OPEN_HH) continue;
-    for (let j = i + 1; j < limbWindowChecked.length; j++) {
-      const next = limbWindowChecked[j];
-      if (next.tick > ev.tick && isHiHatClosedOrPedal(next.note)) {
-        ev.duration = Math.max(15, Math.min(ev.duration, next.tick - ev.tick));
-        break;
-      }
-    }
-  }
-
-  return limbWindowChecked;
-}
-
-// ===========================================================================
-// Stage 5: SSD 5.5 Velocity Tiers, BPM-Clamped Microtiming & Final Invariants
-// ===========================================================================
-function applyHumanizationAndSSD5Velocity(
-  solvedEvents: InternalDrumEvent[],
-  dna: DrumDNAProfile,
-  bpm: number,
-  rng: () => number
-): InternalDrumEvent[] {
-  const out = solvedEvents.map((e) => ({ ...e }));
-
-  // Compute snare microtiming offsets first so flam_grace can inherit parent offset
-  const parentSnareOffsets = new Map<number, number>();
-
-  for (const ev of out) {
-    if (
-      ev.role === 'snare_backbeat' ||
-      ev.role === 'snare_rim' ||
-      ev.role === 'side_stick'
-    ) {
-      let offset = 0;
-      if (!ev.fixedTiming) {
-        if (dna.snareMicrotimingBaseTicks >= 5) {
-          const maxCap = Math.min(
-            18,
-            Math.max(1, Math.round((dna.snareMaxMsOffset * bpm) / 125))
-          );
-          const minFloor = Math.min(5, maxCap);
-          const target = clampRange(dna.snareMicrotimingBaseTicks, minFloor, maxCap);
-          offset = clampRange(target + rngInt(rng, -2, 2), minFloor, maxCap);
-        } else if (dna.snareMicrotimingBaseTicks <= -4) {
-          const maxEarlyCap = Math.min(
-            10,
-            Math.max(1, Math.round((dna.snareMaxMsOffset * bpm) / 125))
-          );
-          const minEarlyFloor = Math.min(4, maxEarlyCap);
-          const mag = clampRange(
-            Math.abs(dna.snareMicrotimingBaseTicks) + rngInt(rng, -1, 1),
-            minEarlyFloor,
-            maxEarlyCap
-          );
-          offset = -mag;
-        } else {
-          offset = rngInt(rng, 0, Math.min(4, Math.max(1, dna.snareMicrotimingBaseTicks + 2)));
-        }
-      }
-      parentSnareOffsets.set(ev.tick, offset);
-      ev.tick += offset;
-    }
-  }
-
-  for (const ev of out) {
-    const jitter = rngInt(rng, -2, 2);
-
-    if (ev.role === 'flam_grace') {
-      // Inherit paired parent snare offset (+25 ticks ahead)
-      const parentTick = ev.tick + 25;
-      const parentOffset = parentSnareOffsets.get(parentTick) ?? 0;
-      ev.tick += parentOffset;
-      ev.velocity = clampRange(70 + jitter, 62, 82);
-      continue;
-    }
-
-    if (ev.role === 'snare_ghost') {
-      if (!ev.fixedTiming) {
-        ev.tick += rngInt(rng, -3, 3);
-      }
-      if (!ev.fixedVelocity) {
-        const [minG, maxG] = dna.ghostVelRange;
-        ev.velocity = clampRange(Math.round((minG + maxG) / 2) + jitter, minG, maxG);
-      }
-      continue;
-    }
-
-    if (ev.fixedVelocity) continue;
-
-    switch (ev.role) {
-      case 'snare_backbeat': {
-        const [minS, maxS] = dna.backbeatVelRange;
-        ev.velocity = clampRange(Math.round((minS + maxS) / 2) + jitter, minS, maxS);
-        break;
-      }
-      case 'snare_rim': {
-        const [minR, maxR] = dna.climaxSnareVelRange;
-        ev.velocity = clampRange(Math.round((minR + maxR) / 2) + jitter, minR, maxR);
-        break;
-      }
-      case 'side_stick': {
-        ev.velocity = clampRange(76 + jitter, 65, 88);
-        break;
-      }
-      case 'kick': {
-        if (!ev.isAnchor) {
-          const [minK, maxK] = dna.kickVelRange;
-          ev.velocity = clampRange(Math.round((minK + maxK) / 2) + jitter, minK, maxK);
-        }
-        break;
-      }
-      case 'kick_ghost': {
-        const [minGK, maxGK] = dna.ghostKickVelRange;
-        ev.velocity = clampRange(Math.round((minGK + maxGK) / 2) + jitter, minGK, maxGK);
-        break;
-      }
-      case 'kick_linear': {
-        ev.velocity = clampRange(84 + jitter, 78, 92);
-        break;
-      }
-      case 'hh_closed':
-      case 'hh_open':
-      case 'ride':
-      case 'ride_bell': {
-        // Moeller cyclical accent model
-        const beatOffset = ev.tick % BEAT_TICKS;
-        const phase = Math.round(beatOffset / SIXTEENTH_TICKS) % 4;
-        if (beatOffset % BEAT_TICKS < 30) {
-          ev.velocity = clampRange(94 + jitter, 85, 105);
-        } else if (Math.abs(beatOffset - EIGHTH_TICKS) <= 30) {
-          ev.velocity = clampRange(62 + jitter, 50, 72);
-        } else if (phase === 1 || phase === 3) {
-          ev.velocity = clampRange(56 + jitter, 48, 66);
-        } else {
-          ev.velocity = clampRange(74 + jitter, 68, 82);
-        }
-        break;
-      }
-      case 'tom_fill': {
-        ev.velocity = clampRange(ev.velocity + jitter, 45, 126);
-        break;
-      }
-      case 'crash': {
-        if (!ev.isAnchor) {
-          ev.velocity = clampRange(112 + jitter, 102, 124);
-        }
-        break;
-      }
-      default:
-        break;
     }
   }
 
   return out;
 }
 
+// ===========================================================================
+// Stage 4: Safe drumFillEnabled / drumBreakEnabled
+// ===========================================================================
+function applyFillsAndBreaks(
+  input: EngineInput,
+  lock: SectionSkeletonLock,
+  events: InternalDrumEvent[],
+  rng: () => number
+): InternalDrumEvent[] {
+  const { section, style } = input;
+  const totalBars = Math.max(1, section.bars);
+  const flavor = GENRE_FLAVOR_PROFILES[lock.genreId];
+
+  const fillEnabled =
+    input.drumFillEnabled ??
+    section.drumFillEnabled ??
+    getDefaultDrumFillEnabled(section.type, section.bars);
+  const breakEnabled =
+    input.drumBreakEnabled ?? section.drumBreakEnabled ?? false;
+
+  // Legacy disco_boogie_bounce Take C always includes final bar tom fill
+  const effectiveFillEnabled =
+    fillEnabled || (lock.isDiscoBoogieLegacy && style === 'C');
+
+  if (!effectiveFillEnabled && !breakEnabled) {
+    return events;
+  }
+
+  let out = [...events];
+  const lastBarIndex = totalBars - 1;
+
+  // 1. Internal 4-bar boundaries (barIndex % 4 === 3 && barIndex < lastBarIndex)
+  if (effectiveFillEnabled) {
+    for (let b = 3; b < lastBarIndex; b += 4) {
+      const barStart = b * BAR_TICKS;
+      const roll = rng();
+
+      if (roll < 0.7) {
+        // 70%: subtle non-destructive turnaround (preserves skeleton!)
+        if (lock.patternId === 'DOUBLE_BASS') {
+          // METAL_QUAD_CHINA accent on Step 14
+          out.push({
+            tick: barStart + 14 * STEP_TICKS,
+            durationTicks: 240,
+            voice: 'CHINA',
+            velocity: flavor.dynamics.crashVel,
+            limb: 'RH',
+            role: 'FILL_EVENT',
+            barIndex: b,
+            stepIndex: 14,
+          });
+        } else if (roll < 0.25) {
+          // OPEN_HH_4AND on Step 14
+          out = out.filter(
+            (e) => !(e.barIndex === b && e.stepIndex === 14 && e.role === 'TIMEKEEP')
+          );
+          out.push({
+            tick: barStart + 14 * STEP_TICKS,
+            durationTicks: 200,
+            voice: 'HH_OPEN',
+            velocity: 96,
+            limb: 'RH',
+            role: 'TIMEKEEP',
+            barIndex: b,
+            stepIndex: 14,
+          });
+        } else if (roll < 0.5) {
+          // KICK_DOUBLE_PICKUP on Steps 14-15
+          out.push({
+            tick: barStart + 15 * STEP_TICKS,
+            durationTicks: 100,
+            voice: 'KICK_MAIN',
+            velocity: clamp(flavor.dynamics.kickBaseVel - 10, 80, 120),
+            limb: 'RF',
+            role: 'FILL_EVENT',
+            barIndex: b,
+            stepIndex: 15,
+          });
+        } else {
+          // SNARE_DOUBLE_TAIL on Step 15
+          out.push({
+            tick: barStart + 15 * STEP_TICKS,
+            durationTicks: 100,
+            voice: lock.snareVoice,
+            velocity: clamp(flavor.dynamics.snareBaseVel - 12, 70, 120),
+            limb: 'LH',
+            role: 'FILL_EVENT',
+            barIndex: b,
+            stepIndex: 15,
+          });
+        }
+      } else {
+        // 30%: compact 1-beat tom turnaround on Steps 12..15 + crash landing on next bar Step 0
+        out = out.filter(
+          (e) =>
+            !(
+              e.barIndex === b &&
+              e.stepIndex >= 12 &&
+              (e.role === 'TIMEKEEP' || e.role === 'ORNAMENT')
+            )
+        );
+        const voices: DrumVoice[] = ['TOM_HI', 'TOM_MID', 'TOM_MID', 'TOM_FLOOR'];
+        for (let idx = 0; idx < 4; idx++) {
+          const step = (12 + idx) as StepIndex;
+          out.push({
+            tick: barStart + step * STEP_TICKS,
+            durationTicks: 105,
+            voice: voices[idx],
+            velocity: clamp(92 + idx * 6, 75, 122),
+            limb: idx % 2 === 0 ? 'RH' : 'LH',
+            role: 'FILL_EVENT',
+            barIndex: b,
+            stepIndex: step,
+          });
+        }
+        // Crash + Kick landing on next bar Step 0
+        const nextBar = b + 1;
+        out = out.filter(
+          (e) => !(e.barIndex === nextBar && e.stepIndex === 0 && e.role === 'TIMEKEEP')
+        );
+        out.push({
+          tick: nextBar * BAR_TICKS,
+          durationTicks: 480,
+          voice: 'CRASH_L',
+          velocity: flavor.dynamics.crashVel,
+          limb: 'RH',
+          role: 'CRASH_ACCENT',
+          barIndex: nextBar,
+          stepIndex: 0,
+        });
+      }
+    }
+  }
+
+  // 2. Section final bar: Fill / Break / Fill+Break
+  const lastBarStart = lastBarIndex * BAR_TICKS;
+
+  if (effectiveFillEnabled && !breakEnabled) {
+    // COMPACT_TOM_2BEAT on Steps 8..15 (removes groove cymbals & ornaments in 8..15)
+    out = out.filter(
+      (e) =>
+        !(
+          e.barIndex === lastBarIndex &&
+          e.stepIndex >= 8 &&
+          !isKickVoice(e.voice)
+        )
+    );
+    const tomSeq: Array<{ step: StepIndex; voice: DrumVoice; vel: number }> = [
+      { step: 8, voice: 'SNARE_MAIN', vel: 106 },
+      { step: 9, voice: 'TOM_HI', vel: 92 },
+      { step: 10, voice: 'TOM_HI', vel: 102 },
+      { step: 11, voice: 'TOM_MID', vel: 94 },
+      { step: 12, voice: 'TOM_MID', vel: 108 },
+      { step: 13, voice: 'TOM_FLOOR', vel: 98 },
+      { step: 14, voice: 'TOM_FLOOR', vel: 112 },
+      { step: 15, voice: 'SNARE_MAIN', vel: 116 },
+    ];
+    for (let i = 0; i < tomSeq.length; i++) {
+      const item = tomSeq[i];
+      out.push({
+        tick: lastBarStart + item.step * STEP_TICKS,
+        durationTicks: 105,
+        voice: item.voice,
+        velocity: item.vel,
+        limb: i % 2 === 0 ? 'RH' : 'LH',
+        role: 'FILL_EVENT',
+        barIndex: lastBarIndex,
+        stepIndex: item.step,
+      });
+    }
+  } else if (effectiveFillEnabled && breakEnabled) {
+    // Fill + Break combo: compact tom fill on beats 2-3 (Steps 4..11), dead silence on beat 4 (Steps 12..15)
+    out = out.filter(
+      (e) => !(e.barIndex === lastBarIndex && e.stepIndex >= 4)
+    );
+    const fillSeq: Array<{ step: StepIndex; voice: DrumVoice; vel: number }> = [
+      { step: 4, voice: 'SNARE_MAIN', vel: 112 },
+      { step: 6, voice: 'TOM_HI', vel: 100 },
+      { step: 7, voice: 'TOM_HI', vel: 94 },
+      { step: 8, voice: 'TOM_MID', vel: 106 },
+      { step: 9, voice: 'TOM_MID', vel: 98 },
+      { step: 10, voice: 'TOM_FLOOR', vel: 112 },
+      { step: 11, voice: 'SNARE_MAIN', vel: 116 },
+    ];
+    for (let i = 0; i < fillSeq.length; i++) {
+      const item = fillSeq[i];
+      out.push({
+        tick: lastBarStart + item.step * STEP_TICKS,
+        durationTicks: 105,
+        voice: item.voice,
+        velocity: item.vel,
+        limb: i % 2 === 0 ? 'RH' : 'LH',
+        role: 'FILL_EVENT',
+        barIndex: lastBarIndex,
+        stepIndex: item.step,
+        fixedTiming: true,
+      });
+    }
+    // Anchor kick on beat 3 (step 8)
+    out.push({
+      tick: lastBarStart + 8 * STEP_TICKS,
+      durationTicks: 120,
+      voice: 'KICK_MAIN',
+      velocity: 114,
+      limb: 'RF',
+      role: 'KICK_CORE',
+      barIndex: lastBarIndex,
+      stepIndex: 8,
+      fixedTiming: true,
+    });
+  } else if (!effectiveFillEnabled && breakEnabled) {
+    // Break only: Beat 3 hit (Step 8, tick +960) + clean silence on Steps 10..15 [1200..1920)
+    out = out.filter(
+      (e) => !(e.barIndex === lastBarIndex && e.stepIndex >= 8)
+    );
+    out.push({
+      tick: lastBarStart + 8 * STEP_TICKS,
+      durationTicks: 140,
+      voice: 'KICK_MAIN',
+      velocity: 116,
+      limb: 'RF',
+      role: 'KICK_CORE',
+      barIndex: lastBarIndex,
+      stepIndex: 8,
+      fixedTiming: true,
+      isAnchor: true,
+    });
+    out.push({
+      tick: lastBarStart + 8 * STEP_TICKS,
+      durationTicks: 220,
+      voice: 'CRASH_L',
+      velocity: flavor.dynamics.crashVel,
+      limb: 'RH',
+      role: 'CRASH_ACCENT',
+      barIndex: lastBarIndex,
+      stepIndex: 8,
+      fixedTiming: true,
+    });
+  }
+
+  return out;
+}
+
+// ===========================================================================
+// Stage 5: Priority-Based 4-Limb Conflict Solver & Hi-Hat Choke
+// ===========================================================================
+const ROLE_PRIORITY: Record<EventRole, number> = {
+  SNARE_BACKBEAT: 1,
+  KICK_DOUBLE_RF: 2,
+  KICK_DOUBLE_LF: 2,
+  KICK_CORE: 3,
+  TIMEKEEP: 4,
+  CRASH_ACCENT: 5,
+  FILL_EVENT: 6,
+  KICK_CHORD_TRACK: 7,
+  ORNAMENT: 8,
+};
+
+export function resolveLimbConflicts(
+  events: InternalDrumEvent[],
+  lockLeftFootForDoubleBass: boolean
+): InternalDrumEvent[] {
+  const grouped = new Map<string, InternalDrumEvent[]>();
+  const subStepExtras: InternalDrumEvent[] = [];
+
+  for (const ev of events) {
+    if (lockLeftFootForDoubleBass && ev.voice === 'HH_PEDAL') continue;
+
+    // Preserve sub-16th trap rolls or bounced disco 16ths that sit at distinct ticks
+    if (ev.fixedTiming && ev.tick % STEP_TICKS !== 0) {
+      subStepExtras.push(ev);
+      continue;
+    }
+
+    const key = `${ev.barIndex}:${ev.stepIndex}:${ev.limb}`;
+    const bucket = grouped.get(key) ?? [];
+    bucket.push(ev);
+    grouped.set(key, bucket);
+  }
+
+  const resolved: InternalDrumEvent[] = [...subStepExtras];
+  for (const bucket of grouped.values()) {
+    bucket.sort((a, b) => ROLE_PRIORITY[a.role] - ROLE_PRIORITY[b.role]);
+    resolved.push(bucket[0]);
+  }
+
+  // Prevent simultaneous HH_OPEN / HH_HALF_OPEN with HH_CLOSED / HH_PEDAL on the same step
+  const openStepSet = new Set<string>();
+  for (const ev of resolved) {
+    if (isHiHatOpenVoice(ev.voice)) {
+      openStepSet.add(`${ev.barIndex}:${ev.stepIndex}`);
+    }
+  }
+  const filtered = resolved.filter((ev) => {
+    if (isHiHatClosedOrPedalVoice(ev.voice) && !ev.fixedTiming) {
+      if (openStepSet.has(`${ev.barIndex}:${ev.stepIndex}`)) {
+        return false;
+      }
+    }
+    return true;
+  });
+
+  return filtered.sort((a, b) => a.tick - b.tick);
+}
+
+// ===========================================================================
+// Stage 6: Genre Flavor, Swing, Microtiming, Double-Bass Physics & Invariants
+// ===========================================================================
+export function applyGenreFlavor(
+  events: InternalDrumEvent[],
+  template: { supportsSwing16th: boolean },
+  flavor: {
+    microtiming: {
+      snareOffsetMs: number;
+      kickBeforeSnareMs: number;
+      maxJitterMs: number;
+      bounceSwingTicks: number;
+    };
+    dynamics: {
+      doubleBassLfDelta: number;
+    };
+  },
+  bpm: number,
+  rng: () => number
+): InternalDrumEvent[] {
+  const snareStepSet = new Set(
+    events
+      .filter((e) => e.role === 'SNARE_BACKBEAT')
+      .map((e) => `${e.barIndex}:${e.stepIndex}`)
+  );
+  const doubleBassMaxVel = clamp(
+    Math.round(112 - Math.max(0, bpm - 135) * 0.42),
+    82,
+    112
+  );
+
+  return events.map((ev) => {
+    if (ev.fixedTiming && ev.fixedVelocity) {
+      return ev;
+    }
+
+    let tickShift = 0;
+    let vel = ev.velocity;
+
+    if (!ev.fixedTiming) {
+      if (template.supportsSwing16th && ev.stepIndex % 2 === 1) {
+        tickShift += flavor.microtiming.bounceSwingTicks;
+      }
+
+      const isSnareCoincident = snareStepSet.has(`${ev.barIndex}:${ev.stepIndex}`);
+      if (ev.role === 'SNARE_BACKBEAT') {
+        tickShift += msToTicks(clamp(flavor.microtiming.snareOffsetMs, -8, 8), bpm);
+      } else if (isKickVoice(ev.voice) && isSnareCoincident) {
+        tickShift += msToTicks(flavor.microtiming.kickBeforeSnareMs, bpm);
+      }
+
+      // Protect Step 0 downbeat kick (always 0 jitter), and Step 0 / Step 10 anchors on BOUNCE
+      const isProtectedAnchor =
+        (ev.stepIndex === 0 && ev.voice === 'KICK_MAIN') ||
+        (template.supportsSwing16th && (ev.stepIndex === 0 || ev.stepIndex === 10));
+
+      if (!isProtectedAnchor) {
+        const jitterMs = (rng() * 2 - 1) * Math.min(flavor.microtiming.maxJitterMs, 2.5);
+        tickShift += msToTicks(jitterMs, bpm);
+      }
+    }
+
+    if (!ev.fixedVelocity) {
+      const isSnareCoincident = snareStepSet.has(`${ev.barIndex}:${ev.stepIndex}`);
+      if (ev.role === 'KICK_DOUBLE_RF') {
+        const beatAccent = ev.stepIndex % 4 === 0 ? 5 : 0;
+        vel = Math.min(vel, doubleBassMaxVel) + beatAccent;
+      } else if (ev.role === 'KICK_DOUBLE_LF') {
+        vel = Math.min(vel, doubleBassMaxVel) + flavor.dynamics.doubleBassLfDelta;
+      }
+
+      if (isKickVoice(ev.voice) && isSnareCoincident) {
+        vel -= 18;
+      }
+    }
+
+    return {
+      ...ev,
+      tick: Math.max(0, ev.tick + tickShift),
+      velocity: clamp(Math.round(vel), 1, 127),
+    };
+  });
+}
+
 export function enforceFinalInvariants(
   events: InternalDrumEvent[],
   sectionStartTick: number,
-  sectionEndTick: number
+  sectionEndTick: number,
+  midiMapMode: MidiMapMode
 ): InternalDrumEvent[] {
   if (sectionEndTick <= sectionStartTick) return [];
   const maxStart = Math.max(sectionStartTick, sectionEndTick - 15);
+  const noteMap = MIDI_NOTE_MAP[midiMapMode];
 
   const clamped: InternalDrumEvent[] = [];
   for (const ev of events) {
     const tick = Math.min(maxStart, Math.max(sectionStartTick, Math.round(ev.tick)));
     const maxDur = Math.max(15, sectionEndTick - tick);
-    const duration = Math.max(15, Math.min(Math.round(ev.duration), maxDur));
+    const durationTicks = Math.max(15, Math.min(Math.round(ev.durationTicks), maxDur));
     if (tick < sectionStartTick || tick >= sectionEndTick) continue;
     clamped.push({
       ...ev,
       tick,
-      duration,
-      velocity: clampVelocity(ev.velocity),
+      durationTicks,
+      velocity: clamp(Math.round(ev.velocity), 1, 127),
     });
   }
 
-  // Deduplicate identical (note, tick), keeping highest velocity
+  // Deduplicate identical (mappedPitch, tick), keeping highest velocity
   const dedupMap = new Map<string, InternalDrumEvent>();
   for (const ev of clamped) {
-    const key = `${ev.note}:${ev.tick}`;
+    const pitch = ev.rawMidiPitch ?? noteMap[ev.voice];
+    const key = `${pitch}:${ev.tick}`;
     const existing = dedupMap.get(key);
     if (!existing || ev.velocity > existing.velocity) {
       dedupMap.set(key, ev);
     }
   }
 
-  const finalList = Array.from(dedupMap.values()).sort(
-    (a, b) => a.tick - b.tick || a.note - b.note
-  );
+  const finalList = Array.from(dedupMap.values()).sort((a, b) => {
+    if (a.tick !== b.tick) return a.tick - b.tick;
+    const pa = a.rawMidiPitch ?? noteMap[a.voice];
+    const pb = b.rawMidiPitch ?? noteMap[b.voice];
+    return pa - pb;
+  });
 
-  // Re-clamp OpenHH choke duration after microtiming
+  // Hi-hat choke: clamp Open/Half-Open HH duration before next Closed/Pedal HH
   for (let i = 0; i < finalList.length; i++) {
     const ev = finalList[i];
-    if (ev.note !== GM_DRUM.OPEN_HH) continue;
+    if (!isHiHatOpenVoice(ev.voice)) continue;
     for (let j = i + 1; j < finalList.length; j++) {
       const next = finalList[j];
-      if (next.tick > ev.tick && isHiHatClosedOrPedal(next.note)) {
-        ev.duration = Math.max(15, Math.min(ev.duration, next.tick - ev.tick));
+      if (next.tick > ev.tick && isHiHatClosedOrPedalVoice(next.voice)) {
+        const chokedDur = Math.max(15, Math.min(ev.durationTicks, next.tick - ev.tick));
+        if (chokedDur !== ev.durationTicks) {
+          finalList[i] = { ...ev, durationTicks: chokedDur };
+        }
         break;
       }
     }
@@ -1979,61 +2139,111 @@ export function enforceFinalInvariants(
   return finalList;
 }
 
+// ===========================================================================
+// Main Entry Points
+// ===========================================================================
 export function generateDrumResult(input: EngineInput): DrumGenerationResult {
   const { song, section, seed } = input;
-  const drumPreset =
-    section.patternPresets?.drums ??
-    section.partPresets?.drums ??
-    song.members.drums.patternPreset ??
-    'auto';
-  const profile = resolveDrumDNAProfile(drumPreset, song.bpm, section.type);
+  const bpm = input.bpm ?? song.bpm;
+  const midiMapMode: MidiMapMode = input.midiMapMode ?? 'GM_STANDARD';
+  const rng = mulberry32(seed);
+
+  // Stage 1: Section Skeleton Lock
+  const skeleton = lockSectionSkeleton(input, rng);
 
   if (!song.members.drums.enabled || section.enabledParts?.drums === false) {
     return {
       notes: [],
       events: [],
       kickTicks: [],
-      profile,
+      patternId: skeleton.patternId,
+      kickTake: skeleton.kickTake,
+      genreId: skeleton.genreId,
+      midiMapMode,
+      skeleton,
     };
   }
 
   const sectionStartTick = 0;
   const sectionEndTick = Math.max(1, section.bars) * BAR_TICKS;
-  const rng = mulberry32(seed);
+  const noteMap = MIDI_NOTE_MAP[midiMapMode];
 
-  // Stage 1: Timeline & Section Analysis
-  const barMetas = analyzeTimelineAndSections(input, profile);
+  // External uploaded drum loop short-circuit (immutable, deterministic)
+  if (section.uploadedDrumLoop ?? song.uploadedDrumLoop) {
+    const loopEvents = generateExternalLoopEvents(input, rng);
+    const finalLoopEvents = enforceFinalInvariants(
+      loopEvents,
+      sectionStartTick,
+      sectionEndTick,
+      midiMapMode
+    );
+    const notes: MidiNote[] = finalLoopEvents.map((ev) => ({
+      pitch: ev.rawMidiPitch ?? noteMap[ev.voice],
+      velocity: ev.velocity,
+      startTick: ev.tick,
+      durationTicks: ev.durationTicks,
+      channel: 9,
+    }));
+    const kickTicks = finalLoopEvents
+      .filter((ev) => isKickVoice(ev.voice))
+      .map((ev) => ev.tick);
+    return {
+      notes,
+      events: finalLoopEvents,
+      kickTicks,
+      patternId: skeleton.patternId,
+      kickTake: skeleton.kickTake,
+      genreId: skeleton.genreId,
+      midiMapMode,
+      skeleton,
+    };
+  }
 
-  // Stage 2: Groove Skeleton
-  const skeleton = generateGrooveSkeleton(input, profile, barMetas, rng);
+  // Stage 2: Base Skeleton Expansion + Safe drumHat16thEnabled
+  const stage2 = expandBaseSkeleton(input, skeleton, rng);
 
-  // Stage 3: Musical Fills
-  const withFills = injectMusicalFills(input, profile, barMetas, skeleton, rng);
+  // Stage 3: Non-Destructive Chord Change & Offbeat Anticipation Tracking
+  const stage3 = applyChordAndAnticipationTracking(input, skeleton, stage2);
 
-  // Stage 4: 4-Limb Solver & Hi-Hat Choke
-  const solved = solveLimbsAndHiHatChoke(withFills, profile);
+  // Stage 4: Safe drumFillEnabled / drumBreakEnabled
+  const stage4 = applyFillsAndBreaks(input, skeleton, stage3, rng);
 
-  // Stage 5: SSD 5.5 Velocity, BPM-Clamped Microtiming & Final Invariants
-  const humanized = applyHumanizationAndSSD5Velocity(solved, profile, song.bpm, rng);
-  const finalEvents = enforceFinalInvariants(humanized, sectionStartTick, sectionEndTick);
+  // Stage 5: Priority-Based 4-Limb Conflict Solver
+  const lockLeftFoot = skeleton.patternId === 'DOUBLE_BASS';
+  const stage5 = resolveLimbConflicts(stage4, lockLeftFoot);
+
+  // Stage 6: Genre Flavor, Swing, Microtiming, Double-Bass Physics & MIDI Map
+  const template = BEAT_TEMPLATES[skeleton.patternId];
+  const flavor = GENRE_FLAVOR_PROFILES[skeleton.genreId];
+  const stage6 = applyGenreFlavor(stage5, template, flavor, bpm, rng);
+  const finalEvents = enforceFinalInvariants(
+    stage6,
+    sectionStartTick,
+    sectionEndTick,
+    midiMapMode
+  );
 
   const notes: MidiNote[] = finalEvents.map((ev) => ({
-    pitch: ev.note,
+    pitch: ev.rawMidiPitch ?? noteMap[ev.voice],
     velocity: ev.velocity,
     startTick: ev.tick,
-    durationTicks: ev.duration,
+    durationTicks: ev.durationTicks,
     channel: 9,
   }));
 
   const kickTicks = finalEvents
-    .filter((ev) => ev.note === GM_DRUM.KICK)
+    .filter((ev) => isKickVoice(ev.voice))
     .map((ev) => ev.tick);
 
   return {
     notes,
     events: finalEvents,
     kickTicks,
-    profile,
+    patternId: skeleton.patternId,
+    kickTake: skeleton.kickTake,
+    genreId: skeleton.genreId,
+    midiMapMode,
+    skeleton,
   };
 }
 

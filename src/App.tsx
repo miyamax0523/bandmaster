@@ -58,6 +58,8 @@ export function App() {
     setSectionDrumHat16thEnabled,
     setSectionDrumFillEnabled,
     setSectionDrumBreakEnabled,
+    setSectionDrumPatternId,
+    setSectionDrumKickTake,
     copyTimelineToAllSections,
     pastePartPhrase,
     loadSnapshotData,
@@ -272,6 +274,8 @@ export function App() {
               onSetSectionDrumHat16thEnabled={setSectionDrumHat16thEnabled}
               onSetSectionDrumFillEnabled={setSectionDrumFillEnabled}
               onSetSectionDrumBreakEnabled={setSectionDrumBreakEnabled}
+              onSetSectionDrumPatternId={setSectionDrumPatternId}
+              onSetSectionDrumKickTake={setSectionDrumKickTake}
               onCopyTimelineToAllSections={copyTimelineToAllSections}
               onToggleSectionPart={toggleSectionPart}
               onOpenVocalModal={(id) => setVocalModalSectionId(id)}

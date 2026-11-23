@@ -1,6 +1,8 @@
 import type {
+  BeatPatternId,
   EnergyLevel,
   KeyboardDensityLevel,
+  KickTake,
   MidiNote,
   Section,
   SectionType,
@@ -60,6 +62,9 @@ export interface EngineInput {
   vocalNotes?: MidiNote[];
   bpm?: number;
   keyboardDensity?: KeyboardDensityLevel;
+  drumPatternId?: BeatPatternId | 'auto';
+  drumKickTake?: KickTake | 'auto';
+  midiMapMode?: 'GM_STANDARD' | 'SSD5_NATIVE';
   drumHat16thEnabled?: boolean;
   drumFillEnabled?: boolean;
   drumBreakEnabled?: boolean;

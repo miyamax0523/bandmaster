@@ -6,6 +6,7 @@ import { PATTERN_PRESET_GROUPS } from '../lib/patternPresets';
 import { useHorizontalSwipe } from '../lib/touchSwipe';
 import {
   getDefaultDrumFillEnabled,
+  type BeatPatternId,
   type ChordSlot,
   type CopiedPartPhrase,
   type DensityLevel,
@@ -13,6 +14,7 @@ import {
   type DrumLoopData,
   type InstrumentType,
   type KeyboardDensityLevel,
+  type KickTake,
   type SongConfig,
   type TakeStyle,
   type VocalHarmonyMode,
@@ -67,6 +69,14 @@ interface BandmasterConsoleProps {
   onSetSectionDrumHat16thEnabled: (sectionId: string, enabled: boolean) => void;
   onSetSectionDrumFillEnabled: (sectionId: string, enabled: boolean) => void;
   onSetSectionDrumBreakEnabled: (sectionId: string, enabled: boolean) => void;
+  onSetSectionDrumPatternId: (
+    sectionId: string,
+    patternId: BeatPatternId | 'auto'
+  ) => void;
+  onSetSectionDrumKickTake: (
+    sectionId: string,
+    kickTake: KickTake | 'auto'
+  ) => void;
   onCopyTimelineToAllSections: (sourceSectionId: string) => void;
   onToggleSectionPart: (sectionId: string, inst: InstrumentType) => void;
   onOpenVocalModal: (sectionId: string) => void;
@@ -94,6 +104,64 @@ const DENSITY_LEVELS: readonly DensityLevel[] = [1, 2, 3, 4, 5];
 const KEYBOARD_DENSITY_LEVELS: readonly KeyboardDensityLevel[] = [
   1, 2, 3, 4, 5, 6, 7,
 ];
+const BEAT_PATTERN_OPTIONS: Array<{
+  value: BeatPatternId | 'auto';
+  label: string;
+}> = [
+  { value: 'auto', label: '自動（ジャンル展開）' },
+  { value: 'EIGHT_BEAT', label: '王道8ビート' },
+  { value: 'SIXTEEN_BEAT', label: '16ビート' },
+  { value: 'FOUR_ON_FLOOR', label: '頭打ち・四つ打ち' },
+  { value: 'UPBEAT', label: '裏打ち・アップビート' },
+  { value: 'TWO_BEAT', label: 'ツービート' },
+  { value: 'BOUNCE', label: 'バウンス（跳ね系）' },
+  { value: 'HALF_TIME', label: 'ハーフタイム' },
+  { value: 'DOUBLE_BASS', label: 'ツーバス・ドコドコ' },
+];
+
+function getKickTakeOptions(
+  patternId: BeatPatternId | 'auto'
+): Array<{ value: KickTake | 'auto'; label: string }> {
+  if (patternId === 'EIGHT_BEAT') {
+    return [
+      { value: 'auto', label: '自動' },
+      { value: 'A', label: 'A: ドッタン・ドドタン' },
+      { value: 'B', label: 'B: ドッタン・ン・ドタン' },
+      { value: 'C', label: 'C: ドドタン・ドドタン' },
+    ];
+  }
+  if (patternId === 'DOUBLE_BASS') {
+    return [
+      { value: 'auto', label: '自動' },
+      { value: 'A', label: 'A: 連続16分ドコドコ' },
+      { value: 'B', label: 'B: ギャロップ' },
+      { value: 'C', label: 'C: ハーフ×ツーバス' },
+    ];
+  }
+  if (patternId === 'FOUR_ON_FLOOR') {
+    return [
+      { value: 'auto', label: '自動' },
+      { value: 'A', label: 'A: 基本4つ打ち' },
+      { value: 'B', label: 'B: タドタド煽り' },
+      { value: 'C', label: 'C: 末尾ピックアップ' },
+    ];
+  }
+  if (patternId === 'UPBEAT') {
+    return [
+      { value: 'auto', label: '自動' },
+      { value: 'A', label: 'A: 四つ打ち系' },
+      { value: 'B', label: 'B: 軽快8ビート系' },
+      { value: 'C', label: 'C: シンコペ推進' },
+    ];
+  }
+  return [
+    { value: 'auto', label: '自動' },
+    { value: 'A', label: 'Take A（標準）' },
+    { value: 'B', label: 'Take B（タメ・裏）' },
+    { value: 'C', label: 'Take C（推進力）' },
+  ];
+}
+
 const VOCAL_HARMONY_OPTIONS: Array<{ value: VocalHarmonyMode; label: string }> = [
   { value: 'off', label: 'OFF' },
   { value: 'upper_3rd', label: '3度上' },
@@ -129,6 +197,8 @@ export function BandmasterConsole({
   onSetSectionDrumHat16thEnabled,
   onSetSectionDrumFillEnabled,
   onSetSectionDrumBreakEnabled,
+  onSetSectionDrumPatternId,
+  onSetSectionDrumKickTake,
   onCopyTimelineToAllSections,
   onToggleSectionPart,
   onOpenVocalModal,
@@ -427,6 +497,59 @@ export function BandmasterConsole({
 
               {key === 'drums' && (
                 <div className="density-controls">
+                  {(() => {
+                    const currentPatternId = section.drumPatternId ?? 'auto';
+                    const currentKickTake = section.drumKickTake ?? 'auto';
+                    const kickTakeOpts = getKickTakeOptions(currentPatternId);
+                    return (
+                      <>
+                        <div className="density-row">
+                          <span className="density-label">ビート骨格</span>
+                          <select
+                            className="console-preset-select"
+                            aria-label="ビート骨格"
+                            value={currentPatternId}
+                            disabled={cell.locked || !effectivelyEnabled}
+                            onChange={(e) =>
+                              onSetSectionDrumPatternId(
+                                section.id,
+                                e.target.value as BeatPatternId | 'auto'
+                              )
+                            }
+                          >
+                            {BEAT_PATTERN_OPTIONS.map((opt) => (
+                              <option key={opt.value} value={opt.value}>
+                                {opt.label}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div className="density-row">
+                          <span className="density-label">キック Take</span>
+                          <select
+                            className="console-preset-select"
+                            aria-label="キック Take"
+                            value={currentKickTake}
+                            disabled={cell.locked || !effectivelyEnabled}
+                            onChange={(e) =>
+                              onSetSectionDrumKickTake(
+                                section.id,
+                                e.target.value as KickTake | 'auto'
+                              )
+                            }
+                          >
+                            {kickTakeOpts.map((opt) => (
+                              <option key={opt.value} value={opt.value}>
+                                {opt.label}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </>
+                    );
+                  })()}
+
                   <div className="density-row">
                     <span className="density-label">Hat 手数</span>
                     <div className="density-segments" role="group" aria-label="Hat 手数">
