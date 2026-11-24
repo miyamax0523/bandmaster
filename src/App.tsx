@@ -49,6 +49,8 @@ export function App() {
     changeSectionVocalMelody,
     changeSectionVocalDensity,
     changeSectionVocalHarmony,
+    changeSectionVocalDialecticalScheme,
+    changeSectionVocalChapterForm,
     changeSectionKeyboardDensity,
     changeSectionPartPreset,
     changeSectionChordTimeline,
@@ -275,6 +277,8 @@ export function App() {
               onChangeSectionKeyboardDensity={changeSectionKeyboardDensity}
               onChangeSectionVocalDensity={changeSectionVocalDensity}
               onChangeSectionVocalHarmony={changeSectionVocalHarmony}
+              onChangeSectionVocalDialecticalScheme={changeSectionVocalDialecticalScheme}
+              onChangeSectionVocalChapterForm={changeSectionVocalChapterForm}
               copiedPhrase={copiedPhrase}
               onCopyPartPhrase={(phrase) => setCopiedPhrase(phrase)}
               onPastePartPhrase={pastePartPhrase}

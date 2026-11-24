@@ -10,11 +10,13 @@ import {
   getDefaultDrumFillEnabled,
   TICKS_PER_BAR,
   type BeatPatternId,
+  type ChapterInternalForm,
   type ChordSlot,
   type CopiedPartPhrase,
   type DensityLevel,
   type DrumAnticipationMode,
   type DrumLoopData,
+  type EightBarScheme,
   type InstrumentType,
   type KeyboardDensityLevel,
   type KickMode,
@@ -106,6 +108,8 @@ export function cloneSection(sec: Section): Section {
       sec.drumFillEnabled ?? getDefaultDrumFillEnabled(sec.type, sec.bars),
     drumBreakEnabled: sec.drumBreakEnabled ?? false,
     vocalHarmony: sec.vocalHarmony ?? 'off',
+    vocalDialecticalScheme: sec.vocalDialecticalScheme ?? 'auto',
+    vocalChapterForm: sec.vocalChapterForm ?? 'auto',
     bassChromaticEnabled: sec.bassChromaticEnabled ?? false,
     bassFillEnabled: sec.bassFillEnabled ?? false,
     bassFillSeed: sec.bassFillSeed ?? 0,
@@ -258,6 +262,14 @@ export function generateCellTakes(
         instrument === 'vocal' ? nextSection?.type : undefined,
       nextSectionEnergy:
         instrument === 'vocal' ? nextSection?.energy : undefined,
+      vocalDialecticalScheme:
+        instrument === 'vocal'
+          ? (section.vocalDialecticalScheme ?? 'auto')
+          : undefined,
+      vocalChapterForm:
+        instrument === 'vocal'
+          ? (section.vocalChapterForm ?? 'auto')
+          : undefined,
     };
     if (instrument === 'drums') {
       takes[style] = generateDrumNotes(input);
@@ -908,6 +920,74 @@ export function updateSectionVocalHarmony(
 
   nextSong.sections[secIdx].vocalHarmony = vocalHarmony;
   return { song: nextSong, bandState };
+}
+
+export function updateSectionVocalDialecticalScheme(
+  song: SongConfig,
+  bandState: BandState,
+  sectionId: string,
+  scheme: EightBarScheme | 'auto'
+): { song: SongConfig; bandState: BandState } {
+  const nextSong = cloneSongConfig(song);
+  const secIdx = nextSong.sections.findIndex((s) => s.id === sectionId);
+  if (secIdx === -1) return { song, bandState };
+
+  const sec = nextSong.sections[secIdx];
+  sec.vocalDialecticalScheme = scheme;
+
+  const nextState = cloneBandState(bandState);
+  const existingSec = nextState.cellsBySection[sectionId];
+  if (existingSec && !existingSec.vocal?.locked) {
+    const prevVocalAvgPitch =
+      secIdx > 0
+        ? getAverageVocalPitch(
+            nextState.cellsBySection[nextSong.sections[secIdx - 1].id]
+          )
+        : undefined;
+    nextState.cellsBySection[sectionId] = generateSectionCells(
+      nextSong,
+      sec,
+      secIdx,
+      existingSec,
+      6610 + secIdx,
+      { newSeeds: false, instruments: ['vocal'], prevVocalAvgPitch }
+    );
+  }
+  return { song: nextSong, bandState: nextState };
+}
+
+export function updateSectionVocalChapterForm(
+  song: SongConfig,
+  bandState: BandState,
+  sectionId: string,
+  form: ChapterInternalForm | 'auto'
+): { song: SongConfig; bandState: BandState } {
+  const nextSong = cloneSongConfig(song);
+  const secIdx = nextSong.sections.findIndex((s) => s.id === sectionId);
+  if (secIdx === -1) return { song, bandState };
+
+  const sec = nextSong.sections[secIdx];
+  sec.vocalChapterForm = form;
+
+  const nextState = cloneBandState(bandState);
+  const existingSec = nextState.cellsBySection[sectionId];
+  if (existingSec && !existingSec.vocal?.locked) {
+    const prevVocalAvgPitch =
+      secIdx > 0
+        ? getAverageVocalPitch(
+            nextState.cellsBySection[nextSong.sections[secIdx - 1].id]
+          )
+        : undefined;
+    nextState.cellsBySection[sectionId] = generateSectionCells(
+      nextSong,
+      sec,
+      secIdx,
+      existingSec,
+      6620 + secIdx,
+      { newSeeds: false, instruments: ['vocal'], prevVocalAvgPitch }
+    );
+  }
+  return { song: nextSong, bandState: nextState };
 }
 
 export function updateSectionChordTimeline(

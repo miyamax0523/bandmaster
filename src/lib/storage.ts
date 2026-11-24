@@ -238,6 +238,8 @@ export function hydrateProject(stored: StoredBandProject): {
       keyboardDensity: rawSec.keyboardDensity ?? 4,
       vocalDensity: rawSec.vocalDensity ?? 3,
       vocalHarmony: rawSec.vocalHarmony ?? 'off',
+      vocalDialecticalScheme: rawSec.vocalDialecticalScheme ?? 'auto',
+      vocalChapterForm: rawSec.vocalChapterForm ?? 'auto',
       bassChromaticEnabled: rawSec.bassChromaticEnabled ?? false,
       bassFillEnabled: rawSec.bassFillEnabled ?? false,
       bassFillSeed: rawSec.bassFillSeed ?? 0,

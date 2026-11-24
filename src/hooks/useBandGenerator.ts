@@ -34,7 +34,9 @@ import {
   updateSectionKeyboardDensity,
   updateSectionKickMode,
   updateSectionPartPreset,
+  updateSectionVocalChapterForm,
   updateSectionVocalDensity,
+  updateSectionVocalDialecticalScheme,
   updateSectionVocalHarmony,
   type ArrangementPresetId,
   type BandSnapshot,
@@ -51,10 +53,12 @@ import {
   createDefaultEnabledParts,
   createDefaultPartPresets,
   type BeatPatternId,
+  type ChapterInternalForm,
   type ChordSlot,
   type CopiedPartPhrase,
   type DensityLevel,
   type DrumLoopData,
+  type EightBarScheme,
   type InstrumentType,
   type KeyboardDensityLevel,
   type KickMode,
@@ -558,6 +562,32 @@ export function useBandGenerator() {
     [song, bandState, commitChange]
   );
 
+  const changeSectionVocalDialecticalScheme = useCallback(
+    (sectionId: string, scheme: EightBarScheme | 'auto') => {
+      const res = updateSectionVocalDialecticalScheme(
+        song,
+        bandState,
+        sectionId,
+        scheme
+      );
+      commitChange(res.song, res.bandState, true, true);
+    },
+    [song, bandState, commitChange]
+  );
+
+  const changeSectionVocalChapterForm = useCallback(
+    (sectionId: string, form: ChapterInternalForm | 'auto') => {
+      const res = updateSectionVocalChapterForm(
+        song,
+        bandState,
+        sectionId,
+        form
+      );
+      commitChange(res.song, res.bandState, true, true);
+    },
+    [song, bandState, commitChange]
+  );
+
   const changeSectionPartPreset = useCallback(
     (sectionId: string, instrument: InstrumentType, preset: string) => {
       const res = updateSectionPartPreset(
@@ -732,6 +762,8 @@ export function useBandGenerator() {
     changeSectionVocalMelody,
     changeSectionVocalDensity,
     changeSectionVocalHarmony,
+    changeSectionVocalDialecticalScheme,
+    changeSectionVocalChapterForm,
     changeSectionKeyboardDensity,
     changeSectionPartPreset,
     changeSectionChordTimeline,

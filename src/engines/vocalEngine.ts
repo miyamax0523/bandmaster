@@ -1,11 +1,15 @@
 import {
   TICKS_PER_BAR,
   TRACK_CHANNELS,
+  type ChapterInternalForm,
+  type ChapterRole,
+  type EightBarScheme,
   type EnergyLevel,
   type ExportTarget,
   type FallExpressionConfig,
   type KeyName,
   type MidiNote,
+  type NoteFunctionTag,
   type NoteRole,
   type ScaleType,
   type VocalHarmonyMode,
@@ -36,9 +40,13 @@ import {
 export {
   GENRE_VOCAL_GRAMMARS,
   VOCAL_RHYTHM_CELLS,
+  type ChapterInternalForm,
+  type ChapterRole,
+  type EightBarScheme,
   type ExportTarget,
   type FallExpressionConfig,
   type GenreVocalGrammar,
+  type NoteFunctionTag,
   type NoteRole,
   type PhrasePlan,
   type PhraseRole,
@@ -50,6 +58,165 @@ export const TPQN = 480 as const;
 export const BEAT_TICKS = TPQN;
 export const BAR_TICKS = TPQN * 4;              // 1920 ticks (4/4)
 export const PHRASE_2BAR_TICKS = BAR_TICKS * 2; // 3840 ticks
+export const CHAPTER_TICKS = BAR_TICKS * 2;     // 3840 ticks
+export const EIGHT_BAR_TICKS = CHAPTER_TICKS * 4; // 15360 ticks
+export const VOISONA_MIN_GAP_TICKS = 20;
+
+export type MasterGenre = MasterGenreId;
+
+export interface DialecticalChapterPlan {
+  readonly chapterIndex: number;
+  readonly startTick: number;
+  readonly role: ChapterRole;
+  readonly form: ChapterInternalForm;
+  readonly anchorPitch: number;
+  readonly topPitch: number;
+  readonly isRunwayToSynthesis: boolean;
+  readonly isStrongCadence: boolean;
+}
+
+export interface GenreDialecticalProfile {
+  readonly chorusTatsProb: number;
+  readonly pattern2Prob: number;
+  readonly synthesisContinuousProb: number;
+  readonly antithesisDropRange: readonly [number, number];
+  readonly synthesisReboundRange: readonly [number, number];
+  readonly allowSyncopatedPickup: boolean;
+  readonly fallSemitones: number;
+  readonly maxNotesPerChapter: number;
+}
+
+export const GENRE_DIALECTICAL_PROFILES: Record<MasterGenre, GenreDialecticalProfile> = {
+  royal_jpop: {
+    chorusTatsProb: 0.85,
+    pattern2Prob: 0.5,
+    synthesisContinuousProb: 0.95,
+    antithesisDropRange: [-3, -2],
+    synthesisReboundRange: [3, 5],
+    allowSyncopatedPickup: true,
+    fallSemitones: 2.0,
+    maxNotesPerChapter: 12,
+  },
+  emo_jrock: {
+    chorusTatsProb: 0.75,
+    pattern2Prob: 0.65,
+    synthesisContinuousProb: 0.9,
+    antithesisDropRange: [-3, -2],
+    synthesisReboundRange: [3, 5],
+    allowSyncopatedPickup: true,
+    fallSemitones: 2.0,
+    maxNotesPerChapter: 13,
+  },
+  chill_ballad: {
+    chorusTatsProb: 0.65,
+    pattern2Prob: 0.25,
+    synthesisContinuousProb: 1.0,
+    antithesisDropRange: [-3, -1],
+    synthesisReboundRange: [2, 4],
+    allowSyncopatedPickup: false,
+    fallSemitones: 2.0,
+    maxNotesPerChapter: 11,
+  },
+  alt_shoegaze: {
+    chorusTatsProb: 0.35,
+    pattern2Prob: 0.3,
+    synthesisContinuousProb: 0.9,
+    antithesisDropRange: [-2, -1],
+    synthesisReboundRange: [2, 3],
+    allowSyncopatedPickup: false,
+    fallSemitones: 1.5,
+    maxNotesPerChapter: 11,
+  },
+  numetal_mixture: {
+    chorusTatsProb: 0.3,
+    pattern2Prob: 0.75,
+    synthesisContinuousProb: 0.8,
+    antithesisDropRange: [-2, -1],
+    synthesisReboundRange: [2, 4],
+    allowSyncopatedPickup: true,
+    fallSemitones: 2.0,
+    maxNotesPerChapter: 12,
+  },
+};
+
+export interface DialecticalVocalNote extends GeneratedVocalNote {
+  readonly pitch: number;
+  readonly tag: NoteFunctionTag;
+  readonly chapterIndex: number;
+}
+
+export interface DialecticalGenerationResult {
+  readonly genreId: MasterGenre;
+  readonly profile: GenreDialecticalProfile;
+  readonly scheme: EightBarScheme;
+  readonly thesisForm: ChapterInternalForm;
+  readonly chapters: readonly DialecticalChapterPlan[];
+  readonly notes: DialecticalVocalNote[];
+  readonly midiNotes: MidiNote[];
+}
+
+/** MIR-based Pattern 2 core motif similarity metric (used by engine guard & Vitest). */
+export function computePattern2CoreSimilarity(
+  chapterNotes: readonly { startTick: number; pitch: number }[],
+  chapterStartTick: number,
+  tolTicks = 60
+): { rhythmIoU: number; contourSim: number; combined: number } {
+  const core1 = chapterNotes
+    .map((n) => ({ rel: n.startTick - chapterStartTick, pitch: n.pitch }))
+    .filter((n) => n.rel >= 0 && n.rel < 1440);
+
+  const core2 = chapterNotes
+    .map((n) => ({
+      rel: n.startTick - chapterStartTick - BAR_TICKS,
+      pitch: n.pitch,
+    }))
+    .filter((n) => n.rel >= 0 && n.rel < 1440);
+
+  if (core1.length === 0 || core2.length === 0) {
+    return { rhythmIoU: 0, contourSim: 0, combined: 0 };
+  }
+
+  const used2 = new Set<number>();
+  const matched: Array<[(typeof core1)[number], (typeof core2)[number]]> = [];
+
+  for (const n1 of core1) {
+    let bestJ = -1;
+    let bestDt = tolTicks + 1;
+    for (let j = 0; j < core2.length; j++) {
+      if (used2.has(j)) continue;
+      const dt = Math.abs(n1.rel - core2[j].rel);
+      if (dt <= tolTicks && dt < bestDt) {
+        bestDt = dt;
+        bestJ = j;
+      }
+    }
+    if (bestJ !== -1) {
+      used2.add(bestJ);
+      matched.push([n1, core2[bestJ]]);
+    }
+  }
+
+  const rhythmIoU = matched.length / (core1.length + core2.length - matched.length);
+
+  let contourSim = 0;
+  if (matched.length >= 2) {
+    let ivMatch = 0;
+    for (let k = 0; k < matched.length - 1; k++) {
+      const iv1 = matched[k + 1][0].pitch - matched[k][0].pitch;
+      const iv2 = matched[k + 1][1].pitch - matched[k][1].pitch;
+      if (iv1 === iv2 || (iv1 * iv2 > 0 && Math.abs(iv1 - iv2) <= 1)) {
+        ivMatch++;
+      }
+    }
+    contourSim = ivMatch / (matched.length - 1);
+  }
+
+  return {
+    rhythmIoU,
+    contourSim,
+    combined: 0.55 * rhythmIoU + 0.45 * contourSim,
+  };
+}
 
 export const VOCAL_MIN_PITCH = 48; // C3
 export const VOCAL_MAX_PITCH = 76; // E5
@@ -2176,8 +2343,926 @@ export function generateVocalNotes(input: EngineInput): MidiNote[] {
     return generateLegacyRapPresetNotes(input, preset, scalePcs, keySemitone);
   }
 
-  // Execute Rhythm-First 4-Stage Vocal Melody Pipeline
-  return generateRhythmFirstVocal(input).midiNotes;
+  // Execute Dialectical 3-Chapter x 2-Form Vocal Melody Pipeline
+  return generateDialecticalVocal(input).midiNotes;
+}
+
+// ===========================================================================
+// Dialectical 3-Chapter Model (T-A-T-A / T-A-T-S) x 2 Internal Forms
+// ===========================================================================
+
+function nearestScalePitchInRange(
+  target: number,
+  minAllowed: number,
+  maxAllowed: number,
+  scalePcs: ReadonlySet<number>
+): number {
+  const lo = Math.max(VOCAL_MIN_PITCH, Math.min(VOCAL_MAX_PITCH, Math.round(minAllowed)));
+  const hi = Math.max(lo, Math.min(VOCAL_MAX_PITCH, Math.round(maxAllowed)));
+  let best = -1;
+  let bestDist = Infinity;
+  for (let p = lo; p <= hi; p++) {
+    if (!scalePcs.has(p % 12)) continue;
+    const d = Math.abs(p - target);
+    if (d < bestDist) {
+      bestDist = d;
+      best = p;
+    }
+  }
+  if (best !== -1) return best;
+  return nearestScalePitch(target, scalePcs, VOCAL_MIN_PITCH, VOCAL_MAX_PITCH);
+}
+
+function stepInScale(
+  pitch: number,
+  deltaSteps: number,
+  fullScale: readonly number[],
+  minP = VOCAL_MIN_PITCH,
+  maxP = VOCAL_MAX_PITCH
+): number {
+  const idx = findClosestIndex(fullScale, pitch);
+  const nextIdx = Math.max(0, Math.min(fullScale.length - 1, idx + deltaSteps));
+  const cand = fullScale[nextIdx];
+  if (cand < minP) {
+    return fullScale.find((p) => p >= minP) ?? cand;
+  }
+  if (cand > maxP) {
+    for (let i = fullScale.length - 1; i >= 0; i--) {
+      if (fullScale[i] <= maxP) return fullScale[i];
+    }
+  }
+  return cand;
+}
+
+interface DialecticalCellSlot {
+  readonly relTick: number;
+  readonly gridDuration: number;
+  readonly gateRatio: number;
+  readonly role: NoteRole;
+  readonly tag: NoteFunctionTag;
+  readonly velocityScale: number;
+  readonly isPeakSlot?: boolean;
+}
+
+const PATTERN2_ZONE1_TEMPLATES: readonly (readonly DialecticalCellSlot[])[] = [
+  [
+    { relTick: 0, gridDuration: 480, gateRatio: 0.84, role: 'anchor', tag: 'core', velocityScale: 0.98 },
+    { relTick: 480, gridDuration: 480, gateRatio: 0.84, role: 'step', tag: 'core', velocityScale: 0.94, isPeakSlot: true },
+    { relTick: 960, gridDuration: 480, gateRatio: 0.84, role: 'hook_stab', tag: 'core', velocityScale: 1.0 },
+  ],
+  [
+    { relTick: 0, gridDuration: 240, gateRatio: 0.8, role: 'anchor', tag: 'core', velocityScale: 0.98 },
+    { relTick: 240, gridDuration: 480, gateRatio: 0.84, role: 'sync_tie', tag: 'core', velocityScale: 1.0, isPeakSlot: true },
+    { relTick: 720, gridDuration: 480, gateRatio: 0.84, role: 'step', tag: 'core', velocityScale: 0.94 },
+  ],
+  [
+    { relTick: 0, gridDuration: 360, gateRatio: 0.82, role: 'hook_stab', tag: 'core', velocityScale: 1.0 },
+    { relTick: 360, gridDuration: 360, gateRatio: 0.82, role: 'sync_tie', tag: 'core', velocityScale: 0.96, isPeakSlot: true },
+    { relTick: 720, gridDuration: 480, gateRatio: 0.84, role: 'step', tag: 'core', velocityScale: 0.94 },
+  ],
+];
+
+const PATTERN1_CONTINUOUS_TEMPLATES: readonly (readonly DialecticalCellSlot[])[] = [
+  [
+    { relTick: 0, gridDuration: 480, gateRatio: 0.86, role: 'anchor', tag: 'core', velocityScale: 0.96 },
+    { relTick: 480, gridDuration: 240, gateRatio: 0.82, role: 'step', tag: 'arc', velocityScale: 0.92 },
+    { relTick: 720, gridDuration: 480, gateRatio: 0.86, role: 'sync_tie', tag: 'arc', velocityScale: 1.0 },
+    { relTick: 1200, gridDuration: 480, gateRatio: 0.86, role: 'hook_stab', tag: 'arc', velocityScale: 1.04, isPeakSlot: true },
+    { relTick: 1920, gridDuration: 480, gateRatio: 0.86, role: 'step', tag: 'arc', velocityScale: 0.96 },
+    { relTick: 2400, gridDuration: 960, gateRatio: 0.88, role: 'top_fall', tag: 'cadence', velocityScale: 1.02 },
+  ],
+  [
+    { relTick: 240, gridDuration: 240, gateRatio: 0.82, role: 'pickup', tag: 'core', velocityScale: 0.88 },
+    { relTick: 480, gridDuration: 480, gateRatio: 0.86, role: 'anchor', tag: 'core', velocityScale: 0.96 },
+    { relTick: 960, gridDuration: 720, gateRatio: 0.88, role: 'sync_tie', tag: 'arc', velocityScale: 1.04, isPeakSlot: true },
+    { relTick: 1920, gridDuration: 240, gateRatio: 0.82, role: 'step', tag: 'arc', velocityScale: 0.92 },
+    { relTick: 2160, gridDuration: 240, gateRatio: 0.82, role: 'step', tag: 'arc', velocityScale: 0.94 },
+    { relTick: 2400, gridDuration: 960, gateRatio: 0.9, role: 'top_fall', tag: 'cadence', velocityScale: 1.04 },
+  ],
+  [
+    { relTick: 0, gridDuration: 480, gateRatio: 0.86, role: 'anchor', tag: 'core', velocityScale: 0.98 },
+    { relTick: 480, gridDuration: 480, gateRatio: 0.86, role: 'step', tag: 'arc', velocityScale: 0.95 },
+    { relTick: 960, gridDuration: 480, gateRatio: 0.88, role: 'hook_stab', tag: 'arc', velocityScale: 1.04, isPeakSlot: true },
+    { relTick: 1440, gridDuration: 480, gateRatio: 0.86, role: 'step', tag: 'arc', velocityScale: 0.98 },
+    { relTick: 1920, gridDuration: 480, gateRatio: 0.86, role: 'step', tag: 'arc', velocityScale: 0.94 },
+    { relTick: 2400, gridDuration: 960, gateRatio: 0.88, role: 'top_fall', tag: 'cadence', velocityScale: 1.04 },
+  ],
+];
+
+const PATTERN1_SYNTHESIS_TEMPLATES: readonly (readonly DialecticalCellSlot[])[] = [
+  [
+    { relTick: 0, gridDuration: 480, gateRatio: 0.88, role: 'anchor', tag: 'core', velocityScale: 1.0 },
+    { relTick: 480, gridDuration: 480, gateRatio: 0.88, role: 'step', tag: 'arc', velocityScale: 1.02 },
+    { relTick: 960, gridDuration: 720, gateRatio: 0.9, role: 'top_fall', tag: 'arc', velocityScale: 1.1, isPeakSlot: true },
+    { relTick: 1920, gridDuration: 480, gateRatio: 0.86, role: 'step', tag: 'arc', velocityScale: 1.0 },
+    { relTick: 2400, gridDuration: 960, gateRatio: 0.9, role: 'phrase_land', tag: 'cadence', velocityScale: 1.05 },
+  ],
+  [
+    { relTick: 0, gridDuration: 480, gateRatio: 0.86, role: 'anchor', tag: 'core', velocityScale: 1.0 },
+    { relTick: 480, gridDuration: 480, gateRatio: 0.88, role: 'step', tag: 'arc', velocityScale: 1.04 },
+    { relTick: 960, gridDuration: 480, gateRatio: 0.88, role: 'hook_stab', tag: 'arc', velocityScale: 1.08, isPeakSlot: true },
+    { relTick: 1440, gridDuration: 480, gateRatio: 0.88, role: 'sync_tie', tag: 'arc', velocityScale: 1.1, isPeakSlot: true },
+    { relTick: 1920, gridDuration: 480, gateRatio: 0.86, role: 'step', tag: 'arc', velocityScale: 1.0 },
+    { relTick: 2400, gridDuration: 960, gateRatio: 0.9, role: 'top_fall', tag: 'cadence', velocityScale: 1.06 },
+  ],
+];
+
+const ANTICIPATION_TEMPLATE_2BAR: readonly DialecticalCellSlot[] = [
+  { relTick: 240, gridDuration: 480, gateRatio: 0.82, role: 'pickup', tag: 'core', velocityScale: 0.94 },
+  { relTick: 720, gridDuration: 480, gateRatio: 0.82, role: 'sync_tie', tag: 'arc', velocityScale: 1.0 },
+  { relTick: 1200, gridDuration: 240, gateRatio: 0.75, role: 'rush', tag: 'arc', velocityScale: 0.92 },
+  { relTick: 1440, gridDuration: 240, gateRatio: 0.75, role: 'rush', tag: 'arc', velocityScale: 0.94 },
+  { relTick: 1680, gridDuration: 480, gateRatio: 0.84, role: 'sync_tie', tag: 'arc', velocityScale: 1.06, isPeakSlot: true },
+  { relTick: 2160, gridDuration: 240, gateRatio: 0.78, role: 'step', tag: 'arc', velocityScale: 0.94 },
+  { relTick: 2400, gridDuration: 960, gateRatio: 0.86, role: 'top_fall', tag: 'cadence', velocityScale: 1.06 },
+];
+
+export function planDialecticalChapters(params: {
+  genreId: MasterGenre;
+  sectionRole: NormalizedSectionRole;
+  bars: number;
+  scalePcs: ReadonlySet<number>;
+  keySemitone: number;
+  rng: () => number;
+  schemeOverride?: EightBarScheme | 'auto';
+  formOverride?: ChapterInternalForm | 'auto';
+  prevVocalAvgPitch?: number;
+}): {
+  scheme: EightBarScheme;
+  thesisForm: ChapterInternalForm;
+  chapters: DialecticalChapterPlan[];
+} {
+  const {
+    genreId,
+    sectionRole,
+    bars,
+    scalePcs,
+    keySemitone,
+    rng,
+    schemeOverride,
+    formOverride,
+    prevVocalAvgPitch,
+  } = params;
+  const profile = GENRE_DIALECTICAL_PROFILES[genreId];
+  const rfProfile = RHYTHM_FIRST_GENRE_PROFILES[genreId];
+  const numChapters = Math.max(1, Math.ceil(bars / 2));
+
+  // Resolve 8-bar scheme
+  const isClimaxSection = sectionRole === 'chorus' || sectionRole === 'bridge';
+  let scheme: EightBarScheme;
+  if (schemeOverride === 'T-A-T-A' || schemeOverride === 'T-A-T-S') {
+    scheme = schemeOverride;
+  } else if (bars === 16) {
+    scheme = 'T-A-T-S';
+  } else {
+    const prob = isClimaxSection ? profile.chorusTatsProb : profile.chorusTatsProb * 0.45;
+    scheme = rng() < prob ? 'T-A-T-S' : 'T-A-T-A';
+  }
+
+  // Resolve thesis internal form (shared between T1 and T2, and between 1st & 2nd 8-bar halves in 16-bar)
+  const thesisForm: ChapterInternalForm =
+    formOverride === 'two_bar_continuous' || formOverride === 'one_bar_repeat_with_passing'
+      ? formOverride
+      : rng() < profile.pattern2Prob
+        ? 'one_bar_repeat_with_passing'
+        : 'two_bar_continuous';
+
+  // Compute comfortable thesis anchor & top pitch with guaranteed room for antithesis (-4) and synthesis (+5)
+  const sectionShift = rfProfile.sectionShifts[sectionRole] ?? 0;
+  const baseRegister =
+    genreId === 'numetal_mixture' ? 57 : genreId === 'chill_ballad' ? 58 : 59;
+  const tonicNear = fitPitchClassToRange(keySemitone, baseRegister - 2, baseRegister + 2);
+  let rawAnchor = Math.round((baseRegister + tonicNear) * 0.5) + sectionShift;
+  if (prevVocalAvgPitch !== undefined && !Number.isNaN(prevVocalAvgPitch)) {
+    rawAnchor = Math.round(
+      Math.max(prevVocalAvgPitch - 2.5, Math.min(prevVocalAvgPitch + 4.0, rawAnchor))
+    );
+  }
+  const thesisAnchor = nearestScalePitchInRange(rawAnchor, 56, 66, scalePcs);
+  const thesisTop = nearestScalePitchInRange(
+    thesisAnchor + 3,
+    thesisAnchor + 2,
+    Math.min(70, thesisAnchor + 4),
+    scalePcs
+  );
+
+  // Antithesis drop (-1..-4 semitones, preferring genre antithesisDropRange)
+  const [dropMin, dropMax] = profile.antithesisDropRange;
+  const dropChoices: number[] = [];
+  for (let d = dropMin; d <= dropMax; d++) dropChoices.push(d);
+  const chosenDrop = dropChoices[Math.floor(rng() * dropChoices.length)] ?? dropMin;
+  const antiTop = nearestScalePitchInRange(
+    thesisTop + chosenDrop,
+    thesisTop - 4,
+    thesisTop - 1,
+    scalePcs
+  );
+  const antiAnchor = nearestScalePitchInRange(
+    thesisAnchor + chosenDrop,
+    Math.max(VOCAL_MIN_PITCH + 2, thesisAnchor - 4),
+    Math.min(antiTop, thesisAnchor - 1),
+    scalePcs
+  );
+
+  // Synthesis rebound (+2..+5 semitones, preferring genre synthesisReboundRange)
+  const [rebMin, rebMax] = profile.synthesisReboundRange;
+  const rebChoices: number[] = [];
+  for (let r = rebMin; r <= rebMax; r++) rebChoices.push(r);
+  const chosenRebound = rebChoices[Math.floor(rng() * rebChoices.length)] ?? rebMin;
+  const synthTop = nearestScalePitchInRange(
+    thesisTop + chosenRebound,
+    thesisTop + 2,
+    Math.min(VOCAL_MAX_PITCH, thesisTop + 5),
+    scalePcs
+  );
+  const synthAnchor = nearestScalePitchInRange(
+    thesisAnchor + Math.max(1, chosenRebound - 2),
+    thesisAnchor + 1,
+    Math.max(thesisAnchor + 1, synthTop - 1),
+    scalePcs
+  );
+
+  // Build chapter roles
+  const roles: ChapterRole[] = [];
+  if (numChapters === 8) {
+    // 16-bar structure: first 8 bars = T-A-T-A, second 8 bars = T-A-T-S (unless explicitly forced T-A-T-A)
+    const secondHalfFinal: ChapterRole =
+      schemeOverride === 'T-A-T-A' ? 'antithesis' : 'synthesis';
+    roles.push(
+      'thesis',
+      'antithesis',
+      'thesis',
+      'antithesis',
+      'thesis',
+      'antithesis',
+      'thesis',
+      secondHalfFinal
+    );
+  } else if (numChapters === 4) {
+    roles.push(
+      'thesis',
+      'antithesis',
+      'thesis',
+      scheme === 'T-A-T-S' ? 'synthesis' : 'antithesis'
+    );
+  } else if (numChapters === 2) {
+    roles.push('thesis', scheme === 'T-A-T-S' ? 'synthesis' : 'antithesis');
+  } else {
+    for (let c = 0; c < numChapters; c++) {
+      if (c === numChapters - 1 && numChapters >= 3 && scheme === 'T-A-T-S') {
+        roles.push('synthesis');
+      } else {
+        roles.push(c % 2 === 0 ? 'thesis' : 'antithesis');
+      }
+    }
+  }
+
+  const chapters: DialecticalChapterPlan[] = roles.map((role, idx) => {
+    const isRunwayToSynthesis =
+      idx + 1 < roles.length && roles[idx + 1] === 'synthesis';
+    const isStrongCadence = idx === roles.length - 1;
+
+    let form: ChapterInternalForm;
+    if (role === 'thesis') {
+      form = thesisForm;
+    } else if (role === 'synthesis') {
+      form =
+        formOverride === 'two_bar_continuous'
+          ? 'two_bar_continuous'
+          : rng() < profile.synthesisContinuousProb
+            ? 'two_bar_continuous'
+            : 'one_bar_repeat_with_passing';
+    } else {
+      // antithesis
+      form =
+        formOverride === 'two_bar_continuous' || formOverride === 'one_bar_repeat_with_passing'
+          ? formOverride
+          : thesisForm;
+    }
+
+    const anchorPitch =
+      role === 'synthesis'
+        ? synthAnchor
+        : role === 'antithesis'
+          ? antiAnchor
+          : thesisAnchor;
+    const topPitch =
+      role === 'synthesis'
+        ? synthTop
+        : role === 'antithesis'
+          ? antiTop
+          : thesisTop;
+
+    return {
+      chapterIndex: idx,
+      startTick: idx * CHAPTER_TICKS,
+      role,
+      form,
+      anchorPitch,
+      topPitch,
+      isRunwayToSynthesis,
+      isStrongCadence,
+    };
+  });
+
+  return { scheme, thesisForm, chapters };
+}
+
+function buildChapterSlotsForForm(params: {
+  chapter: DialecticalChapterPlan;
+  chapterLenTicks: number;
+  profile: GenreDialecticalProfile;
+  rfProfile: RhythmFirstGenreProfile;
+  vocalDensity: number;
+  activePreset: string;
+  formOverride?: ChapterInternalForm | 'auto';
+  thesisZone1Template: readonly DialecticalCellSlot[];
+  thesisContinuousTemplate: readonly DialecticalCellSlot[];
+  rng: () => number;
+}): DialecticalCellSlot[] {
+  const {
+    chapter,
+    chapterLenTicks,
+    profile,
+    rfProfile,
+    vocalDensity,
+    activePreset,
+    formOverride,
+    thesisZone1Template,
+    thesisContinuousTemplate,
+    rng,
+  } = params;
+
+  // 1-bar fallback for odd-bar / 1-bar sections
+  if (chapterLenTicks <= BAR_TICKS) {
+    return [
+      { relTick: 0, gridDuration: 240, gateRatio: 0.82, role: 'anchor', tag: 'core', velocityScale: 0.96 },
+      { relTick: 240, gridDuration: 240, gateRatio: 0.8, role: 'step', tag: 'arc', velocityScale: 0.92 },
+      { relTick: 480, gridDuration: 960, gateRatio: 0.88, role: 'top_fall', tag: 'cadence', velocityScale: 1.04, isPeakSlot: true },
+    ];
+  }
+
+  // Band-unison bar-crossing anticipation preset
+  if (activePreset === 'jrock_anticipation') {
+    return ANTICIPATION_TEMPLATE_2BAR.map((s) => ({ ...s }));
+  }
+
+  // Density extreme scaling when vocalDensity <= 1.5 or >= 4.5 (when form is auto)
+  if (
+    vocalDensity <= 1.5 &&
+    formOverride !== 'one_bar_repeat_with_passing'
+  ) {
+    return [
+      { relTick: 0, gridDuration: 480, gateRatio: 0.88, role: 'anchor', tag: 'core', velocityScale: 0.95 },
+      { relTick: 480, gridDuration: 960, gateRatio: 0.9, role: 'sync_tie', tag: 'arc', velocityScale: 1.02, isPeakSlot: true },
+      { relTick: 1920, gridDuration: 1200, gateRatio: 0.9, role: 'top_fall', tag: 'cadence', velocityScale: 1.04 },
+    ];
+  }
+  if (
+    vocalDensity >= 4.5 &&
+    formOverride !== 'one_bar_repeat_with_passing'
+  ) {
+    return [
+      { relTick: 0, gridDuration: 240, gateRatio: 0.72, role: 'anchor', tag: 'core', velocityScale: 0.96 },
+      { relTick: 240, gridDuration: 240, gateRatio: 0.72, role: 'rush', tag: 'arc', velocityScale: 0.9 },
+      { relTick: 480, gridDuration: 240, gateRatio: 0.72, role: 'rush', tag: 'arc', velocityScale: 0.94 },
+      { relTick: 720, gridDuration: 240, gateRatio: 0.74, role: 'sync_tie', tag: 'arc', velocityScale: 0.98 },
+      { relTick: 960, gridDuration: 240, gateRatio: 0.74, role: 'hook_stab', tag: 'arc', velocityScale: 1.04, isPeakSlot: true },
+      { relTick: 1200, gridDuration: 240, gateRatio: 0.72, role: 'step', tag: 'arc', velocityScale: 0.94 },
+      { relTick: 1440, gridDuration: 240, gateRatio: 0.72, role: 'step', tag: 'arc', velocityScale: 0.92 },
+      { relTick: 1920, gridDuration: 240, gateRatio: 0.74, role: 'step', tag: 'arc', velocityScale: 0.96 },
+      { relTick: 2160, gridDuration: 240, gateRatio: 0.74, role: 'step', tag: 'arc', velocityScale: 0.96 },
+      { relTick: 2400, gridDuration: 840, gateRatio: 0.85, role: 'top_fall', tag: 'cadence', velocityScale: 1.06 },
+    ];
+  }
+
+  // Pattern 2: one_bar_repeat_with_passing
+  if (chapter.form === 'one_bar_repeat_with_passing') {
+    const z1 = thesisZone1Template.map((s) => ({
+      ...s,
+      gateRatio: Math.min(0.9, Math.max(0.66, (s.gateRatio + rfProfile.baseGateRatio) * 0.5)),
+    }));
+    const slots: DialecticalCellSlot[] = [...z1];
+
+    // Zone 2: 1440..1919 passing connector (compress to 1 note [1680] when competing with Runway)
+    const useTwoPassing =
+      !chapter.isRunwayToSynthesis &&
+      z1.length * 2 + 2 <= profile.maxNotesPerChapter &&
+      (profile.allowSyncopatedPickup ? rng() < 0.65 : rng() < 0.45);
+    if (useTwoPassing) {
+      slots.push(
+        { relTick: 1440, gridDuration: 240, gateRatio: 0.78, role: 'step', tag: 'passing', velocityScale: 0.9 },
+        { relTick: 1680, gridDuration: 240, gateRatio: 0.8, role: 'pickup', tag: 'passing', velocityScale: 0.94 }
+      );
+    } else {
+      slots.push({
+        relTick: 1680,
+        gridDuration: 240,
+        gateRatio: 0.8,
+        role: 'pickup',
+        tag: 'passing',
+        velocityScale: 0.92,
+      });
+    }
+
+    // Zone 3: 1920..3359 exact Bar 2 core repeat of Zone 1
+    for (let i = 0; i < z1.length; i++) {
+      const src = z1[i];
+      const isLastZ3 = i === z1.length - 1;
+      const z3Rel = BAR_TICKS + src.relTick;
+      const z3Grid = isLastZ3
+        ? chapter.isRunwayToSynthesis
+          ? Math.max(240, 3360 - z3Rel)
+          : Math.min(960, 3600 - z3Rel)
+        : src.gridDuration;
+      slots.push({
+        relTick: z3Rel,
+        gridDuration: z3Grid,
+        gateRatio: isLastZ3 && !chapter.isRunwayToSynthesis ? Math.min(0.92, rfProfile.baseGateRatio) : src.gateRatio,
+        role: isLastZ3 && !chapter.isRunwayToSynthesis ? 'top_fall' : src.role,
+        tag: isLastZ3 && !chapter.isRunwayToSynthesis ? 'cadence' : 'core',
+        velocityScale: isLastZ3 ? 1.04 : src.velocityScale,
+        isPeakSlot: src.isPeakSlot,
+      });
+    }
+
+    // Zone 4: 3360..3839 Runway (2 ascending scale notes at 3360, 3600) ONLY on isRunwayToSynthesis
+    if (chapter.isRunwayToSynthesis) {
+      slots.push(
+        { relTick: 3360, gridDuration: 240, gateRatio: 0.82, role: 'pickup', tag: 'runway', velocityScale: 0.96 },
+        { relTick: 3600, gridDuration: 240, gateRatio: 0.86, role: 'pickup', tag: 'runway', velocityScale: 1.04 }
+      );
+    }
+
+    return slots.slice(0, profile.maxNotesPerChapter);
+  }
+
+  // Pattern 1: two_bar_continuous
+  const baseTpl =
+    chapter.role === 'synthesis'
+      ? PATTERN1_SYNTHESIS_TEMPLATES[
+          Math.floor(rng() * PATTERN1_SYNTHESIS_TEMPLATES.length)
+        ]
+      : thesisContinuousTemplate;
+
+  const slots: DialecticalCellSlot[] = baseTpl.map((s) => ({
+    ...s,
+    gateRatio: Math.min(0.92, Math.max(0.68, (s.gateRatio + rfProfile.baseGateRatio) * 0.5)),
+  }));
+
+  if (chapter.isRunwayToSynthesis) {
+    // Trim any tail encroaching into 3360..3839 and append 2 ascending runway notes
+    const trimmed: DialecticalCellSlot[] = [];
+    for (const s of slots) {
+      if (s.relTick >= 3360) continue;
+      const maxGrid = 3360 - s.relTick;
+      trimmed.push({
+        ...s,
+        gridDuration: Math.max(240, Math.min(s.gridDuration, maxGrid)),
+        role: s.relTick + s.gridDuration >= 3360 ? 'step' : s.role,
+      });
+    }
+    trimmed.push(
+      { relTick: 3360, gridDuration: 240, gateRatio: 0.82, role: 'pickup', tag: 'runway', velocityScale: 0.96 },
+      { relTick: 3600, gridDuration: 240, gateRatio: 0.86, role: 'pickup', tag: 'runway', velocityScale: 1.04 }
+    );
+    return trimmed.slice(0, profile.maxNotesPerChapter);
+  }
+
+  return slots.slice(0, profile.maxNotesPerChapter);
+}
+
+const STRONG_BEAT_REL_TICKS = new Set([0, 480, 960, 1920, 2400, 2880]);
+
+export function generateDialecticalVocal(
+  input: EngineInput
+): DialecticalGenerationResult {
+  const { song, section, seed, style, prevVocalAvgPitch } = input;
+  const genreId: MasterGenre = resolveMasterGenreForVocal(input);
+  const profile = GENRE_DIALECTICAL_PROFILES[genreId];
+  const rfProfile = RHYTHM_FIRST_GENRE_PROFILES[genreId];
+  const sectionRole = normalizeSectionRole(section.type, section.energy, section.name);
+
+  const styleOffsetSeed = style === 'B' ? 0x1f3d5b79 : style === 'C' ? 0x5a3c9e17 : 0;
+  const rng = mulberry32((((seed ^ styleOffsetSeed) >>> 0) + 1) >>> 0);
+
+  const keySemitone = noteNameToSemitone(song.key);
+  const scalePcs = new Set(getScalePitchClasses(song.key, song.scale));
+  const fullScale = buildScaleGrid(scalePcs, VOCAL_MIN_PITCH, VOCAL_MAX_PITCH);
+  const safeFullScale =
+    fullScale.length > 0
+      ? fullScale
+      : [nearestScalePitch(60, scalePcs, VOCAL_MIN_PITCH, VOCAL_MAX_PITCH)];
+
+  const schemeOverride =
+    input.vocalDialecticalScheme ?? section.vocalDialecticalScheme ?? 'auto';
+  const formOverride =
+    input.vocalChapterForm ?? section.vocalChapterForm ?? 'auto';
+  const activePreset = (
+    section.patternPresets?.vocal ??
+    section.partPresets?.vocal ??
+    song.members.vocal?.patternPreset ??
+    'auto'
+  ).trim();
+  const vocalDensity = Math.max(1.0, Math.min(5.0, section.vocalDensity ?? 3.0));
+  const sectionEndTick = section.bars * BAR_TICKS;
+
+  const { scheme, thesisForm, chapters } = planDialecticalChapters({
+    genreId,
+    sectionRole,
+    bars: section.bars,
+    scalePcs,
+    keySemitone,
+    rng,
+    schemeOverride,
+    formOverride,
+    prevVocalAvgPitch,
+  });
+
+  // Shared thesis rhythm skeletons (guaranteed identical across T1, T2, and 16-bar T3/T4)
+  const thesisZone1Template =
+    PATTERN2_ZONE1_TEMPLATES[Math.floor(rng() * PATTERN2_ZONE1_TEMPLATES.length)];
+  const thesisContinuousTemplate =
+    PATTERN1_CONTINUOUS_TEMPLATES[
+      Math.floor(rng() * PATTERN1_CONTINUOUS_TEMPLATES.length)
+    ];
+
+  // Shared thesis Zone 1 diatonic step offsets for catchy T1/T2 motif identity
+  const thesisZone1RelSteps: number[] = [0, 1, 0];
+  if (rng() < 0.5) {
+    thesisZone1RelSteps[1] = 1;
+    thesisZone1RelSteps[2] = -1;
+  }
+
+  const baseVelocity =
+    sectionRole === 'chorus' || section.energy === 'High'
+      ? 104
+      : section.energy === 'Low'
+        ? 84
+        : 94;
+
+  const fallCfg: FallExpressionConfig = {
+    ...rfProfile.fallConfig,
+    dropSemitones: profile.fallSemitones,
+  };
+
+  const chapterNotesMap = new Map<number, DialecticalVocalNote[]>();
+  let lastThesisMeanPitch: number | undefined;
+  let lastThesisTopPitch: number | undefined;
+
+  for (let cIdx = 0; cIdx < chapters.length; cIdx++) {
+    const ch = chapters[cIdx];
+    const chEndTick = Math.min(sectionEndTick, ch.startTick + CHAPTER_TICKS);
+    const chLen = chEndTick - ch.startTick;
+
+    const slots = buildChapterSlotsForForm({
+      chapter: ch,
+      chapterLenTicks: chLen,
+      profile,
+      rfProfile,
+      vocalDensity,
+      activePreset,
+      formOverride,
+      thesisZone1Template,
+      thesisContinuousTemplate,
+      rng,
+    });
+
+    const minChPitch = Math.max(VOCAL_MIN_PITCH, ch.anchorPitch - 4);
+    const maxChPitch = ch.topPitch;
+    const rawPitches: number[] = [];
+
+    // 1. Generate raw scale-conforming dialectical contour per slot
+    if (ch.form === 'one_bar_repeat_with_passing') {
+      const z1Pitches: number[] = [];
+      let z1Idx = 0;
+      let z3Idx = 0;
+      for (let i = 0; i < slots.length; i++) {
+        const s = slots[i];
+        if (s.relTick < 1440) {
+          // Zone 1 core motif
+          let p: number;
+          if (s.isPeakSlot) {
+            p = maxChPitch;
+          } else {
+            const stepOff = thesisZone1RelSteps[z1Idx % thesisZone1RelSteps.length] ?? 0;
+            p = stepInScale(ch.anchorPitch, stepOff, safeFullScale, minChPitch, maxChPitch);
+          }
+          z1Pitches.push(p);
+          rawPitches.push(p);
+          z1Idx++;
+        } else if (s.tag === 'passing') {
+          // Zone 2 passing connector (pure scale tone stepping smoothly toward Zone 3)
+          const prevP = rawPitches[rawPitches.length - 1] ?? ch.anchorPitch;
+          const stepDir = prevP >= ch.anchorPitch ? -1 : 1;
+          const p = stepInScale(prevP, stepDir, safeFullScale, minChPitch, maxChPitch);
+          rawPitches.push(p);
+        } else if (s.tag === 'runway') {
+          // Zone 4 ascending runway notes toward next synthesis chapter
+          const nextCh = chapters[cIdx + 1];
+          const targetNext = nextCh ? nextCh.anchorPitch : ch.topPitch;
+          const isSecondRunway = i === slots.length - 1;
+          const prevP = rawPitches[rawPitches.length - 1] ?? ch.anchorPitch;
+          if (!isSecondRunway) {
+            const r1 = stepInScale(
+              Math.min(targetNext - 2, ch.anchorPitch),
+              0,
+              safeFullScale,
+              minChPitch,
+              Math.max(minChPitch, maxChPitch - 1)
+            );
+            rawPitches.push(r1);
+          } else {
+            const r2 = stepInScale(prevP, 1, safeFullScale, prevP + 1, maxChPitch);
+            rawPitches.push(Math.min(maxChPitch, r2));
+          }
+        } else {
+          // Zone 3 exact Bar 2 core repeat (preserves diatonic contour for combined >= 0.70)
+          const mirrored = z1Pitches[z3Idx] ?? ch.anchorPitch;
+          rawPitches.push(mirrored);
+          z3Idx++;
+        }
+      }
+    } else {
+      // Pattern 1: two_bar_continuous (or synthesis soaring arch)
+      let prevP = ch.anchorPitch;
+      let peakPlaced = false;
+      for (let i = 0; i < slots.length; i++) {
+        const s = slots[i];
+        const isLast = i === slots.length - 1;
+        let p: number;
+
+        if (s.tag === 'runway') {
+          const isSecondRunway = i === slots.length - 1;
+          if (!isSecondRunway) {
+            p = stepInScale(
+              ch.anchorPitch,
+              0,
+              safeFullScale,
+              minChPitch,
+              Math.max(minChPitch, maxChPitch - 1)
+            );
+          } else {
+            p = stepInScale(prevP, 1, safeFullScale, prevP + 1, maxChPitch);
+          }
+        } else if (ch.role === 'synthesis') {
+          // Synthesis: peak in mid-chapter (960..1920), followed by Post-skip Reversal stepwise descent
+          if (s.isPeakSlot && s.relTick >= 960 && s.relTick <= 1920) {
+            p = maxChPitch;
+            peakPlaced = true;
+          } else if (peakPlaced) {
+            // Post-skip reversal: step smoothly downward toward anchor / tonic
+            p = stepInScale(prevP, -1, safeFullScale, minChPitch, Math.max(minChPitch, maxChPitch - 1));
+          } else {
+            // Lead-in climb toward mid-chapter climax
+            p = stepInScale(
+              ch.anchorPitch,
+              i === 0 ? 0 : 1,
+              safeFullScale,
+              minChPitch,
+              Math.max(minChPitch, maxChPitch - 1)
+            );
+          }
+        } else if (s.isPeakSlot && !isLast) {
+          p = maxChPitch;
+          peakPlaced = true;
+        } else if (isLast) {
+          // Chapter cadence landing (never leaps upward >= +5; settles downward or holds)
+          const cadenceTarget = ch.isStrongCadence
+            ? fitPitchClassToRange(keySemitone, minChPitch, ch.anchorPitch)
+            : ch.anchorPitch;
+          const snappedCadence = nearestScalePitchInRange(
+            cadenceTarget,
+            Math.max(minChPitch, prevP - 4),
+            Math.min(maxChPitch, prevP),
+            scalePcs
+          );
+          p = snappedCadence;
+        } else if (i === 0) {
+          p = ch.anchorPitch;
+        } else {
+          const stepDelta = peakPlaced ? -1 : rng() < 0.55 ? 1 : 0;
+          p = stepInScale(prevP, stepDelta, safeFullScale, minChPitch, maxChPitch);
+        }
+
+        rawPitches.push(p);
+        prevP = p;
+      }
+    }
+
+    // 2. Harmonic Snapping (Zone 1 & Zone 3 strong beats + cadence only; never Zone 2 passing / Zone 4 runway)
+    const snappedPitches = [...rawPitches];
+    for (let i = 0; i < slots.length; i++) {
+      const s = slots[i];
+      if (s.tag === 'passing' || s.tag === 'runway') continue;
+      if (s.isPeakSlot && snappedPitches[i] === maxChPitch) continue; // Preserve exact dialectical topPitch
+      const isStrongOrCadence =
+        STRONG_BEAT_REL_TICKS.has(s.relTick) || s.tag === 'cadence';
+      if (!isStrongOrCadence) continue;
+
+      // For Pattern 2 Zone 3, avoid breaking Zone 1 <-> Zone 3 contour similarity
+      if (ch.form === 'one_bar_repeat_with_passing' && s.relTick >= BAR_TICKS && s.tag !== 'cadence') {
+        continue;
+      }
+
+      const absTick = Math.min(sectionEndTick - 1, ch.startTick + s.relTick);
+      const activeChord = getActiveChordAtTick(
+        section.chords,
+        absTick,
+        song.key,
+        song.scale,
+        section.bars
+      ).parsed;
+      const chordPcs = new Set(
+        activeChord.intervals.map((iv) => (activeChord.rootSemitone + iv) % 12)
+      );
+      const currP = snappedPitches[i];
+      if (chordPcs.has(currP % 12)) continue;
+
+      let bestCand = currP;
+      let bestDist = 3; // <= 2 semitones only
+      for (const delta of [-1, 1, -2, 2]) {
+        const cand = currP + delta;
+        if (
+          cand >= minChPitch &&
+          cand <= maxChPitch &&
+          scalePcs.has(cand % 12) &&
+          chordPcs.has(cand % 12) &&
+          Math.abs(delta) < bestDist
+        ) {
+          bestDist = Math.abs(delta);
+          bestCand = cand;
+        }
+      }
+      snappedPitches[i] = bestCand;
+    }
+
+    // 3. Post-Snap Boundary Verification Pass (guarantees all dialectical invariants 100%)
+    // 3a. Guarantee realized topPitch === ch.topPitch
+    if (snappedPitches.length > 0 && Math.max(...snappedPitches) !== maxChPitch) {
+      const peakSlotIdx = slots.findIndex((s) => s.isPeakSlot);
+      const safePeakIdx =
+        peakSlotIdx !== -1
+          ? peakSlotIdx
+          : Math.min(Math.max(0, slots.length - 2), Math.floor(slots.length / 2));
+      snappedPitches[safePeakIdx] = maxChPitch;
+    }
+    // Cap every note <= maxChPitch
+    for (let i = 0; i < snappedPitches.length; i++) {
+      if (snappedPitches[i] > maxChPitch) {
+        snappedPitches[i] = maxChPitch;
+      }
+    }
+
+    // 3b. Guarantee Pattern 2 Zone 3 contour similarity >= 0.70 after snapping
+    if (ch.form === 'one_bar_repeat_with_passing') {
+      const z1Indices = slots
+        .map((s, idx) => (s.relTick < 1440 ? idx : -1))
+        .filter((idx) => idx !== -1);
+      const z3Indices = slots
+        .map((s, idx) => (s.relTick >= BAR_TICKS && s.relTick < 3360 ? idx : -1))
+        .filter((idx) => idx !== -1);
+      const pairCount = Math.min(z1Indices.length, z3Indices.length);
+      for (let k = 0; k < pairCount; k++) {
+        snappedPitches[z3Indices[k]] = snappedPitches[z1Indices[k]];
+      }
+    }
+
+    // 3c. Guarantee Antithesis strict drop: anti.meanPitch < thesis.meanPitch & 1 <= thesisTop - antiTop <= 4
+    if (ch.role === 'antithesis' && lastThesisMeanPitch !== undefined) {
+      const meanOf = (arr: number[]) =>
+        arr.reduce((sum, v) => sum + v, 0) / Math.max(1, arr.length);
+      let guard = 0;
+      while (meanOf(snappedPitches) >= lastThesisMeanPitch - 0.05 && guard < 16) {
+        guard++;
+        let lowered = false;
+        const maxVal = Math.max(...snappedPitches);
+        let peakKept = false;
+        for (let i = 0; i < snappedPitches.length; i++) {
+          if (snappedPitches[i] === maxVal && !peakKept) {
+            peakKept = true;
+            continue;
+          }
+          const lower = stepInScale(snappedPitches[i], -1, safeFullScale, VOCAL_MIN_PITCH, maxChPitch);
+          if (lower < snappedPitches[i]) {
+            snappedPitches[i] = lower;
+            lowered = true;
+          }
+        }
+        // Keep Pattern 2 Zone 3 aligned with Zone 1 if lowered
+        if (ch.form === 'one_bar_repeat_with_passing') {
+          const z1Indices = slots
+            .map((s, idx) => (s.relTick < 1440 ? idx : -1))
+            .filter((idx) => idx !== -1);
+          const z3Indices = slots
+            .map((s, idx) => (s.relTick >= BAR_TICKS && s.relTick < 3360 ? idx : -1))
+            .filter((idx) => idx !== -1);
+          for (let k = 0; k < Math.min(z1Indices.length, z3Indices.length); k++) {
+            snappedPitches[z3Indices[k]] = snappedPitches[z1Indices[k]];
+          }
+        }
+        if (!lowered) break;
+      }
+    }
+
+    // 3d. Guarantee NO extreme chapter-end upward leap (last.pitch - prev.pitch < 5; <= 2 on runway, <= 0 on normal)
+    if (snappedPitches.length >= 2) {
+      const lastIdx = snappedPitches.length - 1;
+      const prevP = snappedPitches[lastIdx - 1];
+      const maxEndUp = ch.isRunwayToSynthesis ? 2 : 0;
+      if (snappedPitches[lastIdx] - prevP > maxEndUp) {
+        snappedPitches[lastIdx] = nearestScalePitchInRange(
+          prevP + maxEndUp,
+          Math.max(VOCAL_MIN_PITCH, prevP - 2),
+          Math.min(maxChPitch, prevP + maxEndUp),
+          scalePcs
+        );
+      }
+    }
+
+    // 4. Construct DialecticalVocalNote[] with strict monophony (minGap >= VOISONA_MIN_GAP_TICKS) & Fall expression
+    const chNotes: DialecticalVocalNote[] = [];
+    for (let i = 0; i < slots.length; i++) {
+      const s = slots[i];
+      const absStart = ch.startTick + s.relTick;
+      if (absStart >= sectionEndTick) continue;
+
+      const nextStart =
+        i + 1 < slots.length
+          ? ch.startTick + slots[i + 1].relTick
+          : chEndTick;
+      const maxSpan = Math.max(1, nextStart - absStart);
+      const gridDur = Math.max(120, Math.min(s.gridDuration, maxSpan));
+      const maxGateWithGap =
+        i + 1 < slots.length || chEndTick < sectionEndTick
+          ? Math.max(120, maxSpan - VOISONA_MIN_GAP_TICKS)
+          : maxSpan;
+      const gateDur = Math.max(
+        120,
+        Math.min(gridDur, maxGateWithGap, Math.round(gridDur * s.gateRatio))
+      );
+
+      const trailingPureRest = nextStart - (absStart + gridDur);
+      const isFallCandidate =
+        (s.role === 'top_fall' || Boolean(ch.role === 'synthesis' && s.isPeakSlot)) &&
+        gridDur >= fallCfg.minGridDurationTicks &&
+        trailingPureRest >= fallCfg.minTrailingRestTicks;
+      const hasFall = isFallCandidate && rng() < fallCfg.probability;
+
+      const pitch = snappedPitches[i];
+      chNotes.push({
+        startTick: absStart,
+        gridDuration: gridDur,
+        gateDuration: gateDur,
+        midiPitch: pitch,
+        pitch,
+        velocity: clampVelocity(Math.round(baseVelocity * s.velocityScale)),
+        role: s.role,
+        tag: s.tag,
+        chapterIndex: ch.chapterIndex,
+        hasFall,
+        fallConfig: hasFall ? { ...fallCfg } : undefined,
+      });
+    }
+
+    chapterNotesMap.set(ch.chapterIndex, chNotes);
+    if (ch.role === 'thesis' && chNotes.length > 0) {
+      lastThesisMeanPitch =
+        chNotes.reduce((sum, n) => sum + n.midiPitch, 0) / chNotes.length;
+      lastThesisTopPitch = Math.max(...chNotes.map((n) => n.midiPitch));
+    }
+  }
+
+  void lastThesisTopPitch;
+
+  const allNotes: DialecticalVocalNote[] = [];
+  for (const ch of chapters) {
+    const chNotes = chapterNotesMap.get(ch.chapterIndex) ?? [];
+    allNotes.push(...chNotes);
+  }
+
+  const midiNotes: MidiNote[] = allNotes.map((n) => ({
+    pitch: n.midiPitch,
+    velocity: n.velocity,
+    startTick: n.startTick,
+    durationTicks: n.gateDuration,
+    channel: TRACK_CHANNELS.vocal,
+    gridDurationTicks: n.gridDuration,
+    role: n.role,
+    tag: n.tag,
+    hasFall: n.hasFall,
+    ...(n.hasFall && n.fallConfig ? { fallConfig: { ...n.fallConfig } } : {}),
+  }));
+
+  return {
+    genreId,
+    profile,
+    scheme,
+    thesisForm,
+    chapters,
+    notes: allNotes,
+    midiNotes,
+  };
 }
 
 /**

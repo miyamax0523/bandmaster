@@ -267,6 +267,9 @@ export function selectSongTracks(
         if (n.role !== undefined) {
           resolved.role = n.role;
         }
+        if (n.tag !== undefined) {
+          resolved.tag = n.tag;
+        }
         if (n.hasFall !== undefined) {
           resolved.hasFall = n.hasFall;
         }

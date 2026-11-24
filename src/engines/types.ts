@@ -1,5 +1,7 @@
 import type {
   BeatPatternId,
+  ChapterInternalForm,
+  EightBarScheme,
   EnergyLevel,
   KeyboardDensityLevel,
   KickTake,
@@ -74,4 +76,6 @@ export interface EngineInput {
   nextSectionType?: SectionType | string;
   nextSectionEnergy?: EnergyLevel | string;
   masterGenreId?: MasterGenreId;
+  vocalDialecticalScheme?: EightBarScheme | 'auto';
+  vocalChapterForm?: ChapterInternalForm | 'auto';
 }

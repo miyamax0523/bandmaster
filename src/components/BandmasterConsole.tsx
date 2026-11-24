@@ -7,11 +7,13 @@ import { useHorizontalSwipe } from '../lib/touchSwipe';
 import {
   getDefaultDrumFillEnabled,
   type BeatPatternId,
+  type ChapterInternalForm,
   type ChordSlot,
   type CopiedPartPhrase,
   type DensityLevel,
   type DrumAnticipationMode,
   type DrumLoopData,
+  type EightBarScheme,
   type InstrumentType,
   type KeyboardDensityLevel,
   type KickTake,
@@ -51,6 +53,14 @@ interface BandmasterConsoleProps {
   onChangeSectionVocalHarmony: (
     sectionId: string,
     mode: VocalHarmonyMode
+  ) => void;
+  onChangeSectionVocalDialecticalScheme: (
+    sectionId: string,
+    scheme: EightBarScheme | 'auto'
+  ) => void;
+  onChangeSectionVocalChapterForm: (
+    sectionId: string,
+    form: ChapterInternalForm | 'auto'
   ) => void;
   copiedPhrase: CopiedPartPhrase | null;
   onCopyPartPhrase: (phrase: CopiedPartPhrase) => void;
@@ -173,6 +183,24 @@ const VOCAL_HARMONY_OPTIONS: Array<{ value: VocalHarmonyMode; label: string }> =
   { value: 'octave_down', label: 'Oct下' },
 ];
 
+const VOCAL_DIALECTICAL_SCHEME_OPTIONS: Array<{
+  value: EightBarScheme | 'auto';
+  label: string;
+}> = [
+  { value: 'auto', label: '自動' },
+  { value: 'T-A-T-A', label: 'T-A-T-A（反復・安定）' },
+  { value: 'T-A-T-S', label: 'T-A-T-S（反動クライマックス）' },
+];
+
+const VOCAL_CHAPTER_FORM_OPTIONS: Array<{
+  value: ChapterInternalForm | 'auto';
+  label: string;
+}> = [
+  { value: 'auto', label: '自動' },
+  { value: 'two_bar_continuous', label: '2小節貫通型' },
+  { value: 'one_bar_repeat_with_passing', label: '1小節反復＋経過ライン' },
+];
+
 export function BandmasterConsole({
   song,
   bandState,
@@ -189,6 +217,8 @@ export function BandmasterConsole({
   onChangeSectionKeyboardDensity,
   onChangeSectionVocalDensity,
   onChangeSectionVocalHarmony,
+  onChangeSectionVocalDialecticalScheme,
+  onChangeSectionVocalChapterForm,
   copiedPhrase,
   onCopyPartPhrase,
   onPastePartPhrase,
@@ -810,6 +840,48 @@ export function BandmasterConsole({
                         )
                       }
                     />
+                  </div>
+                  <div className="density-row">
+                    <span className="density-label">構成スキーム</span>
+                    <select
+                      className="console-preset-select"
+                      aria-label="Vocal 構成スキーム"
+                      value={section.vocalDialecticalScheme ?? 'auto'}
+                      disabled={cell.locked || !effectivelyEnabled}
+                      onChange={(e) =>
+                        onChangeSectionVocalDialecticalScheme(
+                          section.id,
+                          e.target.value as EightBarScheme | 'auto'
+                        )
+                      }
+                    >
+                      {VOCAL_DIALECTICAL_SCHEME_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="density-row">
+                    <span className="density-label">章内構造</span>
+                    <select
+                      className="console-preset-select"
+                      aria-label="Vocal 章内構造"
+                      value={section.vocalChapterForm ?? 'auto'}
+                      disabled={cell.locked || !effectivelyEnabled}
+                      onChange={(e) =>
+                        onChangeSectionVocalChapterForm(
+                          section.id,
+                          e.target.value as ChapterInternalForm | 'auto'
+                        )
+                      }
+                    >
+                      {VOCAL_CHAPTER_FORM_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                   <div className="density-row">
                     <span className="density-label">ハモリ</span>

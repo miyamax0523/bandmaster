@@ -123,6 +123,13 @@ export interface FallExpressionConfig {
   readonly resetMarginTicks: number;
 }
 
+export type ChapterRole = 'thesis' | 'antithesis' | 'synthesis';
+export type ChapterInternalForm =
+  | 'two_bar_continuous'
+  | 'one_bar_repeat_with_passing';
+export type EightBarScheme = 'T-A-T-A' | 'T-A-T-S';
+export type NoteFunctionTag = 'core' | 'passing' | 'runway' | 'cadence' | 'arc';
+
 export interface MidiNote {
   pitch: number; // 0..127
   velocity: number; // 1..127
@@ -131,6 +138,7 @@ export interface MidiNote {
   channel?: number;
   gridDurationTicks?: number;
   role?: NoteRole;
+  tag?: NoteFunctionTag;
   hasFall?: boolean;
   fallConfig?: FallExpressionConfig;
 }
@@ -245,6 +253,8 @@ export interface Section {
   keyboardDensity?: KeyboardDensityLevel; // 1..7 (default 4)
   vocalDensity?: number; // 1.0..5.0 (default 3)
   vocalHarmony?: VocalHarmonyMode; // default 'off'
+  vocalDialecticalScheme?: EightBarScheme | 'auto'; // default 'auto'
+  vocalChapterForm?: ChapterInternalForm | 'auto'; // default 'auto'
   bassChromaticEnabled?: boolean; // default false
   bassFillEnabled?: boolean; // default false
   bassFillSeed?: number; // default 0
