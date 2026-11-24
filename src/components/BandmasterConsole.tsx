@@ -6,6 +6,8 @@ import { PATTERN_PRESET_GROUPS } from '../lib/patternPresets';
 import { useHorizontalSwipe } from '../lib/touchSwipe';
 import {
   getDefaultDrumFillEnabled,
+  type AccompanimentTake,
+  type BassSkeletonId,
   type BeatPatternId,
   type ChapterInternalForm,
   type ChordSlot,
@@ -16,7 +18,9 @@ import {
   type EightBarScheme,
   type InstrumentType,
   type KeyboardDensityLevel,
+  type KeyboardSkeletonId,
   type KickTake,
+  type PadSkeletonId,
   type SongConfig,
   type TakeStyle,
   type VocalHarmonyMode,
@@ -88,6 +92,16 @@ interface BandmasterConsoleProps {
   onSetSectionDrumKickTake: (
     sectionId: string,
     kickTake: KickTake | 'auto'
+  ) => void;
+  onSetSectionAccompanimentSkeleton?: (
+    sectionId: string,
+    instrument: 'bass' | 'keyboard' | 'pad',
+    skeleton: BassSkeletonId | KeyboardSkeletonId | PadSkeletonId | 'auto'
+  ) => void;
+  onSetSectionAccompanimentTake?: (
+    sectionId: string,
+    instrument: 'bass' | 'keyboard' | 'pad',
+    take: AccompanimentTake | 'auto'
   ) => void;
   onCopyTimelineToAllSections: (sourceSectionId: string) => void;
   onToggleSectionPart: (sectionId: string, inst: InstrumentType) => void;
@@ -250,6 +264,48 @@ function getKickTakeOptions(
   ];
 }
 
+const BASS_SKELETON_OPTIONS: Array<{ value: BassSkeletonId | 'auto'; label: string }> = [
+  { value: 'auto', label: '自動（ドラム連動）' },
+  { value: 'KICK_LOCK', label: 'キック同期（Kick Lock）' },
+  { value: 'EIGHTH_ROOT', label: '8分ルート推進' },
+  { value: 'OCTAVE_GROOVE', label: 'オクターブ・グルーヴ' },
+  { value: 'SIXTEENTH_SYNC', label: '16分シンコペ' },
+  { value: 'TRIPLET_SHUFFLE', label: '3連シャッフル' },
+  { value: 'LONG_SUSTAIN', label: 'ロングサステイン' },
+  { value: 'RIFF_CHUG', label: 'リフ・チャグ（刻み）' },
+];
+
+const KEYBOARD_SKELETON_OPTIONS: Array<{
+  value: KeyboardSkeletonId | 'auto';
+  label: string;
+}> = [
+  { value: 'auto', label: '自動（ドラム連動）' },
+  { value: 'SUSTAIN_CHORD', label: '白玉サステイン' },
+  { value: 'QUARTER_CHOP', label: '4分刻みチョップ' },
+  { value: 'OFFBEAT_STAB', label: '裏打ちスタブ' },
+  { value: 'ARPEGGIO_8TH_16TH', label: 'アルペジオ（8分/16分）' },
+  { value: 'SYNCOPATED_RIFF', label: 'シンコペ・リフ' },
+  { value: 'TRIPLET_COMP', label: '3連シャッフルコンプ' },
+];
+
+const PAD_SKELETON_OPTIONS: Array<{ value: PadSkeletonId | 'auto'; label: string }> = [
+  { value: 'auto', label: '自動（ドラム連動）' },
+  { value: 'WARM_SUSTAIN', label: 'ウォーム持続（共通音連結）' },
+  { value: 'PEDAL_DRONE', label: '高域ペダル・ドローン' },
+  { value: 'SIDECHAIN_PULSE', label: 'サイドチェイン・パルス' },
+  { value: 'BUILDUP_SWELL', label: 'ビルドアップ・スウェル' },
+];
+
+const ACCOMPANIMENT_TAKE_OPTIONS: Array<{
+  value: AccompanimentTake | 'auto';
+  label: string;
+}> = [
+  { value: 'auto', label: '自動' },
+  { value: 'A', label: 'Take A（標準）' },
+  { value: 'B', label: 'Take B（動き・裏）' },
+  { value: 'C', label: 'Take C（推進・装飾）' },
+];
+
 const VOCAL_HARMONY_OPTIONS: Array<{ value: VocalHarmonyMode; label: string }> = [
   { value: 'off', label: 'OFF' },
   { value: 'upper_3rd', label: '3度上' },
@@ -309,6 +365,8 @@ export function BandmasterConsole({
   onSetSectionDrumBreakEnabled,
   onSetSectionDrumPatternId,
   onSetSectionDrumKickTake,
+  onSetSectionAccompanimentSkeleton,
+  onSetSectionAccompanimentTake,
   onCopyTimelineToAllSections,
   onToggleSectionPart,
   onOpenVocalModal,
@@ -810,57 +868,147 @@ export function BandmasterConsole({
               )}
 
               {key === 'bass' && (
-                <div className="bass-pro-controls" role="group" aria-label="Bass 表現設定">
-                  <button
-                    type="button"
-                    className={`chip-btn bass-pro-btn ${
-                      section.bassFillEnabled ? 'chip-active' : ''
-                    }`}
-                    aria-pressed={Boolean(section.bassFillEnabled)}
-                    disabled={cell.locked || !effectivelyEnabled}
-                    onClick={() =>
-                      onChangeSectionBassFillEnabled(
-                        section.id,
-                        !section.bassFillEnabled
-                      )
-                    }
-                    title="4/8小節目末尾のベースおかず（フィルイン）を切り替え"
-                  >
-                    🎸 おかず: {section.bassFillEnabled ? 'ON' : 'OFF'}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-secondary bass-pro-btn"
-                    disabled={
-                      !section.bassFillEnabled || cell.locked || !effectivelyEnabled
-                    }
-                    onClick={() => onRerollSectionBassFill(section.id)}
-                    title="基本グルーヴを保ったままおかずフレーズだけ入替"
-                  >
-                    🎲 おかず入替
-                  </button>
-                  <button
-                    type="button"
-                    className={`chip-btn bass-pro-btn ${
-                      section.bassChromaticEnabled ? 'chip-active' : ''
-                    }`}
-                    aria-pressed={Boolean(section.bassChromaticEnabled)}
-                    disabled={cell.locked || !effectivelyEnabled}
-                    onClick={() =>
-                      onChangeSectionBassChromatic(
-                        section.id,
-                        !section.bassChromaticEnabled
-                      )
-                    }
-                    title="弱拍・経過音への半音アプローチ／♭5経過音を許可"
-                  >
-                    ♯ 半音経過: {section.bassChromaticEnabled ? 'ON' : 'OFF'}
-                  </button>
+                <div className="density-controls">
+                  <div className="density-row">
+                    <span className="density-label">ベース骨格</span>
+                    <select
+                      className="console-preset-select"
+                      aria-label="ベース骨格"
+                      value={section.bassSkeleton ?? 'auto'}
+                      disabled={cell.locked || !effectivelyEnabled}
+                      onChange={(e) =>
+                        onSetSectionAccompanimentSkeleton?.(
+                          section.id,
+                          'bass',
+                          e.target.value as BassSkeletonId | 'auto'
+                        )
+                      }
+                    >
+                      {BASS_SKELETON_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="density-row">
+                    <span className="density-label">骨格 Take</span>
+                    <select
+                      className="console-preset-select"
+                      aria-label="ベース骨格 Take"
+                      value={section.bassTake ?? 'auto'}
+                      disabled={cell.locked || !effectivelyEnabled}
+                      onChange={(e) =>
+                        onSetSectionAccompanimentTake?.(
+                          section.id,
+                          'bass',
+                          e.target.value as AccompanimentTake | 'auto'
+                        )
+                      }
+                    >
+                      {ACCOMPANIMENT_TAKE_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="bass-pro-controls" role="group" aria-label="Bass 表現設定">
+                    <button
+                      type="button"
+                      className={`chip-btn bass-pro-btn ${
+                        section.bassFillEnabled ? 'chip-active' : ''
+                      }`}
+                      aria-pressed={Boolean(section.bassFillEnabled)}
+                      disabled={cell.locked || !effectivelyEnabled}
+                      onClick={() =>
+                        onChangeSectionBassFillEnabled(
+                          section.id,
+                          !section.bassFillEnabled
+                        )
+                      }
+                      title="4/8小節目末尾のベースおかず（フィルイン）を切り替え"
+                    >
+                      🎸 おかず: {section.bassFillEnabled ? 'ON' : 'OFF'}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-secondary bass-pro-btn"
+                      disabled={
+                        !section.bassFillEnabled || cell.locked || !effectivelyEnabled
+                      }
+                      onClick={() => onRerollSectionBassFill(section.id)}
+                      title="基本グルーヴを保ったままおかずフレーズだけ入替"
+                    >
+                      🎲 おかず入替
+                    </button>
+                    <button
+                      type="button"
+                      className={`chip-btn bass-pro-btn ${
+                        section.bassChromaticEnabled ? 'chip-active' : ''
+                      }`}
+                      aria-pressed={Boolean(section.bassChromaticEnabled)}
+                      disabled={cell.locked || !effectivelyEnabled}
+                      onClick={() =>
+                        onChangeSectionBassChromatic(
+                          section.id,
+                          !section.bassChromaticEnabled
+                        )
+                      }
+                      title="弱拍・経過音への半音アプローチ／♭5経過音を許可"
+                    >
+                      ♯ 半音経過: {section.bassChromaticEnabled ? 'ON' : 'OFF'}
+                    </button>
+                  </div>
                 </div>
               )}
 
               {key === 'keyboard' && (
                 <div className="density-controls">
+                  <div className="density-row">
+                    <span className="density-label">鍵盤骨格</span>
+                    <select
+                      className="console-preset-select"
+                      aria-label="鍵盤骨格"
+                      value={section.keyboardSkeleton ?? 'auto'}
+                      disabled={cell.locked || !effectivelyEnabled}
+                      onChange={(e) =>
+                        onSetSectionAccompanimentSkeleton?.(
+                          section.id,
+                          'keyboard',
+                          e.target.value as KeyboardSkeletonId | 'auto'
+                        )
+                      }
+                    >
+                      {KEYBOARD_SKELETON_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="density-row">
+                    <span className="density-label">骨格 Take</span>
+                    <select
+                      className="console-preset-select"
+                      aria-label="鍵盤骨格 Take"
+                      value={section.keyboardTake ?? 'auto'}
+                      disabled={cell.locked || !effectivelyEnabled}
+                      onChange={(e) =>
+                        onSetSectionAccompanimentTake?.(
+                          section.id,
+                          'keyboard',
+                          e.target.value as AccompanimentTake | 'auto'
+                        )
+                      }
+                    >
+                      {ACCOMPANIMENT_TAKE_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                   <div className="density-row">
                     <span className="density-label">音数</span>
                     <div
@@ -885,6 +1033,55 @@ export function BandmasterConsole({
                         );
                       })}
                     </div>
+                  </div>
+                </div>
+              )}
+
+              {key === 'pad' && (
+                <div className="density-controls">
+                  <div className="density-row">
+                    <span className="density-label">PAD 骨格</span>
+                    <select
+                      className="console-preset-select"
+                      aria-label="PAD 骨格"
+                      value={section.padSkeleton ?? 'auto'}
+                      disabled={cell.locked || !effectivelyEnabled}
+                      onChange={(e) =>
+                        onSetSectionAccompanimentSkeleton?.(
+                          section.id,
+                          'pad',
+                          e.target.value as PadSkeletonId | 'auto'
+                        )
+                      }
+                    >
+                      {PAD_SKELETON_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="density-row">
+                    <span className="density-label">骨格 Take</span>
+                    <select
+                      className="console-preset-select"
+                      aria-label="PAD 骨格 Take"
+                      value={section.padTake ?? 'auto'}
+                      disabled={cell.locked || !effectivelyEnabled}
+                      onChange={(e) =>
+                        onSetSectionAccompanimentTake?.(
+                          section.id,
+                          'pad',
+                          e.target.value as AccompanimentTake | 'auto'
+                        )
+                      }
+                    >
+                      {ACCOMPANIMENT_TAKE_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                 </div>
               )}

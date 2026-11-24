@@ -3,9 +3,11 @@ import {
   TICKS_PER_BAR,
   TRACK_CHANNELS,
   type ExportTarget,
+  type MidiControlChangeEvent,
   type SongConfig,
 } from '../types/song';
 import type { BandState, ResolvedNote } from '../types/track';
+import { sanitizeTrackNotes } from '../engines/musicCore';
 import {
   adaptNotesForExportTarget,
   toGeneratedVocalNotes,
@@ -15,6 +17,7 @@ import {
 import {
   buildMidiFile,
   buildMTrk,
+  createControlChangeEvent,
   createMarkerEvent,
   createNoteOffEvent,
   createNoteOnEvent,
@@ -35,6 +38,8 @@ export interface MidiExportTrackSpec {
   program?: number;
   rpnBendRangeSemitones?: 2 | 4;
   pitchBends?: PitchBendEvent[];
+  controlChanges?: MidiControlChangeEvent[];
+  sanitizeOverlap?: boolean;
   notes: Array<{
     pitch: number;
     velocity: number;
@@ -100,11 +105,25 @@ function buildPerformanceTrack(spec: MidiExportTrackSpec): Uint8Array {
   }
   if (spec.pitchBends && spec.pitchBends.length > 0) {
     for (const pb of spec.pitchBends) {
-      events.push(createPitchBendEvent(pb.tick, spec.channel, pb.value14Bit, 4));
+      events.push(createPitchBendEvent(pb.tick, spec.channel, pb.value14Bit, 5));
+    }
+  }
+  if (spec.controlChanges && spec.controlChanges.length > 0) {
+    for (const cc of spec.controlChanges) {
+      events.push(
+        createControlChangeEvent(cc.tick, spec.channel, cc.controller, cc.value, 5)
+      );
     }
   }
 
-  for (const n of spec.notes) {
+  const notesToWrite = spec.sanitizeOverlap
+    ? sanitizeTrackNotes(
+        spec.notes.map((n) => ({ ...n, channel: spec.channel })),
+        5
+      )
+    : spec.notes;
+
+  for (const n of notesToWrite) {
     const start = Math.max(0, Math.round(n.startTick));
     const end = start + Math.max(1, Math.round(n.durationTicks));
     events.push(createNoteOnEvent(start, spec.channel, n.pitch, n.velocity));
@@ -267,6 +286,8 @@ export function exportMultiTrackMidi(
     name: 'Bass',
     channel: TRACK_CHANNELS.bass,
     program: 33, // Electric Bass (finger)
+    controlChanges: tracks.controlChanges?.bass,
+    sanitizeOverlap: true,
     notes: tracks.bass.map((n) => ({
       pitch: n.pitch,
       velocity: n.velocity,
@@ -279,6 +300,8 @@ export function exportMultiTrackMidi(
     name: 'Keyboard',
     channel: TRACK_CHANNELS.keyboard,
     program: 0, // Acoustic Grand Piano
+    controlChanges: tracks.controlChanges?.keyboard,
+    sanitizeOverlap: true,
     notes: tracks.keyboard.map((n) => ({
       pitch: n.pitch,
       velocity: n.velocity,
@@ -291,6 +314,8 @@ export function exportMultiTrackMidi(
     name: 'PAD',
     channel: TRACK_CHANNELS.pad,
     program: 89, // Pad 2 (warm)
+    controlChanges: tracks.controlChanges?.pad,
+    sanitizeOverlap: true,
     notes: tracks.pad.map((n) => ({
       pitch: n.pitch,
       velocity: n.velocity,

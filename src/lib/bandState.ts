@@ -1,7 +1,7 @@
-import { generateBassNotes } from '../engines/bassEngine';
+import { generateBassResult } from '../engines/bassEngine';
 import { generateDrumNotes } from '../engines/drumEngine';
-import { generateKeyboardNotes } from '../engines/keyboardEngine';
-import { generatePadNotes } from '../engines/padEngine';
+import { generateKeyboardResult } from '../engines/keyboardEngine';
+import { generatePadResult } from '../engines/padEngine';
 import { generateVocalNotes } from '../engines/vocalEngine';
 import {
   createDefaultEnabledParts,
@@ -9,6 +9,8 @@ import {
   CURRENT_ENGINE_VERSION,
   getDefaultDrumFillEnabled,
   TICKS_PER_BAR,
+  type AccompanimentTake,
+  type BassSkeletonId,
   type BeatPatternId,
   type ChapterInternalForm,
   type ChordSlot,
@@ -19,9 +21,12 @@ import {
   type EightBarScheme,
   type InstrumentType,
   type KeyboardDensityLevel,
+  type KeyboardSkeletonId,
   type KickMode,
   type KickTake,
+  type MidiControlChangeEvent,
   type MidiNote,
+  type PadSkeletonId,
   type Section,
   type SongConfig,
   type TakeStyle,
@@ -113,6 +118,12 @@ export function cloneSection(sec: Section): Section {
     bassChromaticEnabled: sec.bassChromaticEnabled ?? false,
     bassFillEnabled: sec.bassFillEnabled ?? false,
     bassFillSeed: sec.bassFillSeed ?? 0,
+    bassSkeleton: sec.bassSkeleton ?? 'auto',
+    bassTake: sec.bassTake ?? 'auto',
+    keyboardSkeleton: sec.keyboardSkeleton ?? 'auto',
+    keyboardTake: sec.keyboardTake ?? 'auto',
+    padSkeleton: sec.padSkeleton ?? 'auto',
+    padTake: sec.padTake ?? 'auto',
     chords: normalizeSectionChords(sec.chords, sec.bars),
     patternPresets: clonedPresets
       ? { ...clonedPresets }
@@ -181,7 +192,7 @@ export function createSeedTriple(baseSeed: number): Record<TakeStyle, number> {
   };
 }
 
-export function generateCellTakes(
+export function generateCellTakesWithCC(
   song: SongConfig,
   section: Section,
   sectionIndex: number,
@@ -195,8 +206,22 @@ export function generateCellTakes(
     keyboardNotes?: MidiNote[];
     vocalNotes?: MidiNote[];
   }
-): Record<TakeStyle, MidiNote[]> {
+): {
+  takes: Record<TakeStyle, MidiNote[]>;
+  controlChangesByTake?: Record<TakeStyle, MidiControlChangeEvent[]>;
+} {
   const takes = {} as Record<TakeStyle, MidiNote[]>;
+  const controlChangesByTake = {} as Record<TakeStyle, MidiControlChangeEvent[]>;
+  let hasAnyCC = false;
+
+  const drumSource =
+    instrument === 'bass'
+      ? drumNotesForBass
+      : (contextNotes?.drumNotes ?? drumNotesForBass);
+  const kickTicks = drumSource
+    .filter((n) => n.pitch === 35 || n.pitch === 36)
+    .map((n) => n.startTick);
+
   for (const style of TAKES) {
     const params = resolveInstrumentParams(song, section, instrument, style);
     const nextSection = song.sections[sectionIndex + 1];
@@ -209,17 +234,11 @@ export function generateCellTakes(
       seed: seeds[style],
       params,
       drumNotes:
-        instrument === 'bass'
-          ? drumNotesForBass
-          : instrument === 'keyboard'
-            ? contextNotes?.drumNotes
-            : undefined,
-      kickTicks:
-        instrument === 'bass'
-          ? drumNotesForBass
-              .filter((n) => n.pitch === 35 || n.pitch === 36)
-              .map((n) => n.startTick)
+        instrument === 'bass' || instrument === 'keyboard' || instrument === 'pad'
+          ? drumSource
           : undefined,
+      kickTicks:
+        instrument === 'bass' || instrument === 'pad' ? kickTicks : undefined,
       bassNotes:
         instrument === 'keyboard' || instrument === 'pad'
           ? contextNotes?.bassNotes
@@ -233,8 +252,7 @@ export function generateCellTakes(
       bpm: song.bpm,
       keyboardDensity:
         instrument === 'keyboard' ? (section.keyboardDensity ?? 4) : undefined,
-      drumPatternId:
-        instrument === 'drums' ? (section.drumPatternId ?? 'auto') : undefined,
+      drumPatternId: section.drumPatternId ?? 'auto',
       drumKickTake:
         instrument === 'drums' ? (section.drumKickTake ?? 'auto') : undefined,
       drumHat16thEnabled:
@@ -270,20 +288,72 @@ export function generateCellTakes(
         instrument === 'vocal'
           ? (section.vocalChapterForm ?? 'auto')
           : undefined,
+      bassSkeleton:
+        instrument === 'bass' ? (section.bassSkeleton ?? 'auto') : undefined,
+      bassTake:
+        instrument === 'bass' ? (section.bassTake ?? 'auto') : undefined,
+      keyboardSkeleton:
+        instrument === 'keyboard'
+          ? (section.keyboardSkeleton ?? 'auto')
+          : undefined,
+      keyboardTake:
+        instrument === 'keyboard'
+          ? (section.keyboardTake ?? 'auto')
+          : undefined,
+      padSkeleton:
+        instrument === 'pad' ? (section.padSkeleton ?? 'auto') : undefined,
+      padTake:
+        instrument === 'pad' ? (section.padTake ?? 'auto') : undefined,
     };
     if (instrument === 'drums') {
       takes[style] = generateDrumNotes(input);
     } else if (instrument === 'bass') {
-      takes[style] = generateBassNotes(input);
+      const res = generateBassResult(input);
+      takes[style] = res.notes;
+      controlChangesByTake[style] = res.controlChanges;
+      if (res.controlChanges.length > 0) hasAnyCC = true;
     } else if (instrument === 'keyboard') {
-      takes[style] = generateKeyboardNotes(input);
+      const res = generateKeyboardResult(input);
+      takes[style] = res.notes;
+      controlChangesByTake[style] = res.controlChanges;
+      if (res.controlChanges.length > 0) hasAnyCC = true;
     } else if (instrument === 'pad') {
-      takes[style] = generatePadNotes(input);
+      const res = generatePadResult(input);
+      takes[style] = res.notes;
+      controlChangesByTake[style] = res.controlChanges;
+      if (res.controlChanges.length > 0) hasAnyCC = true;
     } else {
       takes[style] = generateVocalNotes(input);
     }
   }
-  return takes;
+  return hasAnyCC ? { takes, controlChangesByTake } : { takes };
+}
+
+export function generateCellTakes(
+  song: SongConfig,
+  section: Section,
+  sectionIndex: number,
+  instrument: InstrumentType,
+  seeds: Record<TakeStyle, number>,
+  drumNotesForBass: MidiNote[] = [],
+  prevVocalAvgPitch?: number,
+  contextNotes?: {
+    drumNotes?: MidiNote[];
+    bassNotes?: MidiNote[];
+    keyboardNotes?: MidiNote[];
+    vocalNotes?: MidiNote[];
+  }
+): Record<TakeStyle, MidiNote[]> {
+  return generateCellTakesWithCC(
+    song,
+    section,
+    sectionIndex,
+    instrument,
+    seeds,
+    drumNotesForBass,
+    prevVocalAvgPitch,
+    contextNotes
+  ).takes;
 }
 
 export function getSelectedDrumNotes(
@@ -372,7 +442,7 @@ export function generateSectionCells(
     if (!targets.has(inst)) continue;
 
     const drumNotes =
-      (inst === 'bass' || inst === 'keyboard') &&
+      (inst === 'bass' || inst === 'keyboard' || inst === 'pad') &&
       section.enabledParts?.drums !== false
         ? getSelectedDrumNotes(result)
         : [];
@@ -400,7 +470,7 @@ export function generateSectionCells(
             : undefined)
         : undefined;
 
-    result[inst].takes = generateCellTakes(
+    const generated = generateCellTakesWithCC(
       song,
       section,
       sectionIndex,
@@ -419,6 +489,8 @@ export function generateSectionCells(
           }
         : undefined
     );
+    result[inst].takes = generated.takes;
+    result[inst].controlChangesByTake = generated.controlChangesByTake;
     result[inst].engineVersion = CURRENT_ENGINE_VERSION;
   }
 
@@ -2328,5 +2400,79 @@ export function setSectionDrumKickTake(
       sectionId,
       6350
     ),
+  };
+}
+
+export function setSectionAccompanimentSkeleton(
+  song: SongConfig,
+  bandState: BandState,
+  sectionId: string,
+  instrument: 'bass' | 'keyboard' | 'pad',
+  skeleton: BassSkeletonId | KeyboardSkeletonId | PadSkeletonId | 'auto'
+): { song: SongConfig; bandState: BandState } {
+  const nextSong = cloneSongConfig(song);
+  const secIdx = nextSong.sections.findIndex((s) => s.id === sectionId);
+  if (secIdx === -1) return { song, bandState };
+  if (instrument === 'bass') {
+    nextSong.sections[secIdx].bassSkeleton = skeleton as BassSkeletonId | 'auto';
+  } else if (instrument === 'keyboard') {
+    nextSong.sections[secIdx].keyboardSkeleton = skeleton as KeyboardSkeletonId | 'auto';
+  } else {
+    nextSong.sections[secIdx].padSkeleton = skeleton as PadSkeletonId | 'auto';
+  }
+  const existingCells = bandState.cellsBySection[sectionId];
+  const updatedCells = generateSectionCells(
+    nextSong,
+    nextSong.sections[secIdx],
+    secIdx,
+    existingCells,
+    6410 + secIdx * 31,
+    { newSeeds: false, instruments: [instrument] }
+  );
+  return {
+    song: nextSong,
+    bandState: {
+      cellsBySection: {
+        ...bandState.cellsBySection,
+        [sectionId]: updatedCells,
+      },
+    },
+  };
+}
+
+export function setSectionAccompanimentTake(
+  song: SongConfig,
+  bandState: BandState,
+  sectionId: string,
+  instrument: 'bass' | 'keyboard' | 'pad',
+  take: AccompanimentTake | 'auto'
+): { song: SongConfig; bandState: BandState } {
+  const nextSong = cloneSongConfig(song);
+  const secIdx = nextSong.sections.findIndex((s) => s.id === sectionId);
+  if (secIdx === -1) return { song, bandState };
+  if (instrument === 'bass') {
+    nextSong.sections[secIdx].bassTake = take;
+  } else if (instrument === 'keyboard') {
+    nextSong.sections[secIdx].keyboardTake = take;
+  } else {
+    nextSong.sections[secIdx].padTake = take;
+  }
+  const existingCells = bandState.cellsBySection[sectionId];
+  const updatedCells = generateSectionCells(
+    nextSong,
+    nextSong.sections[secIdx],
+    secIdx,
+    existingCells,
+    6460 + secIdx * 31,
+    { newSeeds: false, instruments: [instrument] }
+  );
+  return {
+    song: nextSong,
+    bandState: {
+      cellsBySection: {
+        ...bandState.cellsBySection,
+        [sectionId]: updatedCells,
+      },
+    },
   };
 }

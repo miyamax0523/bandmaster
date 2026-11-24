@@ -1,11 +1,15 @@
 import type {
+  AccompanimentTake,
+  BassSkeletonId,
   BeatPatternId,
   ChapterInternalForm,
   EightBarScheme,
   EnergyLevel,
   KeyboardDensityLevel,
+  KeyboardSkeletonId,
   KickTake,
   MidiNote,
+  PadSkeletonId,
   Section,
   SectionType,
   SongConfig,
@@ -78,4 +82,11 @@ export interface EngineInput {
   masterGenreId?: MasterGenreId;
   vocalDialecticalScheme?: EightBarScheme | 'auto';
   vocalChapterForm?: ChapterInternalForm | 'auto';
+  bassSkeleton?: BassSkeletonId | 'auto';
+  bassTake?: AccompanimentTake | 'auto';
+  keyboardSkeleton?: KeyboardSkeletonId | 'auto';
+  keyboardTake?: AccompanimentTake | 'auto';
+  padSkeleton?: PadSkeletonId | 'auto';
+  padTake?: AccompanimentTake | 'auto';
+  emitModoBassCC?: boolean;
 }

@@ -76,6 +76,8 @@ export class AudioPreviewEngine {
   private ctx: AudioContext | null = null;
   private contextFactory: () => AudioContext;
   private trackGains: Partial<Record<LogicalTrackType, GainNode>> = {};
+  private padFilter: BiquadFilterNode | null = null;
+  private padExpressionGain: GainNode | null = null;
   private headroomGain: GainNode | null = null;
   private compressor: DynamicsCompressorNode | null = null;
   private noiseBuffer: AudioBuffer | null = null;
@@ -183,6 +185,18 @@ export class AudioPreviewEngine {
         const g = this.ctx.createGain();
         g.connect(this.headroomGain);
         this.trackGains[track] = g;
+      }
+
+      if (this.trackGains.pad && typeof this.ctx.createBiquadFilter === 'function') {
+        const pf = this.ctx.createBiquadFilter();
+        pf.type = 'lowpass';
+        pf.frequency.value = 2400;
+        const peg = this.ctx.createGain();
+        peg.gain.value = 1.0;
+        pf.connect(peg);
+        peg.connect(this.trackGains.pad);
+        this.padFilter = pf;
+        this.padExpressionGain = peg;
       }
 
       this.applyMixerGains();
@@ -512,6 +526,50 @@ export class AudioPreviewEngine {
         }
       }
     }
+
+    // Schedule PAD CC#11 (Expression -> Gain) & CC#74 (Filter Cutoff -> BiquadFilter)
+    const padCCs = this.tracks.controlChanges?.pad ?? [];
+    for (const cc of padCCs) {
+      if (cc.tick >= fromTick && cc.tick < toTick) {
+        const offsetFromBase = cc.tick - baseTick;
+        const ccTime = Math.max(
+          this.ctx.currentTime,
+          baseAudioTime + ticksToSeconds(Math.max(0, offsetFromBase), this.bpm)
+        );
+        if (cc.controller === 11 && this.padExpressionGain) {
+          const targetGain = Math.max(0.05, Math.min(1.0, cc.value / 127));
+          if (typeof this.padExpressionGain.gain.linearRampToValueAtTime === 'function') {
+            this.padExpressionGain.gain.linearRampToValueAtTime(targetGain, ccTime);
+          } else {
+            this.padExpressionGain.gain.setValueAtTime(targetGain, ccTime);
+          }
+        } else if (cc.controller === 74 && this.padFilter) {
+          const norm = Math.max(0, Math.min(1, cc.value / 127));
+          const freqHz = 220 * Math.pow(6400 / 220, norm);
+          if (typeof this.padFilter.frequency.linearRampToValueAtTime === 'function') {
+            this.padFilter.frequency.linearRampToValueAtTime(freqHz, ccTime);
+          } else {
+            this.padFilter.frequency.setValueAtTime(freqHz, ccTime);
+          }
+        }
+      }
+    }
+  }
+
+  private resolveKeyboardSustainEndTick(note: ResolvedNote): number {
+    const baseEnd = note.startTick + note.durationTicks;
+    const kbCCs = this.tracks.controlChanges?.keyboard;
+    if (!kbCCs || kbCCs.length === 0) return baseEnd;
+    let pedalDown = false;
+    for (const cc of kbCCs) {
+      if (cc.controller !== 64) continue;
+      if (cc.tick <= baseEnd) {
+        pedalDown = cc.value >= 64;
+      } else if (pedalDown && cc.value < 64) {
+        return Math.max(baseEnd, cc.tick);
+      }
+    }
+    return baseEnd;
   }
 
   private triggerNote(
@@ -541,12 +599,17 @@ export class AudioPreviewEngine {
         velGain * 0.78
       );
     } else if (track === 'keyboard') {
+      const sustainedEnd = this.resolveKeyboardSustainEndTick(note);
+      const kbDurSec = Math.max(
+        0.04,
+        ticksToSeconds(Math.max(note.durationTicks, sustainedEnd - note.startTick), this.bpm)
+      );
       this.synthTone(
         this.ctx,
         dest,
         midiToFrequency(note.pitch),
         startTime,
-        Math.min(1.2, durSec),
+        Math.min(2.4, kbDurSec),
         velGain * 0.45,
         'triangle',
         2600
@@ -567,16 +630,17 @@ export class AudioPreviewEngine {
         fallCfg
       );
     } else {
-      // pad
+      // pad (routed through padFilter -> padExpressionGain -> trackGains.pad when available)
+      const padDest = (this.padFilter as unknown as GainNode) ?? dest;
       this.synthTone(
         this.ctx,
-        dest,
+        padDest,
         midiToFrequency(note.pitch),
         startTime,
-        Math.min(2.4, durSec),
+        Math.min(3.6, durSec),
         velGain * 0.3,
         'sine',
-        1800,
+        2400,
         0.08
       );
     }

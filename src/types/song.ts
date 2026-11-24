@@ -53,6 +53,33 @@ export type BeatPatternId =
   | 'SAMBA'
   | 'SONGO';
 export type KickTake = 'A' | 'B' | 'C';
+export type AccompanimentTake = 'A' | 'B' | 'C';
+export type BassSkeletonId =
+  | 'KICK_LOCK'
+  | 'EIGHTH_ROOT'
+  | 'OCTAVE_GROOVE'
+  | 'SIXTEENTH_SYNC'
+  | 'TRIPLET_SHUFFLE'
+  | 'LONG_SUSTAIN'
+  | 'RIFF_CHUG';
+export type KeyboardSkeletonId =
+  | 'SUSTAIN_CHORD'
+  | 'QUARTER_CHOP'
+  | 'OFFBEAT_STAB'
+  | 'ARPEGGIO_8TH_16TH'
+  | 'SYNCOPATED_RIFF'
+  | 'TRIPLET_COMP';
+export type PadSkeletonId =
+  | 'WARM_SUSTAIN'
+  | 'PEDAL_DRONE'
+  | 'SIDECHAIN_PULSE'
+  | 'BUILDUP_SWELL';
+export interface MidiControlChangeEvent {
+  tick: number;
+  controller: number; // 0..127 (e.g. CC#9, CC#11, CC#64, CC#74)
+  value: number; // 0..127
+  channel?: number;
+}
 export type Bass808Behavior = 'octaveUp' | 'tacet' | 'normal';
 export type TakeStyle = 'A' | 'B' | 'C';
 export type InstrumentType = 'drums' | 'bass' | 'keyboard' | 'pad' | 'vocal';
@@ -270,6 +297,12 @@ export interface Section {
   bassChromaticEnabled?: boolean; // default false
   bassFillEnabled?: boolean; // default false
   bassFillSeed?: number; // default 0
+  bassSkeleton?: BassSkeletonId | 'auto'; // default 'auto'
+  bassTake?: AccompanimentTake | 'auto'; // default 'auto'
+  keyboardSkeleton?: KeyboardSkeletonId | 'auto'; // default 'auto'
+  keyboardTake?: AccompanimentTake | 'auto'; // default 'auto'
+  padSkeleton?: PadSkeletonId | 'auto'; // default 'auto'
+  padTake?: AccompanimentTake | 'auto'; // default 'auto'
   partPresets?: Partial<Record<InstrumentType, string>>;
   patternPresets?: Partial<Record<InstrumentType, string>>;
   chords: ChordSlot[];

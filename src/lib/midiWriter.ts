@@ -176,7 +176,7 @@ export function createControlChangeEvent(
   channel: number,
   controller: number,
   value: number,
-  order = 4
+  order = 5
 ): MidiTrackEvent {
   const ch = channel & 0x0f;
   const cc = Math.min(127, Math.max(0, Math.round(controller)));
@@ -192,7 +192,7 @@ export function createPitchBendEvent(
   tick: number,
   channel: number,
   value14Bit: number,
-  order = 4
+  order = 5
 ): MidiTrackEvent {
   const ch = channel & 0x0f;
   const clamped = Math.min(16383, Math.max(0, Math.round(value14Bit)));
@@ -250,7 +250,7 @@ export function createNoteOffEvent(
   const p = Math.min(127, Math.max(0, Math.round(pitch)));
   return {
     tick,
-    order: 5, // Note Off before Note On at identical tick
+    order: 4.5, // Strictly NoteOff (4.5) -> CC/PB (5) -> NoteOn (6) at identical tick
     data: new Uint8Array([0x80 | ch, p, 0]),
   };
 }

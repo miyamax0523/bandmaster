@@ -4,6 +4,7 @@ import {
   TRACK_CHANNELS,
   type InstrumentType,
   type LogicalTrackType,
+  type MidiControlChangeEvent,
   type MidiNote,
   type Section,
   type SongConfig,
@@ -125,6 +126,11 @@ export function selectSongTracks(
     pad: [],
     vocal: [],
     vocalHarmony: [],
+    controlChanges: {
+      bass: [],
+      keyboard: [],
+      pad: [],
+    },
   };
 
   let sectionStartTick = 0;
@@ -295,12 +301,49 @@ export function selectSongTracks(
     finalizeTrack(vocalNotes, 'vocal');
     finalizeTrack(vocalHarmonyNotes, 'vocalHarmony');
 
+    // Collect CC events for bass / keyboard / pad
+    for (const inst of ['bass', 'keyboard', 'pad'] as const) {
+      const member = song.members[inst];
+      if (!member?.enabled || !isSectionPartEnabled(section, inst) || !cells) continue;
+      const cell = cells[inst];
+      if (!cell || cell.selectedTake === 'OFF' || isAutoTacet(song, section, inst)) continue;
+      const ccList = cell.controlChangesByTake?.[cell.selectedTake];
+      if (!ccList || ccList.length === 0) continue;
+      const ch = TRACK_CHANNELS[inst];
+      const target = output.controlChanges![inst] as MidiControlChangeEvent[];
+      for (const cc of ccList) {
+        const localTick = Math.max(0, Math.min(sectionEnd, Math.round(cc.tick)));
+        target.push({
+          tick: sectionStartTick + localTick,
+          controller: Math.min(127, Math.max(0, Math.round(cc.controller))),
+          value: Math.min(127, Math.max(0, Math.round(cc.value))),
+          channel: ch,
+        });
+      }
+    }
+
     sectionStartTick += sectionEnd;
   }
 
   // Sort every logical track deterministically
-  for (const key of Object.keys(output) as LogicalTrackType[]) {
+  const trackKeys: readonly LogicalTrackType[] = [
+    'drums',
+    'kick808',
+    'bass',
+    'keyboard',
+    'pad',
+    'vocal',
+    'vocalHarmony',
+  ];
+  for (const key of trackKeys) {
     output[key].sort((a, b) => a.startTick - b.startTick || a.pitch - b.pitch);
+  }
+  if (output.controlChanges) {
+    for (const key of ['bass', 'keyboard', 'pad'] as const) {
+      output.controlChanges[key]?.sort(
+        (a, b) => a.tick - b.tick || a.controller - b.controller
+      );
+    }
   }
 
   return output;

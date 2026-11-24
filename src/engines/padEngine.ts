@@ -1,4 +1,13 @@
-import { TICKS_PER_BAR, type KeyName, type MidiNote, type ScaleType } from '../types/song';
+import {
+  TICKS_PER_BAR,
+  TRACK_CHANNELS,
+  type AccompanimentTake,
+  type KeyName,
+  type MidiControlChangeEvent,
+  type MidiNote,
+  type PadSkeletonId,
+  type ScaleType,
+} from '../types/song';
 import {
   getActiveChordAtTick,
   getTimelineBoundaryChanges,
@@ -10,6 +19,17 @@ import {
   resolveChordForBar,
   type ParsedChord,
 } from '../lib/chordUtils';
+import {
+  buildChordWindows,
+  clamp as clampCore,
+  getParsedChordPitchClasses,
+  resolveSmoothVoicing,
+  sanitizeTrackNotes,
+} from './musicCore';
+import {
+  resolveEnsembleSyncPlan,
+  type EnsembleSyncPlan,
+} from './ensembleSync';
 import type { EngineInput } from './types';
 
 export const TPQN = 480;
@@ -1632,7 +1652,285 @@ function generateLegacyCompatiblePadNotes(
   return notes;
 }
 
+export interface PadTrackResult {
+  notes: MidiNote[];
+  controlChanges: MidiControlChangeEvent[];
+  skeleton?: PadSkeletonId;
+  take?: AccompanimentTake;
+  plan?: EnsembleSyncPlan;
+}
+
+/**
+ * Common-Tone Glue & Crossfade Overlap:
+ * - Identical MIDI pitches across consecutive chord windows merge into one continuous note.
+ * - Changing pitches extend by +overlapTicks (default 30) to crossfade smoothly without gaps.
+ */
+export function glueAndOverlapVoicings(
+  windows: ReadonlyArray<{ startTick: number; endTick: number; pitches: readonly number[] }>,
+  sectionEndTick: number,
+  velocity: number,
+  channel: number,
+  overlapTicks = 30
+): MidiNote[] {
+  const active = new Map<number, { startTick: number; endTick: number }>();
+  const finished: MidiNote[] = [];
+
+  for (let i = 0; i < windows.length; i++) {
+    const w = windows[i];
+    const nextSet = new Set(w.pitches);
+
+    // Close pitches not present in this window (with crossfade overlap)
+    for (const [pitch, span] of Array.from(active.entries())) {
+      if (!nextSet.has(pitch)) {
+        const end = Math.min(sectionEndTick, span.endTick + overlapTicks);
+        finished.push({
+          pitch,
+          velocity,
+          startTick: span.startTick,
+          durationTicks: Math.max(1, end - span.startTick),
+          channel,
+        });
+        active.delete(pitch);
+      }
+    }
+
+    // Extend common tones or open new tones
+    for (const pitch of w.pitches) {
+      const existing = active.get(pitch);
+      if (existing) {
+        existing.endTick = w.endTick;
+      } else {
+        active.set(pitch, { startTick: w.startTick, endTick: w.endTick });
+      }
+    }
+  }
+
+  for (const [pitch, span] of active.entries()) {
+    const end = Math.min(sectionEndTick, span.endTick);
+    finished.push({
+      pitch,
+      velocity,
+      startTick: span.startTick,
+      durationTicks: Math.max(1, end - span.startTick),
+      channel,
+    });
+  }
+
+  return sanitizeTrackNotes(finished, 5, sectionEndTick);
+}
+
+export function generatePadSkeletonTrack(input: EngineInput): PadTrackResult {
+  const { song, section } = input;
+  const ch = TRACK_CHANNELS.pad;
+  if (!song.members.pad.enabled || section.enabledParts?.pad === false) {
+    return { notes: [], controlChanges: [] };
+  }
+
+  const totalBars = Math.max(1, section.bars);
+  const sectionEnd = totalBars * TICKS_PER_BAR;
+  const bpm = input.bpm ?? song.bpm;
+  const plan = resolveEnsembleSyncPlan({
+    drumPatternId: input.drumPatternId ?? section.drumPatternId,
+    masterGenreId: input.masterGenreId ?? song.members.pad.patternPreset,
+    sectionType: section.type,
+    bpm,
+    padSkeleton: input.padSkeleton ?? section.padSkeleton,
+    padTake: input.padTake ?? section.padTake ?? input.style,
+  });
+
+  const skeleton = plan.padSkeleton;
+  const take = plan.padTake;
+  const chordWindows = buildChordWindows(section, song.key, song.scale);
+
+  // Determine drone pitches for PEDAL_DRONE: tonic + perfect 5th in C4(60)..G5(79)
+  const tonicPc = noteNameToSemitone(song.key);
+  const fifthPc = (tonicPc + 7) % 12;
+  const droneTonic = clampCore(60 + tonicPc, 60, 74);
+  const droneFifth = clampCore(
+    droneTonic + ((fifthPc - tonicPc + 12) % 12),
+    64,
+    79
+  );
+  const dronePitchSet =
+    skeleton === 'PEDAL_DRONE'
+      ? new Set<number>([droneTonic, droneFifth])
+      : new Set<number>();
+
+  // Resolve chord voicings per window
+  const gluedInput: Array<{ startTick: number; endTick: number; pitches: number[] }> = [];
+  let prevVoicing: number[] | null = null;
+  for (const w of chordWindows) {
+    const pcs = getParsedChordPitchClasses(w.parsed);
+    const rootPc = w.parsed.rootPitchClass;
+    if (take === 'B') {
+      // add9 / sus2 transparent 4-voice
+      const add9Pc = (rootPc + 2) % 12;
+      if (!pcs.includes(add9Pc)) pcs.push(add9Pc);
+    }
+
+    const baseVoicing = resolveSmoothVoicing({
+      pitchClasses: pcs.slice(0, take === 'A' ? 3 : 4),
+      prevVoicing,
+      minMidi: plan.padRange.min,
+      maxMidi: plan.padRange.max,
+      preferDrop2: true,
+    });
+    prevVoicing = baseVoicing;
+
+    let finalPitches = [...baseVoicing];
+    if (take === 'C') {
+      // Cinematic thick layer: low root pedal + high octave doubling
+      const lowRoot = clampCore(48 + rootPc, 48, 59);
+      const topDoubled = clampCore(baseVoicing[baseVoicing.length - 1] + 12, 60, 84);
+      finalPitches = Array.from(new Set([lowRoot, ...finalPitches, topDoubled])).sort(
+        (a, b) => a - b
+      );
+    }
+
+    if (skeleton === 'PEDAL_DRONE') {
+      finalPitches = finalPitches.filter((p) => !dronePitchSet.has(p));
+    }
+
+    gluedInput.push({
+      startTick: w.startTick,
+      endTick: w.endTick,
+      pitches: finalPitches,
+    });
+  }
+
+  const baseVel = clampCore(
+    Math.round((take === 'C' ? 74 : take === 'B' ? 68 : 64) * plan.padVelocityScale),
+    48,
+    84
+  );
+
+  const chordNotes = glueAndOverlapVoicings(
+    gluedInput,
+    sectionEnd,
+    baseVel,
+    ch,
+    30
+  );
+
+  const allNotes: MidiNote[] = [...chordNotes];
+  if (skeleton === 'PEDAL_DRONE') {
+    for (const dp of [droneTonic, droneFifth]) {
+      allNotes.push({
+        pitch: dp,
+        velocity: clampCore(baseVel - 4, 46, 80),
+        startTick: 0,
+        durationTicks: sectionEnd,
+        channel: ch,
+      });
+    }
+  }
+
+  const notes = sanitizeTrackNotes(allNotes, 5, sectionEnd);
+  const controlChanges: MidiControlChangeEvent[] = [];
+
+  if (skeleton === 'PEDAL_DRONE') {
+    // 4-bar gentle sine wave CC#74 (56..88)
+    const periodTicks = TICKS_PER_BAR * 4;
+    for (let t = 0; t <= sectionEnd; t += 240) {
+      const phase = (2 * Math.PI * (t % periodTicks)) / periodTicks;
+      const val = clampCore(Math.round(72 + 16 * Math.sin(phase)), 56, 88);
+      controlChanges.push({ tick: t, controller: 74, value: val, channel: ch });
+    }
+  } else if (skeleton === 'SIDECHAIN_PULSE') {
+    // Sync CC#11 ducking to kickTicks (or 4-on-floor fallback)
+    let kicks: number[] = [];
+    if (input.kickTicks && input.kickTicks.length > 0) {
+      kicks = Array.from(
+        new Set(
+          input.kickTicks
+            .map((k) => Math.round(k))
+            .filter((k) => k >= 0 && k < sectionEnd)
+        )
+      ).sort((a, b) => a - b);
+    } else if (input.drumNotes && input.drumNotes.length > 0) {
+      kicks = Array.from(
+        new Set(
+          input.drumNotes
+            .filter((n) => (n.pitch === 35 || n.pitch === 36) && n.startTick >= 0 && n.startTick < sectionEnd)
+            .map((n) => Math.round(n.startTick))
+        )
+      ).sort((a, b) => a - b);
+    }
+    if (kicks.length === 0) {
+      for (let t = 0; t < sectionEnd; t += 480) kicks.push(t);
+    }
+
+    const ccMap = new Map<number, number>();
+    for (let i = 0; i < kicks.length; i++) {
+      const kTick = kicks[i];
+      const nextKick = i + 1 < kicks.length ? kicks[i + 1] : sectionEnd;
+      const recoveryLen = Math.min(360, Math.max(60, nextKick - kTick));
+      for (let dt = 0; dt <= recoveryLen; dt += 60) {
+        const tick = kTick + dt;
+        if (tick > sectionEnd || tick >= nextKick) break;
+        const ratio = recoveryLen > 0 ? dt / 360 : 1;
+        const clampedRatio = Math.min(1, Math.max(0, ratio));
+        const val = clampCore(
+          Math.round(32 + (112 - 32) * (1 - Math.pow(1 - clampedRatio, 2.2))),
+          0,
+          127
+        );
+        ccMap.set(tick, val);
+      }
+    }
+    for (const [tick, value] of Array.from(ccMap.entries()).sort((a, b) => a[0] - b[0])) {
+      controlChanges.push({ tick, controller: 11, value, channel: ch });
+    }
+  } else if (skeleton === 'BUILDUP_SWELL') {
+    // Power curve progress^1.6: CC#11 (44 -> 122) & CC#74 (36 -> 116)
+    for (let t = 0; t <= sectionEnd; t += 240) {
+      const progress = sectionEnd > 0 ? Math.min(1, t / sectionEnd) : 1;
+      const curve = Math.pow(progress, 1.6);
+      const expr = clampCore(Math.round(44 + (122 - 44) * curve), 0, 127);
+      const cutoff = clampCore(Math.round(36 + (116 - 36) * curve), 0, 127);
+      controlChanges.push({ tick: t, controller: 11, value: expr, channel: ch });
+      controlChanges.push({ tick: t, controller: 74, value: cutoff, channel: ch });
+    }
+  }
+
+  return { notes, controlChanges, skeleton, take, plan };
+}
+
+export function generatePadResult(
+  input: EngineInput,
+  context?: PadGenerationContext
+): PadTrackResult {
+  const { section, song } = input;
+  const explicitSkeleton = input.padSkeleton ?? section.padSkeleton;
+  const explicitDrum = input.drumPatternId ?? section.drumPatternId;
+  const padPreset =
+    section.patternPresets?.pad ??
+    section.partPresets?.pad ??
+    song.members.pad.patternPreset ??
+    'auto';
+
+  const shouldUseSkeletonEngine =
+    !context &&
+    ((explicitSkeleton && explicitSkeleton !== 'auto') ||
+      (explicitDrum && explicitDrum !== 'auto' && padPreset === 'auto'));
+
+  if (shouldUseSkeletonEngine) {
+    return generatePadSkeletonTrack(input);
+  }
+  return {
+    notes: generateLegacyPadNotes(input, context),
+    controlChanges: [],
+  };
+}
+
 export function generatePadNotes(
+  input: EngineInput,
+  context?: PadGenerationContext
+): MidiNote[] {
+  return generatePadResult(input, context).notes;
+}
+
+function generateLegacyPadNotes(
   input: EngineInput,
   context?: PadGenerationContext
 ): MidiNote[] {

@@ -14,6 +14,8 @@ import {
   reorderSectionsInSong,
   rerollSectionBassFill,
   selectInstrumentTake,
+  setSectionAccompanimentSkeleton as applySectionAccompanimentSkeleton,
+  setSectionAccompanimentTake as applySectionAccompanimentTake,
   setSectionBassChromatic,
   setSectionBassFillEnabled,
   setSectionDrumBreakEnabled as applySectionDrumBreakEnabled,
@@ -52,6 +54,8 @@ import {
 import {
   createDefaultEnabledParts,
   createDefaultPartPresets,
+  type AccompanimentTake,
+  type BassSkeletonId,
   type BeatPatternId,
   type ChapterInternalForm,
   type ChordSlot,
@@ -61,8 +65,10 @@ import {
   type EightBarScheme,
   type InstrumentType,
   type KeyboardDensityLevel,
+  type KeyboardSkeletonId,
   type KickMode,
   type KickTake,
+  type PadSkeletonId,
   type MemberConfig,
   type Section,
   type SongConfig,
@@ -707,6 +713,42 @@ export function useBandGenerator() {
     [song, bandState, commitChange]
   );
 
+  const setSectionAccompanimentSkeleton = useCallback(
+    (
+      sectionId: string,
+      instrument: 'bass' | 'keyboard' | 'pad',
+      skeleton: BassSkeletonId | KeyboardSkeletonId | PadSkeletonId | 'auto'
+    ) => {
+      const res = applySectionAccompanimentSkeleton(
+        song,
+        bandState,
+        sectionId,
+        instrument,
+        skeleton
+      );
+      commitChange(res.song, res.bandState, true, true);
+    },
+    [song, bandState, commitChange]
+  );
+
+  const setSectionAccompanimentTake = useCallback(
+    (
+      sectionId: string,
+      instrument: 'bass' | 'keyboard' | 'pad',
+      take: AccompanimentTake | 'auto'
+    ) => {
+      const res = applySectionAccompanimentTake(
+        song,
+        bandState,
+        sectionId,
+        instrument,
+        take
+      );
+      commitChange(res.song, res.bandState, true, true);
+    },
+    [song, bandState, commitChange]
+  );
+
   const copyTimelineToAllSections = useCallback(
     (sourceSectionId: string) => {
       const src = song.sections.find((s) => s.id === sourceSectionId);
@@ -776,6 +818,8 @@ export function useBandGenerator() {
     setSectionDrumBreakEnabled,
     setSectionDrumPatternId,
     setSectionDrumKickTake,
+    setSectionAccompanimentSkeleton,
+    setSectionAccompanimentTake,
     copyTimelineToAllSections,
     pastePartPhrase,
     loadSnapshotData,

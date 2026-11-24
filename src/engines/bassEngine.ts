@@ -1,4 +1,11 @@
-import { TICKS_PER_BAR, type MidiNote } from '../types/song';
+import {
+  TICKS_PER_BAR,
+  TRACK_CHANNELS,
+  type AccompanimentTake,
+  type BassSkeletonId,
+  type MidiControlChangeEvent,
+  type MidiNote,
+} from '../types/song';
 import {
   getActiveChordAtTick,
   getTimelineBoundaryChanges,
@@ -10,6 +17,23 @@ import {
   type ParsedChord,
 } from '../lib/chordUtils';
 import { createSeededRng } from '../lib/random';
+import {
+  BASS_MAX_MIDI,
+  BASS_MIN_MIDI,
+  buildBassTurnaroundBeat4,
+  buildChordWindows,
+  clamp as clampCore,
+  deriveSeed,
+  enforceMonophonic,
+  findChordAtTick,
+  mapTickToSubdivision,
+  mulberry32 as mulberry32Core,
+  resolveBassRootMidi,
+} from './musicCore';
+import {
+  resolveEnsembleSyncPlan,
+  type EnsembleSyncPlan,
+} from './ensembleSync';
 import type { EngineInput } from './types';
 
 export const TPQN = 480;
@@ -330,7 +354,249 @@ function applyLegatoGateToList(
   }
 }
 
+export interface BassTrackResult {
+  notes: MidiNote[];
+  controlChanges: MidiControlChangeEvent[];
+  skeleton?: BassSkeletonId;
+  take?: AccompanimentTake;
+  plan?: EnsembleSyncPlan;
+}
+
+export function generateBassSkeletonTrack(input: EngineInput): BassTrackResult {
+  const { song, section, sectionIndex, seed } = input;
+  const ch = TRACK_CHANNELS.bass;
+  if (!song.members.bass.enabled || section.enabledParts?.bass === false) {
+    return { notes: [], controlChanges: [] };
+  }
+
+  const totalBars = Math.max(1, section.bars);
+  const sectionEnd = totalBars * TICKS_PER_BAR;
+  const bpm = input.bpm ?? song.bpm;
+  const plan = resolveEnsembleSyncPlan({
+    drumPatternId: input.drumPatternId ?? section.drumPatternId,
+    masterGenreId: input.masterGenreId ?? song.members.bass.patternPreset,
+    sectionType: section.type,
+    bpm,
+    bassSkeleton: input.bassSkeleton ?? section.bassSkeleton,
+    bassTake: input.bassTake ?? section.bassTake ?? input.style,
+  });
+
+  const skeleton = plan.bassSkeleton;
+  const take = plan.bassTake;
+  const rng = mulberry32Core(
+    deriveSeed(seed, `bass:${sectionIndex}:${skeleton}:${take}`)
+  );
+  const chordWindows = buildChordWindows(section, song.key, song.scale);
+
+  // Normalize kick ticks from drumNotes or explicit kickTicks
+  const kickTickSet = new Set<number>();
+  if (input.kickTicks && input.kickTicks.length > 0) {
+    for (const kt of input.kickTicks) {
+      if (kt >= 0 && kt < sectionEnd) kickTickSet.add(Math.round(kt));
+    }
+  } else if (input.drumNotes && input.drumNotes.length > 0) {
+    for (const dn of input.drumNotes) {
+      if ((dn.pitch === 35 || dn.pitch === 36) && dn.startTick >= 0 && dn.startTick < sectionEnd) {
+        kickTickSet.add(Math.round(dn.startTick));
+      }
+    }
+  }
+
+  const baseVel = clampCore(
+    Math.round((take === 'C' ? 104 : 96) * plan.bassVelocityScale),
+    68,
+    122
+  );
+  const rawNotes: MidiNote[] = [];
+  let prevRootMidi: number | null = null;
+
+  for (let bar = 0; bar < totalBars; bar++) {
+    const barStart = bar * TICKS_PER_BAR;
+    const barEnd = barStart + TICKS_PER_BAR;
+    const isTurnaroundBar =
+      (bar + 1) % 4 === 0 &&
+      bar < totalBars - 1 &&
+      skeleton !== 'LONG_SUSTAIN' &&
+      plan.cue !== 'PPPH';
+
+    let offsets: number[] = [];
+
+    if (plan.cue === 'PPPH') {
+      if (plan.ppphDoubleTime) {
+        offsets = bar % 2 === 0 ? [0, 1440] : [0];
+      } else {
+        offsets = [0, 720, 960];
+      }
+    } else if (skeleton === 'KICK_LOCK') {
+      const barKicks = Array.from(kickTickSet)
+        .filter((t) => t >= barStart && t < barEnd)
+        .map((t) => t - barStart)
+        .sort((a, b) => a - b);
+      if (barKicks.length > 0) {
+        offsets = barKicks;
+      } else if (plan.drumPatternId === 'ATAMA_UCHI') {
+        offsets = [240, 720, 1200, 1680];
+      } else {
+        offsets = [0, 720, 960];
+      }
+    } else if (skeleton === 'EIGHTH_ROOT' || skeleton === 'OCTAVE_GROOVE') {
+      offsets = [0, 240, 480, 720, 960, 1200, 1440, 1680];
+    } else if (skeleton === 'SIXTEENTH_SYNC') {
+      offsets = [0, 360, 480, 720, 960, 1320, 1440, 1680];
+    } else if (skeleton === 'TRIPLET_SHUFFLE') {
+      offsets = [0, 320, 480, 800, 960, 1280, 1440, 1760];
+    } else if (skeleton === 'LONG_SUSTAIN') {
+      const barChords = chordWindows
+        .filter((w) => w.startTick >= barStart && w.startTick < barEnd)
+        .map((w) => w.startTick - barStart);
+      offsets = barChords.length > 0 ? Array.from(new Set([0, ...barChords])).sort((a, b) => a - b) : [0];
+    } else {
+      // RIFF_CHUG
+      offsets = [0, 240, 360, 480, 720, 960, 1200, 1320, 1440, 1680];
+    }
+
+    // Apply subdivision mapping (skip for already-triplet or exact drum-kick lock)
+    const mappedOffsets =
+      skeleton === 'KICK_LOCK' || skeleton === 'TRIPLET_SHUFFLE' || plan.cue === 'PPPH'
+        ? offsets
+        : Array.from(
+            new Set(
+              offsets.map((off) => mapTickToSubdivision(barStart + off, plan.subdivision) - barStart)
+            )
+          ).sort((a, b) => a - b);
+
+    const activeOffsets = isTurnaroundBar
+      ? mappedOffsets.filter((off) => off < 1440)
+      : mappedOffsets;
+
+    for (let idx = 0; idx < activeOffsets.length; idx++) {
+      const off = activeOffsets[idx];
+      const absTick = barStart + off;
+      if (absTick >= sectionEnd) continue;
+
+      // Take C non-turnaround bar tail (1680t): anticipate next bar's chord by 240 ticks
+      const lookupTick =
+        take === 'C' &&
+        !isTurnaroundBar &&
+        off >= 1680 &&
+        bar + 1 < totalBars &&
+        skeleton !== 'LONG_SUSTAIN'
+          ? barEnd
+          : absTick;
+      const cw = findChordAtTick(chordWindows, lookupTick);
+      const rootPc = cw.parsed.bassPitchClass ?? cw.parsed.rootPitchClass;
+      const rootMidi = resolveBassRootMidi(rootPc, prevRootMidi);
+      if (off === 0) prevRootMidi = rootMidi;
+
+      let pitch = rootMidi;
+      let vel = baseVel + (off % 480 === 0 ? 4 : -6);
+
+      if (skeleton === 'OCTAVE_GROOVE' && idx % 2 === 1) {
+        pitch = clampCore(rootMidi + 12, BASS_MIN_MIDI, BASS_MAX_MIDI);
+        vel -= 4;
+      } else if (take === 'B' && (off === 720 || off === 1200)) {
+        const altRoll = rng();
+        if (altRoll < 0.45 && rootMidi + 7 <= BASS_MAX_MIDI) {
+          pitch = rootMidi + 7; // 5th
+        } else if (altRoll < 0.8 && rootMidi + 12 <= BASS_MAX_MIDI) {
+          pitch = rootMidi + 12; // octave
+        } else if (rootMidi + 10 <= BASS_MAX_MIDI) {
+          pitch = rootMidi + 10; // b7
+        }
+        vel -= 4;
+      }
+
+      const nextOff =
+        idx + 1 < activeOffsets.length
+          ? activeOffsets[idx + 1]
+          : isTurnaroundBar
+            ? 1440
+            : TICKS_PER_BAR;
+      const span = Math.max(40, nextOff - off);
+      const gate = skeleton === 'LONG_SUSTAIN' ? 0.96 : skeleton === 'RIFF_CHUG' ? 0.78 : 0.88;
+      rawNotes.push({
+        pitch: clampCore(pitch, BASS_MIN_MIDI, BASS_MAX_MIDI),
+        velocity: clampCore(vel, 45, 125),
+        startTick: absTick,
+        durationTicks: Math.max(35, Math.min(span - 5, Math.round(span * gate))),
+        channel: ch,
+      });
+    }
+
+    // Beat 4 turnaround on bars 4, 8, ... (excluding final bar)
+    if (isTurnaroundBar) {
+      const currChord = findChordAtTick(chordWindows, barStart + 1440);
+      const nextChord = findChordAtTick(chordWindows, barEnd);
+      const currRoot = resolveBassRootMidi(
+        currChord.parsed.bassPitchClass ?? currChord.parsed.rootPitchClass,
+        prevRootMidi
+      );
+      const nextRoot = resolveBassRootMidi(
+        nextChord.parsed.bassPitchClass ?? nextChord.parsed.rootPitchClass,
+        currRoot
+      );
+      const turnStyle =
+        take === 'C'
+          ? 'octave_pickup'
+          : rng() < 0.5
+            ? 'chromatic'
+            : 'diatonic_whole';
+      const turnNotes = buildBassTurnaroundBeat4({
+        barStartTick: barStart,
+        currentRootMidi: currRoot,
+        nextRootMidi: nextRoot,
+        key: song.key,
+        scale: song.scale,
+        style: turnStyle,
+        velocity: baseVel,
+        channel: ch,
+        subdivision: plan.subdivision,
+      });
+      rawNotes.push(...turnNotes);
+    }
+  }
+
+  const notes = enforceMonophonic(rawNotes, 5, sectionEnd);
+  const controlChanges: MidiControlChangeEvent[] = [];
+  if (input.emitModoBassCC && skeleton === 'RIFF_CHUG') {
+    controlChanges.push({ tick: 0, controller: 9, value: 76, channel: ch });
+    controlChanges.push({ tick: sectionEnd, controller: 9, value: 0, channel: ch });
+  }
+
+  return { notes, controlChanges, skeleton, take, plan };
+}
+
+export function generateBassResult(input: EngineInput): BassTrackResult {
+  const { section } = input;
+  const explicitSkeleton = input.bassSkeleton ?? section.bassSkeleton;
+  const explicitDrum = input.drumPatternId ?? section.drumPatternId;
+  const bassPreset =
+    section.patternPresets?.bass ??
+    section.partPresets?.bass ??
+    input.song.members.bass.patternPreset ??
+    'auto';
+
+  const shouldUseSkeletonEngine =
+    !section.unisonRiff &&
+    section.kickMode !== '808' &&
+    !section.bassFillEnabled &&
+    ((explicitSkeleton && explicitSkeleton !== 'auto') ||
+      (explicitDrum && explicitDrum !== 'auto' && bassPreset === 'auto'));
+
+  if (shouldUseSkeletonEngine) {
+    return generateBassSkeletonTrack(input);
+  }
+  return {
+    notes: generateLegacyBassNotes(input),
+    controlChanges: [],
+  };
+}
+
 export function generateBassNotes(input: EngineInput): MidiNote[] {
+  return generateBassResult(input).notes;
+}
+
+function generateLegacyBassNotes(input: EngineInput): MidiNote[] {
   const { song, section, sectionIndex, style, seed, params, drumNotes = [] } = input;
   if (!song.members.bass.enabled || section.enabledParts?.bass === false) {
     return [];

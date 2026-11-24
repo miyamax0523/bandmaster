@@ -1,4 +1,11 @@
-import { type MidiNote } from '../types/song';
+import {
+  TICKS_PER_BAR,
+  TRACK_CHANNELS,
+  type AccompanimentTake,
+  type KeyboardSkeletonId,
+  type MidiControlChangeEvent,
+  type MidiNote,
+} from '../types/song';
 import {
   getActiveChordAtTick,
   getTimelineBoundaryChanges,
@@ -8,6 +15,22 @@ import {
   getScalePitchClasses,
   type ParsedChord,
 } from '../lib/chordUtils';
+import {
+  buildChordWindows,
+  clamp as clampCore,
+  deriveSeed,
+  findChordAtTick,
+  findVocalRestGaps,
+  getParsedChordPitchClasses,
+  mapTickToSubdivision,
+  mulberry32 as mulberry32Core,
+  resolveSmoothVoicing,
+  sanitizeTrackNotes,
+} from './musicCore';
+import {
+  resolveEnsembleSyncPlan,
+  type EnsembleSyncPlan,
+} from './ensembleSync';
 import type { EngineInput, ResolvedInstrumentParams } from './types';
 
 export const PPQ = 480;
@@ -1576,7 +1599,298 @@ export function applyPianistArticulationAndSanitize(
   return finalNotes;
 }
 
+export interface KeyboardTrackResult {
+  notes: MidiNote[];
+  controlChanges: MidiControlChangeEvent[];
+  skeleton?: KeyboardSkeletonId;
+  take?: AccompanimentTake;
+  plan?: EnsembleSyncPlan;
+}
+
+export function generateKeyboardSkeletonTrack(
+  input: EngineInput
+): KeyboardTrackResult {
+  const { song, section, sectionIndex, seed, vocalNotes } = input;
+  const ch = TRACK_CHANNELS.keyboard;
+  if (!song.members.keyboard.enabled || section.enabledParts?.keyboard === false) {
+    return { notes: [], controlChanges: [] };
+  }
+
+  const totalBars = Math.max(1, section.bars);
+  const sectionEnd = totalBars * TICKS_PER_BAR;
+  const bpm = input.bpm ?? song.bpm;
+  const plan = resolveEnsembleSyncPlan({
+    drumPatternId: input.drumPatternId ?? section.drumPatternId,
+    masterGenreId: input.masterGenreId ?? song.members.keyboard.patternPreset,
+    sectionType: section.type,
+    bpm,
+    keyboardSkeleton: input.keyboardSkeleton ?? section.keyboardSkeleton,
+    keyboardTake: input.keyboardTake ?? section.keyboardTake ?? input.style,
+  });
+
+  const skeleton = plan.keyboardSkeleton;
+  const take = plan.keyboardTake;
+  const rng = mulberry32Core(
+    deriveSeed(seed, `keyboard:${sectionIndex}:${skeleton}:${take}`)
+  );
+  const chordWindows = buildChordWindows(section, song.key, song.scale);
+
+  // Compute vocal register ceiling if vocal notes are present
+  let vocalRange: { min: number; max: number } | null = null;
+  if (vocalNotes && vocalNotes.length > 0) {
+    let vMin = 127;
+    let vMax = 0;
+    for (const vn of vocalNotes) {
+      if (vn.pitch < vMin) vMin = vn.pitch;
+      if (vn.pitch > vMax) vMax = vn.pitch;
+    }
+    if (vMin <= vMax) vocalRange = { min: vMin, max: vMax };
+  }
+
+  // Resolve smooth voice-leading per chord window
+  const voicingsByWindow: number[][] = [];
+  let prevVoicing: number[] | null = null;
+  for (const w of chordWindows) {
+    const pcs = getParsedChordPitchClasses(w.parsed);
+    if (take === 'C') {
+      // Extend with tasteful tension (maj7 / m7 / 9th)
+      const rootPc = w.parsed.rootPitchClass;
+      const isMinor = pcs.includes((rootPc + 3) % 12);
+      const tensionPc = isMinor ? (rootPc + 10) % 12 : (rootPc + 11) % 12;
+      if (!pcs.includes(tensionPc)) pcs.push(tensionPc);
+    }
+    const voiced = resolveSmoothVoicing({
+      pitchClasses: pcs.slice(0, take === 'C' ? 4 : 3),
+      prevVoicing,
+      minMidi: plan.keyboardRange.min,
+      maxMidi: plan.keyboardRange.max,
+      vocalRange,
+      preferDrop2: take === 'C',
+    });
+    voicingsByWindow.push(voiced);
+    prevVoicing = voiced;
+  }
+
+  const baseVel = clampCore(
+    Math.round(86 * plan.keyboardVelocityScale),
+    58,
+    114
+  );
+  const rawNotes: MidiNote[] = [];
+  const controlChanges: MidiControlChangeEvent[] = [];
+
+  // Emit CC#64 sustain pedal on SUSTAIN_CHORD / ARPEGGIO_8TH_16TH
+  if (skeleton === 'SUSTAIN_CHORD' || skeleton === 'ARPEGGIO_8TH_16TH') {
+    for (let i = 0; i < chordWindows.length; i++) {
+      const w = chordWindows[i];
+      if (w.startTick >= 20) {
+        controlChanges.push({
+          tick: w.startTick - 20,
+          controller: 64,
+          value: 0,
+          channel: ch,
+        });
+      }
+      if (w.startTick + 10 < sectionEnd) {
+        controlChanges.push({
+          tick: w.startTick + 10,
+          controller: 64,
+          value: 127,
+          channel: ch,
+        });
+      }
+    }
+    controlChanges.push({
+      tick: sectionEnd,
+      controller: 64,
+      value: 0,
+      channel: ch,
+    });
+  }
+
+  if (skeleton === 'SUSTAIN_CHORD') {
+    for (let i = 0; i < chordWindows.length; i++) {
+      const w = chordWindows[i];
+      const voiced = voicingsByWindow[i];
+      const dur = Math.max(60, w.endTick - w.startTick - 15);
+      for (let vIdx = 0; vIdx < voiced.length; vIdx++) {
+        const isTop = vIdx === voiced.length - 1;
+        rawNotes.push({
+          pitch: voiced[vIdx],
+          velocity: clampCore(baseVel + (isTop ? 5 : -4), 48, 118),
+          startTick: w.startTick,
+          durationTicks: dur,
+          channel: ch,
+        });
+      }
+    }
+  } else {
+    for (let bar = 0; bar < totalBars; bar++) {
+      const barStart = bar * TICKS_PER_BAR;
+
+      if (skeleton === 'ARPEGGIO_8TH_16TH') {
+        const step = take === 'B' ? 120 : 240;
+        const count = Math.floor(TICKS_PER_BAR / step);
+        for (let i = 0; i < count; i++) {
+          const rawTick = barStart + i * step;
+          const absTick = mapTickToSubdivision(rawTick, plan.subdivision);
+          if (absTick >= sectionEnd) continue;
+          const cw = findChordAtTick(chordWindows, absTick);
+          const voiced = voicingsByWindow[cw.index];
+          const pitch = voiced[i % voiced.length];
+          rawNotes.push({
+            pitch,
+            velocity: clampCore(baseVel - 4 + (i % 4 === 0 ? 6 : 0), 50, 115),
+            startTick: absTick,
+            durationTicks: Math.max(50, Math.round(step * 0.9)),
+            channel: ch,
+          });
+        }
+        continue;
+      }
+
+      let offsets: number[] = [];
+      let defaultDur = 210;
+
+      if (plan.cue === 'PPPH') {
+        offsets = plan.ppphDoubleTime
+          ? bar % 2 === 0
+            ? [0, 1440]
+            : [0]
+          : [0, 720, 960];
+        defaultDur = 220;
+      } else if (skeleton === 'QUARTER_CHOP') {
+        offsets =
+          take === 'B' ? [0, 480, 960, 1440, 1680] : [0, 480, 960, 1440];
+        defaultDur = 220;
+      } else if (skeleton === 'OFFBEAT_STAB') {
+        offsets = [240, 720, 1200, 1680];
+        defaultDur = 160;
+      } else if (skeleton === 'TRIPLET_COMP') {
+        offsets = [0, 320, 480, 800, 960, 1280, 1440, 1760];
+        defaultDur = 140;
+      } else {
+        // SYNCOPATED_RIFF
+        offsets =
+          take === 'B'
+            ? [0, 360, 720, 1200, 1680, 1800]
+            : [0, 360, 720, 1200, 1680];
+        defaultDur = 190;
+      }
+
+      const mappedOffsets =
+        skeleton === 'TRIPLET_COMP' || plan.cue === 'PPPH'
+          ? offsets
+          : Array.from(
+              new Set(
+                offsets.map(
+                  (off) =>
+                    mapTickToSubdivision(barStart + off, plan.subdivision) -
+                    barStart
+                )
+              )
+            ).sort((a, b) => a - b);
+
+      for (let idx = 0; idx < mappedOffsets.length; idx++) {
+        const off = mappedOffsets[idx];
+        const absTick = barStart + off;
+        if (absTick >= sectionEnd) continue;
+        const cw = findChordAtTick(chordWindows, absTick);
+        const voiced = voicingsByWindow[cw.index];
+        const nextOff =
+          idx + 1 < mappedOffsets.length ? mappedOffsets[idx + 1] : TICKS_PER_BAR;
+        const maxDur = Math.max(40, nextOff - off - 15);
+        const dur = Math.min(defaultDur, maxDur);
+        const accent = off % 480 === 0 ? 4 : -2;
+
+        for (let vIdx = 0; vIdx < voiced.length; vIdx++) {
+          const isTop = vIdx === voiced.length - 1;
+          rawNotes.push({
+            pitch: voiced[vIdx],
+            velocity: clampCore(baseVel + accent + (isTop ? 5 : -3), 48, 118),
+            startTick: absTick,
+            durationTicks: dur,
+            channel: ch,
+          });
+        }
+      }
+    }
+  }
+
+  // Take C: 2-note obligato inside vocal pure rest gaps (>= 480 ticks)
+  if (take === 'C' && vocalNotes && vocalNotes.length > 0) {
+    const restGaps = findVocalRestGaps(vocalNotes, sectionEnd, 480);
+    for (const gap of restGaps) {
+      const safeStart = gap.startTick + 60;
+      const safeEnd = gap.endTick - 30;
+      if (safeEnd - safeStart < 240) continue;
+
+      const cw = findChordAtTick(chordWindows, safeStart);
+      const voiced = voicingsByWindow[cw.index];
+      const topNote = voiced[voiced.length - 1] ?? 67;
+      const ninthPc = (cw.parsed.rootPitchClass + 2) % 12;
+      let ninthMidi = Math.floor(topNote / 12) * 12 + ninthPc;
+      while (ninthMidi <= topNote) ninthMidi += 12;
+      if (vocalRange && ninthMidi >= vocalRange.min) {
+        ninthMidi = Math.max(plan.keyboardRange.min, topNote - 2);
+      }
+
+      const midTick = Math.min(safeEnd - 90, safeStart + 160);
+      const v1 = clampCore(66 + Math.floor(rng() * 5), 66, 70);
+      const v2 = clampCore(66 + Math.floor(rng() * 5), 66, 70);
+      rawNotes.push({
+        pitch: topNote,
+        velocity: v1,
+        startTick: safeStart,
+        durationTicks: Math.max(60, Math.min(150, midTick - safeStart - 10)),
+        channel: ch,
+      });
+      if (midTick < safeEnd - 30) {
+        rawNotes.push({
+          pitch: clampCore(ninthMidi, 48, 84),
+          velocity: v2,
+          startTick: midTick,
+          durationTicks: Math.max(60, Math.min(180, safeEnd - midTick)),
+          channel: ch,
+        });
+      }
+    }
+  }
+
+  const notes = sanitizeTrackNotes(rawNotes, 5, sectionEnd);
+  return { notes, controlChanges, skeleton, take, plan };
+}
+
+export function generateKeyboardResult(
+  input: EngineInput
+): KeyboardTrackResult {
+  const { section, song } = input;
+  const explicitSkeleton = input.keyboardSkeleton ?? section.keyboardSkeleton;
+  const explicitDrum = input.drumPatternId ?? section.drumPatternId;
+  const kbPreset =
+    section.patternPresets?.keyboard ??
+    section.partPresets?.keyboard ??
+    song.members.keyboard.patternPreset ??
+    'auto';
+
+  const shouldUseSkeletonEngine =
+    (explicitSkeleton && explicitSkeleton !== 'auto') ||
+    (explicitDrum && explicitDrum !== 'auto' && kbPreset === 'auto');
+
+  if (shouldUseSkeletonEngine) {
+    return generateKeyboardSkeletonTrack(input);
+  }
+  return {
+    notes: generateLegacyKeyboardNotes(input),
+    controlChanges: [],
+  };
+}
+
 export function generateKeyboardNotes(input: EngineInput): MidiNote[] {
+  return generateKeyboardResult(input).notes;
+}
+
+function generateLegacyKeyboardNotes(input: EngineInput): MidiNote[] {
   const { song, section, seed, params } = input;
   if (!song.members.keyboard.enabled || section.enabledParts?.keyboard === false) {
     return [];
