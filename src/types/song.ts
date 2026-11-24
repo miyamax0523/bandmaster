@@ -96,12 +96,43 @@ export const TRACK_CHANNELS: Record<LogicalTrackType, number> = {
   vocalHarmony: 5,
 };
 
+export type ExportTarget =
+  | 'cubase_smf_expressive'
+  | 'voisona_clean_smf'
+  | 'non_pb_synth_fallback';
+
+export type NoteRole =
+  | 'pickup'
+  | 'anchor'
+  | 'hook_stab'
+  | 'rush'
+  | 'sync_tie'
+  | 'step'
+  | 'hard_cut'
+  | 'top_fall'
+  | 'phrase_land';
+
+export interface FallExpressionConfig {
+  readonly probability: number;
+  readonly minGridDurationTicks: number;
+  readonly minTrailingRestTicks: number;
+  readonly bendRangeSemitones: 2 | 4;
+  readonly dropSemitones: number;
+  readonly fallDurationRatio: number;
+  readonly curveSteps: number;
+  readonly resetMarginTicks: number;
+}
+
 export interface MidiNote {
   pitch: number; // 0..127
   velocity: number; // 1..127
   startTick: number; // >= 0 integer
   durationTicks: number; // >= 1 integer
   channel?: number;
+  gridDurationTicks?: number;
+  role?: NoteRole;
+  hasFall?: boolean;
+  fallConfig?: FallExpressionConfig;
 }
 
 export type MidiNoteEvent = MidiNote;

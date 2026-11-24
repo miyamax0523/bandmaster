@@ -75,6 +75,10 @@ function createMockAudioContext() {
           setValueAtTime: vi.fn(),
           exponentialRampToValueAtTime: vi.fn(),
         },
+        detune: {
+          setValueAtTime: vi.fn(),
+          setValueCurveAtTime: vi.fn(),
+        },
         connect: vi.fn(),
         disconnect: vi.fn(),
         start: vi.fn(),
@@ -392,6 +396,60 @@ describe('audioPreview', () => {
     expect(bass1Gain.gain.exponentialRampToValueAtTime).toHaveBeenCalledWith(
       0.0001,
       expect.closeTo(0.27, 2)
+    );
+
+    engine.dispose();
+  });
+
+  it('schedules cubic ease-in detune fall curve and +0.005s reset on vocal notes with hasFall=true', async () => {
+    const { mockCtx, createdOscs } = createMockAudioContext();
+    const engine = new AudioPreviewEngine(
+      () => mockCtx as unknown as AudioContext
+    );
+
+    const tracks: LogicalTracks = {
+      drums: [],
+      kick808: [],
+      bass: [],
+      keyboard: [],
+      pad: [],
+      vocal: [
+        {
+          pitch: 64,
+          velocity: 104,
+          startTick: 0,
+          durationTicks: 960, // 1.0s at 120 BPM
+          channel: 4,
+          hasFall: true,
+          fallConfig: {
+            probability: 0.65,
+            minGridDurationTicks: 720,
+            minTrailingRestTicks: 240,
+            bendRangeSemitones: 4,
+            dropSemitones: 3.5,
+            fallDurationRatio: 0.38,
+            curveSteps: 6,
+            resetMarginTicks: 15,
+          },
+        },
+      ],
+      vocalHarmony: [],
+    };
+
+    engine.loadSongData(tracks, 120, 1920);
+    await engine.play();
+
+    expect(createdOscs.length).toBe(2); // carrier + harmonic
+    const carrier = createdOscs[0] as unknown as {
+      detune: {
+        setValueAtTime: ReturnType<typeof vi.fn>;
+        setValueCurveAtTime: ReturnType<typeof vi.fn>;
+      };
+    };
+    expect(carrier.detune.setValueCurveAtTime).toHaveBeenCalledTimes(1);
+    expect(carrier.detune.setValueAtTime).toHaveBeenCalledWith(
+      0,
+      expect.closeTo(1.005, 4)
     );
 
     engine.dispose();

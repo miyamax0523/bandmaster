@@ -16,7 +16,8 @@ let slotIdCounter = 0;
 
 export function createChordSlotId(prefix = 'cs'): string {
   slotIdCounter += 1;
-  return `${prefix}-${slotIdCounter}-${Math.random().toString(36).slice(2, 6)}`;
+  const tag = ((slotIdCounter * 2654435761) >>> 0).toString(36).slice(0, 4);
+  return `${prefix}-${slotIdCounter}-${tag}`;
 }
 
 export function cloneChordSlots(

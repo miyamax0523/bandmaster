@@ -171,6 +171,60 @@ export function createProgramChangeEvent(
   };
 }
 
+export function createControlChangeEvent(
+  tick: number,
+  channel: number,
+  controller: number,
+  value: number,
+  order = 4
+): MidiTrackEvent {
+  const ch = channel & 0x0f;
+  const cc = Math.min(127, Math.max(0, Math.round(controller)));
+  const val = Math.min(127, Math.max(0, Math.round(value)));
+  return {
+    tick: Math.max(0, Math.round(tick)),
+    order,
+    data: new Uint8Array([0xb0 | ch, cc, val]),
+  };
+}
+
+export function createPitchBendEvent(
+  tick: number,
+  channel: number,
+  value14Bit: number,
+  order = 4
+): MidiTrackEvent {
+  const ch = channel & 0x0f;
+  const clamped = Math.min(16383, Math.max(0, Math.round(value14Bit)));
+  const lsb = clamped & 0x7f;
+  const msb = (clamped >>> 7) & 0x7f;
+  return {
+    tick: Math.max(0, Math.round(tick)),
+    order,
+    data: new Uint8Array([0xe0 | ch, lsb, msb]),
+  };
+}
+
+/**
+ * Emits RPN 0,0 Pitch Bend Sensitivity sequence:
+ * CC#101=0, CC#100=0, CC#6=bendRange, CC#38=0, CC#101=127, CC#100=127
+ */
+export function createPitchBendSensitivityRpnEvents(
+  tick: number,
+  channel: number,
+  bendRangeSemitones: number,
+  cents = 0
+): MidiTrackEvent[] {
+  return [
+    createControlChangeEvent(tick, channel, 101, 0, 4),
+    createControlChangeEvent(tick, channel, 100, 0, 4),
+    createControlChangeEvent(tick, channel, 6, bendRangeSemitones, 4),
+    createControlChangeEvent(tick, channel, 38, cents, 4),
+    createControlChangeEvent(tick, channel, 101, 127, 4),
+    createControlChangeEvent(tick, channel, 100, 127, 4),
+  ];
+}
+
 export function createNoteOnEvent(
   tick: number,
   channel: number,

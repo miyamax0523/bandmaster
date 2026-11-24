@@ -9,6 +9,7 @@ import type {
   SongConfig,
   TakeStyle,
 } from '../types/song';
+import type { MasterGenreId } from '../lib/masterGenres';
 
 export interface ResolvedInstrumentParams {
   // Common
@@ -72,4 +73,5 @@ export interface EngineInput {
   nextSectionFirstChord?: string;
   nextSectionType?: SectionType | string;
   nextSectionEnergy?: EnergyLevel | string;
+  masterGenreId?: MasterGenreId;
 }

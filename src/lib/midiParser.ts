@@ -1,11 +1,26 @@
 import { PPQ, TICKS_PER_BAR, type DrumLoopData, type MidiNote } from '../types/song';
 import { MAX_VLQ_VALUE } from './midiWriter';
 
+export interface ParsedPitchBend {
+  tick: number;
+  value14Bit: number;
+  channel: number;
+}
+
+export interface ParsedControlChange {
+  tick: number;
+  controller: number;
+  value: number;
+  channel: number;
+}
+
 export interface ParsedMidiTrack {
   index: number;
   name?: string;
   notes: MidiNote[];
   hasChannel9: boolean;
+  pitchBends: ParsedPitchBend[];
+  controlChanges: ParsedControlChange[];
 }
 
 export interface ParsedMidiFile {
@@ -168,6 +183,8 @@ function parseTrackChunk(
   let hasChannel9 = false;
 
   const notes: MidiNote[] = [];
+  const pitchBends: ParsedPitchBend[] = [];
+  const controlChanges: ParsedControlChange[] = [];
   // FIFO stack per channel:pitch to pair overlapping identical pitches cleanly
   const activeNotes = new Map<string, ActiveNoteEntry[]>();
 
@@ -282,6 +299,19 @@ function parseTrackChunk(
           }
         } else if (eventType === 0x80) {
           closeNote(channel, d1, absTick);
+        } else if (eventType === 0xb0) {
+          controlChanges.push({
+            tick: normalizeTick(absTick, srcPPQ),
+            controller: d1 & 0x7f,
+            value: d2 & 0x7f,
+            channel,
+          });
+        } else if (eventType === 0xe0) {
+          pitchBends.push({
+            tick: normalizeTick(absTick, srcPPQ),
+            value14Bit: ((d2 & 0x7f) << 7) | (d1 & 0x7f),
+            channel,
+          });
         }
       } else if (eventType === 0xc0 || eventType === 0xd0) {
         if (offset + 1 > end) {
@@ -319,6 +349,8 @@ function parseTrackChunk(
       name: trackName,
       notes,
       hasChannel9,
+      pitchBends,
+      controlChanges,
     },
     bpm,
   };

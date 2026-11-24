@@ -181,6 +181,19 @@ export function selectSongTracks(
           ...n,
           startTick: applySwingToTick(n.startTick, song.swing, song.swingTarget),
         }));
+        vocalNotes.sort((a, b) => a.startTick - b.startTick);
+        for (let i = 0; i + 1 < vocalNotes.length; i++) {
+          const span = Math.max(1, vocalNotes[i + 1].startTick - vocalNotes[i].startTick);
+          if (vocalNotes[i].durationTicks > span) {
+            vocalNotes[i].durationTicks = span;
+          }
+          if (
+            vocalNotes[i].gridDurationTicks !== undefined &&
+            vocalNotes[i].gridDurationTicks! > span
+          ) {
+            vocalNotes[i].gridDurationTicks = span;
+          }
+        }
       }
     }
 
@@ -244,6 +257,21 @@ export function selectSongTracks(
             1,
             Math.min(Math.round(n.midiDurationTicks), sectionEnd - localStart)
           );
+        }
+        if (n.gridDurationTicks !== undefined) {
+          resolved.gridDurationTicks = Math.max(
+            1,
+            Math.min(Math.round(n.gridDurationTicks), sectionEnd - localStart)
+          );
+        }
+        if (n.role !== undefined) {
+          resolved.role = n.role;
+        }
+        if (n.hasFall !== undefined) {
+          resolved.hasFall = n.hasFall;
+        }
+        if (n.fallConfig !== undefined) {
+          resolved.fallConfig = { ...n.fallConfig };
         }
         output[trackType].push(resolved);
       }

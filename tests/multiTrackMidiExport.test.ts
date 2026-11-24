@@ -152,4 +152,56 @@ describe('multiTrackMidiExport', () => {
     expect(parsed.tracks[2].notes.every((n) => n.startTick >= 1920)).toBe(true);
     expect(parsed.tracks[2].notes.length).toBeGreaterThan(0);
   });
+
+  it('separates cubase_smf_expressive (RPN 0,0 + 14-bit Pitch Bend) and voisona_clean_smf (zero PB + <180t legato glue)', () => {
+    const song = createDefaultSongConfig('numetal_mixture');
+    song.exportOnlyActiveTracks = true;
+    song.sections = [
+      {
+        id: 's-dual',
+        type: 'Chorus',
+        name: 'Chorus',
+        bars: 8,
+        energy: 'High',
+        kickMode: 'acoustic',
+        chords: createUniformChordTimeline(['Em', 'C', 'G', 'D'], 8),
+        patternPresets: {
+          drums: 'breakdown_heavy',
+          bass: 'metal_gallop',
+          keyboard: 'rock_power_riff',
+          pad: 'sidechain_pulse',
+          vocal: 'numetal_mixture',
+        },
+      },
+    ];
+    const state = generateAllSections(song, undefined, 777, true);
+
+    const cubaseRes = exportMultiTrackMidi(song, state, {
+      exportTarget: 'cubase_smf_expressive',
+    });
+    const cubaseParsed = parseMidiFile(cubaseRes.bytes);
+    const cubaseVocal = cubaseParsed.tracks.find((t) => t.name === 'Vocal')!;
+    expect(cubaseVocal.controlChanges.slice(0, 6).map((c) => c.controller)).toEqual([
+      101, 100, 6, 38, 101, 100,
+    ]);
+    if (cubaseVocal.pitchBends.length > 0) {
+      expect(
+        cubaseVocal.pitchBends[cubaseVocal.pitchBends.length - 1].value14Bit
+      ).toBe(8192);
+    }
+
+    const voisonaRes = exportMultiTrackMidi(song, state, {
+      exportTarget: 'voisona_clean_smf',
+    });
+    const voisonaParsed = parseMidiFile(voisonaRes.bytes);
+    const voisonaVocal = voisonaParsed.tracks.find((t) => t.name === 'Vocal')!;
+    expect(voisonaVocal.pitchBends).toEqual([]);
+    expect(voisonaVocal.controlChanges).toEqual([]);
+    for (let i = 0; i + 1 < voisonaVocal.notes.length; i++) {
+      const gap =
+        voisonaVocal.notes[i + 1].startTick -
+        (voisonaVocal.notes[i].startTick + voisonaVocal.notes[i].durationTicks);
+      expect(gap === 0 || gap >= 180).toBe(true);
+    }
+  });
 });

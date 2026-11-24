@@ -1,4 +1,9 @@
-import { PPQ, type LogicalTrackType } from '../types/song';
+import { scheduleWebAudioFall } from '../engines/vocalEngine';
+import {
+  PPQ,
+  type FallExpressionConfig,
+  type LogicalTrackType,
+} from '../types/song';
 import type { LogicalTracks, ResolvedNote } from '../types/track';
 import type { SectionSpan } from './noteSelector';
 
@@ -547,14 +552,19 @@ export class AudioPreviewEngine {
         2600
       );
     } else if (track === 'vocal' || track === 'vocalHarmony') {
-      // Clear monophonic lead / formant-like vocal synth
+      // Clear monophonic lead / formant-like vocal synth + cubic ease-in fall detune
+      const fallCfg =
+        track === 'vocal' && note.hasFall && note.fallConfig
+          ? note.fallConfig
+          : undefined;
       this.synthVocalLead(
         this.ctx,
         dest,
         midiToFrequency(note.pitch),
         startTime,
-        Math.min(1.6, durSec),
-        velGain * (track === 'vocalHarmony' ? 0.52 : 0.58)
+        Math.min(2.8, durSec),
+        velGain * (track === 'vocalHarmony' ? 0.52 : 0.58),
+        fallCfg
       );
     } else {
       // pad
@@ -866,7 +876,8 @@ export class AudioPreviewEngine {
     freq: number,
     startTime: number,
     durSec: number,
-    velGain: number
+    velGain: number,
+    fallConfig?: FallExpressionConfig
   ): void {
     const carrier = ctx.createOscillator();
     const harmonic = ctx.createOscillator();
@@ -884,7 +895,23 @@ export class AudioPreviewEngine {
 
     const safeDur = Math.max(0.05, durSec);
     const endTime = startTime + safeDur;
+    const stopTime = fallConfig ? endTime + 0.01 : endTime;
     const attackEnd = Math.min(endTime - 0.015, startTime + 0.025);
+
+    if (
+      fallConfig &&
+      carrier.detune &&
+      typeof carrier.detune.setValueCurveAtTime === 'function'
+    ) {
+      scheduleWebAudioFall(carrier, startTime, safeDur, fallConfig);
+    }
+    if (
+      fallConfig &&
+      harmonic.detune &&
+      typeof harmonic.detune.setValueCurveAtTime === 'function'
+    ) {
+      scheduleWebAudioFall(harmonic, startTime, safeDur, fallConfig);
+    }
 
     gain.gain.setValueAtTime(0.001, startTime);
     gain.gain.linearRampToValueAtTime(Math.max(0.002, velGain), attackEnd);
@@ -897,12 +924,12 @@ export class AudioPreviewEngine {
 
     carrier.start(startTime);
     harmonic.start(startTime);
-    carrier.stop(endTime);
-    harmonic.stop(endTime);
+    carrier.stop(stopTime);
+    harmonic.stop(stopTime);
     this.registerVoice(
       [carrier, harmonic, formantFilter, gain],
       [carrier, harmonic],
-      endTime
+      stopTime
     );
   }
 }

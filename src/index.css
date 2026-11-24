@@ -474,6 +474,25 @@ input[type='range'] {
   font-weight: 700;
 }
 
+.midi-export-group {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-width: 100%;
+}
+
+.midi-export-select {
+  width: auto;
+  min-width: 0;
+  max-width: 240px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding: 7px 10px;
+  background: var(--surface-2);
+  border-color: var(--export);
+}
+
 .btn-danger {
   background: rgba(239, 68, 68, 0.18);
   border-color: var(--danger);
