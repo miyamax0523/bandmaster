@@ -5,6 +5,9 @@ import {
   BEAT_TEMPLATES,
   GENRE_FLAVOR_PROFILES,
   generateDrumResult,
+  isTripletSkeleton,
+  LEGACY_8_BEAT_PATTERN_IDS,
+  MIDI_NOTE_MAP,
   STEP_TICKS,
   type BeatPatternId,
   type InternalDrumEvent,
@@ -187,7 +190,7 @@ describe('drumEngine continuity & architecture metrics (M1-M7)', () => {
     const allScores: number[] = [];
 
     for (const genreId of ALL_GENRES) {
-      for (const patternId of ALL_BEAT_PATTERN_IDS) {
+      for (const patternId of LEGACY_8_BEAT_PATTERN_IDS) {
         for (const seed of SEEDS) {
           const { song, section } = makeFixture(genreId, patternId, 'A', {
             bars: 8,
@@ -231,7 +234,7 @@ describe('drumEngine continuity & architecture metrics (M1-M7)', () => {
     ]);
 
     for (const genreId of ALL_GENRES) {
-      for (const patternId of ALL_BEAT_PATTERN_IDS) {
+      for (const patternId of LEGACY_8_BEAT_PATTERN_IDS) {
         for (const seed of SEEDS) {
           const { song, section } = makeFixture(genreId, patternId, 'A', {
             bars: 8,
@@ -265,7 +268,7 @@ describe('drumEngine continuity & architecture metrics (M1-M7)', () => {
 
   it('M3: guarantees 1.00 backbeat snare rate on non-fill/non-break bars (>= 0.95 overall)', () => {
     for (const genreId of ALL_GENRES) {
-      for (const patternId of ALL_BEAT_PATTERN_IDS) {
+      for (const patternId of LEGACY_8_BEAT_PATTERN_IDS) {
         for (const take of ['A', 'B', 'C'] as const) {
           const { song, section } = makeFixture(genreId, patternId, take, {
             bars: 8,
@@ -309,7 +312,7 @@ describe('drumEngine continuity & architecture metrics (M1-M7)', () => {
 
   it('M4: guarantees >= 0.95 timekeeping continuity with zero consecutive 2-step omissions', () => {
     for (const genreId of ALL_GENRES) {
-      for (const patternId of ALL_BEAT_PATTERN_IDS) {
+      for (const patternId of LEGACY_8_BEAT_PATTERN_IDS) {
         for (const seed of SEEDS) {
           const { song, section } = makeFixture(genreId, patternId, 'A', {
             bars: 8,
@@ -363,12 +366,24 @@ describe('drumEngine continuity & architecture metrics (M1-M7)', () => {
     const maxLhlByPattern: Record<BeatPatternId, number> = {
       EIGHT_BEAT: 4,
       SIXTEEN_BEAT: 6,
+      ATAMA_UCHI: 16,
       FOUR_ON_FLOOR: 2,
       UPBEAT: 3,
       TWO_BEAT: 2,
       BOUNCE: 5,
       HALF_TIME: 9,
       DOUBLE_BASS: 1,
+      SOCA: 4,
+      SLIP_BEAT: 12,
+      SHUFFLE: 8,
+      HALF_TIME_SHUFFLE: 14,
+      JUNGLE: 18,
+      TRAIN: 6,
+      MARCH: 2,
+      PPPH: 8,
+      FOUR_BEAT: 8,
+      SAMBA: 8,
+      SONGO: 14,
     };
 
     for (const patternId of ALL_BEAT_PATTERN_IDS) {
@@ -580,6 +595,405 @@ describe('drumEngine continuity & architecture metrics (M1-M7)', () => {
       expect(profile.microtiming.snareOffsetMs).toBeGreaterThanOrEqual(-8);
       expect(profile.microtiming.snareOffsetMs).toBeLessThanOrEqual(8);
       expect(profile.microtiming.maxJitterMs).toBeLessThanOrEqual(2.5);
+    }
+  });
+});
+
+// ===========================================================================
+// M8–M12 & ATAMA_UCHI Quantitative Regression Test Suite (20 Skeletons + v2)
+// ===========================================================================
+describe('drumEngine v2 extended metrics (M8-M12 & ATAMA_UCHI)', () => {
+  it('M8: guarantees Stage 4 pure integer grid alignment (straight % 60 === 0, triplet % 80 === 0, violations = 0)', () => {
+    expect(ALL_BEAT_PATTERN_IDS.length).toBe(20);
+
+    for (const patternId of ALL_BEAT_PATTERN_IDS) {
+      const triplet = isTripletSkeleton(patternId);
+      for (const take of ['A', 'B', 'C'] as const) {
+        const { song, section } = makeFixture('emo_jrock', patternId, take, {
+          bars: 8,
+          drumFillEnabled: true,
+          drumBreakEnabled: false,
+        }, 140);
+        const res = generateDrumResult({
+          song,
+          section,
+          sectionIndex: 0,
+          style: 'A',
+          seed: 303,
+          params: resolveInstrumentParams(song, section, 'drums', 'A'),
+        });
+
+        const stage4 = res.stage4Events ?? [];
+        expect(stage4.length).toBeGreaterThan(0);
+
+        for (const ev of stage4) {
+          const isValid = triplet
+            ? ev.tick % 80 === 0 || ev.tick % 60 === 0
+            : ev.tick % 60 === 0 || ev.tick % 80 === 0;
+          expect(
+            isValid,
+            `M8 grid violation on ${patternId} Take ${take}: tick=${ev.tick}`
+          ).toBe(true);
+          if (ev.role !== 'FILL_EVENT') {
+            if (triplet) {
+              expect(
+                ev.tick % 80,
+                `M8 triplet skeleton violation on ${patternId} Take ${take}: tick=${ev.tick}`
+              ).toBe(0);
+            } else {
+              expect(
+                ev.tick % 60,
+                `M8 straight skeleton violation on ${patternId} Take ${take}: tick=${ev.tick}`
+              ).toBe(0);
+            }
+          }
+        }
+      }
+    }
+  });
+
+  it('M9: enforces zero 4-limb & SNARE_FLAM 2-hand conflicts in Stage 4 across all 20 skeletons x 3 takes', () => {
+    for (const patternId of ALL_BEAT_PATTERN_IDS) {
+      for (const take of ['A', 'B', 'C'] as const) {
+        const { song, section } = makeFixture('royal_jpop', patternId, take, {
+          bars: 8,
+          energy: 'High',
+          drumFillEnabled: true,
+          drumBreakEnabled: false,
+        }, 135);
+        const res = generateDrumResult({
+          song,
+          section,
+          sectionIndex: 0,
+          style: 'A',
+          seed: 555,
+          params: resolveInstrumentParams(song, section, 'drums', 'A'),
+        });
+
+        const stage4 = res.stage4Events ?? [];
+        const byTick = new Map<number, InternalDrumEvent[]>();
+        for (const ev of stage4) {
+          const list = byTick.get(ev.tick) ?? [];
+          list.push(ev);
+          byTick.set(ev.tick, list);
+        }
+
+        for (const [tick, cluster] of byTick.entries()) {
+          let upperSlots = 0;
+          let rf = 0;
+          let lf = 0;
+          for (const ev of cluster) {
+            if (ev.limb === 'RF') rf++;
+            else if (ev.limb === 'LF') lf++;
+            else upperSlots += ev.voice === 'SNARE_FLAM' ? 2 : 1;
+          }
+          expect(
+            upperSlots,
+            `M9 upper-limb conflict on ${patternId}/${take} at tick ${tick}`
+          ).toBeLessThanOrEqual(2);
+          expect(
+            rf,
+            `M9 RF conflict on ${patternId}/${take} at tick ${tick}`
+          ).toBeLessThanOrEqual(1);
+          expect(
+            lf,
+            `M9 LF conflict on ${patternId}/${take} at tick ${tick}`
+          ).toBeLessThanOrEqual(1);
+        }
+      }
+    }
+  });
+
+  it('M10: enforces biomechanical IOI guard across BPM [60, 100, 140, 165, 195] (zero 6-tuplet fills > 155 BPM, zero single-pedal 3+ consecutive 16th kicks > 165 BPM)', () => {
+    const bpms = [60, 100, 140, 165, 195] as const;
+    const patternsToSweep: readonly BeatPatternId[] = [
+      'EIGHT_BEAT',
+      'ATAMA_UCHI',
+      'SOCA',
+      'SHUFFLE',
+      'HALF_TIME_SHUFFLE',
+      'PPPH',
+      'FOUR_BEAT',
+    ];
+
+    for (const bpm of bpms) {
+      for (const patternId of patternsToSweep) {
+        for (const seed of [11, 22, 33, 44]) {
+          const { song, section } = makeFixture(
+            'emo_jrock',
+            patternId,
+            'C',
+            {
+              bars: 8,
+              energy: 'High',
+              drumFillEnabled: true,
+              drumBreakEnabled: false,
+            },
+            bpm
+          );
+          const res = generateDrumResult({
+            song,
+            section,
+            sectionIndex: 0,
+            style: 'A',
+            seed,
+            params: resolveInstrumentParams(song, section, 'drums', 'A'),
+          });
+
+          if (bpm > 155) {
+            expect(res.selectedFillIds ?? []).not.toContain('FILL_2B_6TUPLET_SHUFFLE');
+          }
+
+          if (bpm > 165) {
+            const kicks = (res.stage4Events ?? [])
+              .filter((e) => e.voice === 'KICK_MAIN' || e.voice === 'KICK_ALT')
+              .sort((a, b) => a.tick - b.tick);
+            for (let i = 0; i + 2 < kicks.length; i++) {
+              const d1 = kicks[i + 1].tick - kicks[i].tick;
+              const d2 = kicks[i + 2].tick - kicks[i + 1].tick;
+              const isTriple16th = d1 > 0 && d1 <= 130 && d2 > 0 && d2 <= 130;
+              expect(
+                isTriple16th,
+                `M10 triple 16th kick at bpm=${bpm} on ${patternId} ticks=${kicks[i].tick},${kicks[i + 1].tick},${kicks[i + 2].tick}`
+              ).toBe(false);
+            }
+          }
+        }
+      }
+    }
+  });
+
+  it('M11: enforces hi-hat state continuity (zero simultaneous HH_OPEN + HH_CLOSED/PEDAL) and PPPH Take A choke at 1440 (<155 BPM) & Bar2 480 (>=155 BPM)', () => {
+    for (const patternId of ALL_BEAT_PATTERN_IDS) {
+      for (const take of ['A', 'B', 'C'] as const) {
+        const { song, section } = makeFixture('royal_jpop', patternId, take, {
+          bars: 4,
+          drumFillEnabled: true,
+          drumBreakEnabled: false,
+        }, 140);
+        const res = generateDrumResult({
+          song,
+          section,
+          sectionIndex: 0,
+          style: 'A',
+          seed: 909,
+          params: resolveInstrumentParams(song, section, 'drums', 'A'),
+        });
+
+        const byTick = new Map<number, InternalDrumEvent[]>();
+        for (const ev of res.stage4Events ?? []) {
+          const list = byTick.get(ev.tick) ?? [];
+          list.push(ev);
+          byTick.set(ev.tick, list);
+        }
+        for (const [tick, cluster] of byTick.entries()) {
+          const hasOpen = cluster.some(
+            (e) => e.voice === 'HH_OPEN' || e.voice === 'HH_HALF_OPEN'
+          );
+          const hasClosedOrPedal = cluster.some(
+            (e) => e.voice === 'HH_CLOSED' || e.voice === 'HH_PEDAL'
+          );
+          expect(
+            hasOpen && hasClosedOrPedal,
+            `M11 simultaneous open+closed HH on ${patternId}/${take} at tick ${tick}`
+          ).toBe(false);
+        }
+      }
+    }
+
+    // PPPH Take A (< 155 BPM): HH_PEDAL choke at 1440, silent after 1440
+    const slowPpph = makeFixture('royal_jpop', 'PPPH', 'A', {
+      bars: 4,
+      drumFillEnabled: false,
+      drumBreakEnabled: false,
+    }, 132);
+    const slowRes = generateDrumResult({
+      song: slowPpph.song,
+      section: slowPpph.section,
+      sectionIndex: 0,
+      style: 'A',
+      seed: 42,
+      params: resolveInstrumentParams(slowPpph.song, slowPpph.section, 'drums', 'A'),
+    });
+    for (let b = 0; b < 4; b++) {
+      const barStart = b * BAR_TICKS;
+      expect(
+        (slowRes.stage4Events ?? []).some(
+          (e) => e.tick === barStart + 1440 && e.voice === 'HH_PEDAL'
+        )
+      ).toBe(true);
+      expect(
+        (slowRes.stage4Events ?? []).filter(
+          (e) => e.tick > barStart + 1440 && e.tick < barStart + BAR_TICKS
+        )
+      ).toEqual([]);
+    }
+
+    // PPPH Take A (>= 155 BPM): 2-bar cycle with HH_PEDAL choke at Bar 2 tick 480 (abs 2400)
+    const fastPpph = makeFixture('emo_jrock', 'PPPH', 'A', {
+      bars: 4,
+      drumFillEnabled: false,
+      drumBreakEnabled: false,
+    }, 172);
+    const fastRes = generateDrumResult({
+      song: fastPpph.song,
+      section: fastPpph.section,
+      sectionIndex: 0,
+      style: 'A',
+      seed: 42,
+      params: resolveInstrumentParams(fastPpph.song, fastPpph.section, 'drums', 'A'),
+    });
+    for (const bar2Idx of [1, 3]) {
+      const bar2Start = bar2Idx * BAR_TICKS;
+      expect(
+        (fastRes.stage4Events ?? []).some(
+          (e) => e.tick === bar2Start + 480 && e.voice === 'HH_PEDAL'
+        )
+      ).toBe(true);
+      expect(
+        (fastRes.stage4Events ?? []).filter(
+          (e) => e.tick > bar2Start + 480 && e.tick < bar2Start + BAR_TICKS
+        )
+      ).toEqual([]);
+    }
+  });
+
+  it('M12: verifies HALF_TIME_SHUFFLE & TRAIN Ghost/Accent velocity ratio in [0.25, 0.45] and SSD5_NATIVE CRASH_L === 55 (never 49)', () => {
+    for (const patternId of ['HALF_TIME_SHUFFLE', 'TRAIN'] as const) {
+      for (const take of ['A', 'B', 'C'] as const) {
+        const { song, section } = makeFixture('royal_jpop', patternId, take, {
+          bars: 4,
+          drumFillEnabled: false,
+          drumBreakEnabled: false,
+        }, 124);
+        const res = generateDrumResult({
+          song,
+          section,
+          sectionIndex: 0,
+          style: 'A',
+          seed: 77,
+          params: resolveInstrumentParams(song, section, 'drums', 'A'),
+        });
+
+        const accents = res.events.filter((e) => e.role === 'SNARE_BACKBEAT');
+        const ghosts = res.events.filter(
+          (e) => e.role === 'ORNAMENT' && e.voice === 'SNARE_MAIN'
+        );
+        expect(accents.length).toBeGreaterThan(0);
+        expect(ghosts.length).toBeGreaterThan(0);
+
+        const avgAccent =
+          accents.reduce((sum, e) => sum + e.velocity, 0) / accents.length;
+        const avgGhost =
+          ghosts.reduce((sum, e) => sum + e.velocity, 0) / ghosts.length;
+        const ratio = avgGhost / avgAccent;
+
+        expect(
+          ratio,
+          `M12 Ghost/Accent ratio out of range on ${patternId} Take ${take}: ${ratio.toFixed(3)}`
+        ).toBeGreaterThanOrEqual(0.25);
+        expect(
+          ratio,
+          `M12 Ghost/Accent ratio out of range on ${patternId} Take ${take}: ${ratio.toFixed(3)}`
+        ).toBeLessThanOrEqual(0.45);
+      }
+    }
+
+    // SSD5_NATIVE CRASH_L must map to 55 and NEVER 49
+    expect(MIDI_NOTE_MAP.SSD5_NATIVE.CRASH_L).toBe(55);
+    expect(MIDI_NOTE_MAP.SSD5_NATIVE.CRASH_L).not.toBe(49);
+    const { song, section } = makeFixture('emo_jrock', 'EIGHT_BEAT', 'A', {
+      type: 'Chorus',
+      energy: 'High',
+      bars: 4,
+    }, 150);
+    const ssd5Res = generateDrumResult({
+      song,
+      section,
+      sectionIndex: 0,
+      style: 'A',
+      seed: 101,
+      midiMapMode: 'SSD5_NATIVE',
+      params: resolveInstrumentParams(song, section, 'drums', 'A'),
+    });
+    expect(ssd5Res.notes.some((n) => n.pitch === 55)).toBe(true);
+    expect(ssd5Res.notes.some((n) => n.pitch === 49)).toBe(false);
+  });
+
+  it('ATAMA_UCHI (Japanese band-style): verifies Take A (タン・ド・タン・ド) and Take B (タン・タン・タド・タド) exact placements', () => {
+    // Take A: Snare + HH at 0, 480, 960, 1440; Kick at 240, 720, 1200, 1680
+    const fixA = makeFixture('emo_jrock', 'ATAMA_UCHI', 'A', {
+      bars: 4,
+      drumFillEnabled: false,
+      drumBreakEnabled: false,
+    }, 158);
+    const resA = generateDrumResult({
+      song: fixA.song,
+      section: fixA.section,
+      sectionIndex: 0,
+      style: 'A',
+      seed: 100,
+      params: resolveInstrumentParams(fixA.song, fixA.section, 'drums', 'A'),
+    });
+    const s4A = resA.stage4Events ?? [];
+    for (let b = 0; b < 4; b++) {
+      const barStart = b * BAR_TICKS;
+      const barEvs = s4A.filter((e) => e.barIndex === b);
+      const snareLocal = barEvs
+        .filter((e) => e.voice === 'SNARE_MAIN')
+        .map((e) => e.tick - barStart)
+        .sort((x, y) => x - y);
+      const hhLocal = barEvs
+        .filter((e) => e.voice === 'HH_CLOSED' || e.voice === 'HH_HALF_OPEN')
+        .map((e) => e.tick - barStart)
+        .sort((x, y) => x - y);
+      const kickLocal = barEvs
+        .filter((e) => e.voice === 'KICK_MAIN')
+        .map((e) => e.tick - barStart)
+        .sort((x, y) => x - y);
+
+      expect(snareLocal).toEqual([0, 480, 960, 1440]);
+      expect(hhLocal).toEqual([0, 480, 960, 1440]);
+      expect(kickLocal).toEqual([240, 720, 1200, 1680]);
+    }
+
+    // Take B: Beats 1-2 (0, 480) = Snare + HH ONLY (no kick, no floor tom);
+    //         Beats 3-4 (960..1680) = Snare + HH at 960, 1440 alternating with Kick at 1200, 1680
+    const fixB = makeFixture('emo_jrock', 'ATAMA_UCHI', 'B', {
+      bars: 4,
+      drumFillEnabled: false,
+      drumBreakEnabled: false,
+    }, 158);
+    const resB = generateDrumResult({
+      song: fixB.song,
+      section: fixB.section,
+      sectionIndex: 0,
+      style: 'A',
+      seed: 100,
+      params: resolveInstrumentParams(fixB.song, fixB.section, 'drums', 'A'),
+    });
+    const s4B = resB.stage4Events ?? [];
+    for (let b = 0; b < 4; b++) {
+      const barStart = b * BAR_TICKS;
+      const barEvs = s4B.filter((e) => e.barIndex === b);
+      const snareLocal = barEvs
+        .filter((e) => e.voice === 'SNARE_MAIN')
+        .map((e) => e.tick - barStart)
+        .sort((x, y) => x - y);
+      const hhLocal = barEvs
+        .filter((e) => e.voice === 'HH_CLOSED' || e.voice === 'HH_HALF_OPEN')
+        .map((e) => e.tick - barStart)
+        .sort((x, y) => x - y);
+      const kickLocal = barEvs
+        .filter((e) => e.voice === 'KICK_MAIN')
+        .map((e) => e.tick - barStart)
+        .sort((x, y) => x - y);
+      const floorTomLocal = barEvs.filter((e) => e.voice === 'TOM_FLOOR');
+
+      expect(snareLocal).toEqual([0, 480, 960, 1440]);
+      expect(hhLocal).toEqual([0, 480, 960, 1440]);
+      expect(kickLocal).toEqual([1200, 1680]);
+      expect(floorTomLocal).toEqual([]);
     }
   });
 });

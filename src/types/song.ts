@@ -34,12 +34,24 @@ export type DrumAnticipationMode = 'sync' | 'keep';
 export type BeatPatternId =
   | 'EIGHT_BEAT'
   | 'SIXTEEN_BEAT'
+  | 'ATAMA_UCHI'
   | 'FOUR_ON_FLOOR'
   | 'UPBEAT'
   | 'TWO_BEAT'
   | 'BOUNCE'
   | 'HALF_TIME'
-  | 'DOUBLE_BASS';
+  | 'DOUBLE_BASS'
+  | 'SOCA'
+  | 'SLIP_BEAT'
+  | 'SHUFFLE'
+  | 'HALF_TIME_SHUFFLE'
+  | 'JUNGLE'
+  | 'TRAIN'
+  | 'MARCH'
+  | 'PPPH'
+  | 'FOUR_BEAT'
+  | 'SAMBA'
+  | 'SONGO';
 export type KickTake = 'A' | 'B' | 'C';
 export type Bass808Behavior = 'octaveUp' | 'tacet' | 'normal';
 export type TakeStyle = 'A' | 'B' | 'C';

@@ -116,24 +116,68 @@ const DENSITY_LEVELS: readonly DensityLevel[] = [1, 2, 3, 4, 5];
 const KEYBOARD_DENSITY_LEVELS: readonly KeyboardDensityLevel[] = [
   1, 2, 3, 4, 5, 6, 7,
 ];
-const BEAT_PATTERN_OPTIONS: Array<{
-  value: BeatPatternId | 'auto';
+const BEAT_PATTERN_GROUPS: Array<{
+  id: 'BASIC_ROCK' | 'DANCE_MODERN' | 'SHUFFLE_ORGANIC' | 'JAZZ_LATIN';
   label: string;
+  options: Array<{ value: BeatPatternId; label: string }>;
 }> = [
-  { value: 'auto', label: '自動（ジャンル展開）' },
-  { value: 'EIGHT_BEAT', label: '王道8ビート' },
-  { value: 'SIXTEEN_BEAT', label: '16ビート' },
-  { value: 'FOUR_ON_FLOOR', label: '頭打ち・四つ打ち' },
-  { value: 'UPBEAT', label: '裏打ち・アップビート' },
-  { value: 'TWO_BEAT', label: 'ツービート' },
-  { value: 'BOUNCE', label: 'バウンス（跳ね系）' },
-  { value: 'HALF_TIME', label: 'ハーフタイム' },
-  { value: 'DOUBLE_BASS', label: 'ツーバス・ドコドコ' },
+  {
+    id: 'BASIC_ROCK',
+    label: 'Basic & Rock（基本7種）',
+    options: [
+      { value: 'EIGHT_BEAT', label: '王道8ビート' },
+      { value: 'SIXTEEN_BEAT', label: '16ビート' },
+      { value: 'ATAMA_UCHI', label: '頭打ち（邦ロック式）' },
+      { value: 'TWO_BEAT', label: 'ツービート' },
+      { value: 'HALF_TIME', label: 'ハーフタイム' },
+      { value: 'BOUNCE', label: 'バウンス（跳ね系）' },
+      { value: 'DOUBLE_BASS', label: 'ツーバス・ドコドコ' },
+    ],
+  },
+  {
+    id: 'DANCE_MODERN',
+    label: 'Dance & Modern（ダンス・モダン5種）',
+    options: [
+      { value: 'FOUR_ON_FLOOR', label: '四つ打ち（ダンス系）' },
+      { value: 'UPBEAT', label: '裏打ち・アップビート' },
+      { value: 'SOCA', label: 'ソカ（3-3-2疾走）' },
+      { value: 'SLIP_BEAT', label: 'スリップビート（Shake系）' },
+      { value: 'PPPH', label: 'PPPH（Bメロ定番）' },
+    ],
+  },
+  {
+    id: 'SHUFFLE_ORGANIC',
+    label: 'Shuffle & Organic（跳ね・ノンシンバル5種）',
+    options: [
+      { value: 'SHUFFLE', label: 'シャッフル（3連）' },
+      { value: 'HALF_TIME_SHUFFLE', label: 'ハーフタイムシャッフル' },
+      { value: 'JUNGLE', label: 'ジャングルビート（タム主体）' },
+      { value: 'TRAIN', label: 'トレインビート（16分スネア）' },
+      { value: 'MARCH', label: 'マーチ（行進ルーディメンツ）' },
+    ],
+  },
+  {
+    id: 'JAZZ_LATIN',
+    label: 'Specialty / Jazz & Latin（拡張3種）',
+    options: [
+      { value: 'FOUR_BEAT', label: '4ビート（ジャズ・スウィング）' },
+      { value: 'SAMBA', label: 'サンバ／ボサノヴァ' },
+      { value: 'SONGO', label: 'ソンゴ（キューバン・リニア）' },
+    ],
+  },
 ];
 
 function getKickTakeOptions(
   patternId: BeatPatternId | 'auto'
 ): Array<{ value: KickTake | 'auto'; label: string }> {
+  if (patternId === 'ATAMA_UCHI') {
+    return [
+      { value: 'auto', label: '自動' },
+      { value: 'A', label: 'A: タン・ド・タン・ド' },
+      { value: 'B', label: 'B: タン・タン・タド・タド' },
+      { value: 'C', label: 'C: 頭ドン＋裏キック' },
+    ];
+  }
   if (patternId === 'EIGHT_BEAT') {
     return [
       { value: 'auto', label: '自動' },
@@ -164,6 +208,38 @@ function getKickTakeOptions(
       { value: 'A', label: 'A: 四つ打ち系' },
       { value: 'B', label: 'B: 軽快8ビート系' },
       { value: 'C', label: 'C: シンコペ推進' },
+    ];
+  }
+  if (patternId === 'HALF_TIME_SHUFFLE') {
+    return [
+      { value: 'auto', label: '自動' },
+      { value: 'A', label: 'A: Purdie（王道）' },
+      { value: 'B', label: 'B: Bonham（重量型）' },
+      { value: 'C', label: 'C: Rosanna（クラーベ）' },
+    ];
+  }
+  if (patternId === 'PPPH') {
+    return [
+      { value: 'auto', label: '自動' },
+      { value: 'A', label: 'A: 王道キメ＋抜け拍' },
+      { value: 'B', label: 'B: 裏打ちHH完走' },
+      { value: 'C', label: 'C: サビ前タム積層煽り' },
+    ];
+  }
+  if (patternId === 'SOCA') {
+    return [
+      { value: 'auto', label: '自動' },
+      { value: 'A', label: 'A: 邦ロック疾走' },
+      { value: 'B', label: 'B: カリビアン・リム' },
+      { value: 'C', label: 'C: ゴースト＆推進' },
+    ];
+  }
+  if (patternId === 'SAMBA') {
+    return [
+      { value: 'auto', label: '自動' },
+      { value: 'A', label: 'A: 王道サンバ' },
+      { value: 'B', label: 'B: ボサノヴァ風' },
+      { value: 'C', label: 'C: ベル＆スネア強調' },
     ];
   }
   return [
@@ -593,10 +669,15 @@ export function BandmasterConsole({
                               )
                             }
                           >
-                            {BEAT_PATTERN_OPTIONS.map((opt) => (
-                              <option key={opt.value} value={opt.value}>
-                                {opt.label}
-                              </option>
+                            <option value="auto">自動（ジャンル展開）</option>
+                            {BEAT_PATTERN_GROUPS.map((group) => (
+                              <optgroup key={group.id} label={group.label}>
+                                {group.options.map((opt) => (
+                                  <option key={opt.value} value={opt.value}>
+                                    {opt.label}
+                                  </option>
+                                ))}
+                              </optgroup>
                             ))}
                           </select>
                         </div>

@@ -73,6 +73,8 @@ export type DrumVoice =
   | 'SNARE_MAIN'
   | 'SNARE_RIMSHOT'
   | 'SNARE_SIDESTICK'
+  | 'SNARE_FLAM'
+  | 'SNARE_ROLL'
   | 'HH_CLOSED'
   | 'HH_PEDAL'
   | 'HH_HALF_OPEN'
@@ -82,6 +84,7 @@ export type DrumVoice =
   | 'CRASH_L'
   | 'CRASH_R'
   | 'CHINA'
+  | 'SPLASH'
   | 'TOM_HI'
   | 'TOM_MID'
   | 'TOM_FLOOR';
@@ -95,6 +98,8 @@ export const MIDI_NOTE_MAP: Record<MidiMapMode, Record<DrumVoice, number>> = {
     SNARE_MAIN: 38,
     SNARE_RIMSHOT: 40,
     SNARE_SIDESTICK: 37,
+    SNARE_FLAM: 38,
+    SNARE_ROLL: 38,
     HH_CLOSED: 42,
     HH_PEDAL: 44,
     HH_HALF_OPEN: 46,
@@ -104,6 +109,7 @@ export const MIDI_NOTE_MAP: Record<MidiMapMode, Record<DrumVoice, number>> = {
     CRASH_L: 49,
     CRASH_R: 57,
     CHINA: 52,
+    SPLASH: 55,
     TOM_HI: 48,
     TOM_MID: 45,
     TOM_FLOOR: 43,
@@ -114,6 +120,8 @@ export const MIDI_NOTE_MAP: Record<MidiMapMode, Record<DrumVoice, number>> = {
     SNARE_MAIN: 38,
     SNARE_RIMSHOT: 40,
     SNARE_SIDESTICK: 37,
+    SNARE_FLAM: 38,
+    SNARE_ROLL: 21,
     HH_CLOSED: 42,
     HH_PEDAL: 44,
     HH_HALF_OPEN: 62,
@@ -123,6 +131,7 @@ export const MIDI_NOTE_MAP: Record<MidiMapMode, Record<DrumVoice, number>> = {
     CRASH_L: 55,
     CRASH_R: 57,
     CHINA: 31,
+    SPLASH: 50,
     TOM_HI: 48,
     TOM_MID: 47,
     TOM_FLOOR: 43,
@@ -158,11 +167,22 @@ export interface InternalDrumEvent {
 }
 
 // ===========================================================================
-// 2. Layer 1: 8 Basic Beat Skeletons × 3 Kick Takes (A / B / C)
+// 2. Layer 1: 20 Beat Skeletons (17 Core + 3 Specialty) × 3 Takes (A / B / C)
 // ===========================================================================
+export type BeatPatternCategory =
+  | 'BASIC_ROCK'
+  | 'DANCE_MODERN'
+  | 'SHUFFLE_ORGANIC'
+  | 'JAZZ_LATIN';
+
+export type BeatGridType = 'straight' | 'triplet';
+
 export interface BeatTemplate {
   readonly id: BeatPatternId;
   readonly label: string;
+  readonly category: BeatPatternCategory;
+  readonly gridType?: BeatGridType;
+  readonly customSkeleton?: boolean;
   readonly snareSteps: readonly StepIndex[];
   readonly snareStepsByTake?: Partial<Record<KickTake, readonly StepIndex[]>>;
   readonly timekeepSteps: readonly StepIndex[];
@@ -177,6 +197,8 @@ export const BEAT_TEMPLATES: Record<BeatPatternId, BeatTemplate> = {
   EIGHT_BEAT: {
     id: 'EIGHT_BEAT',
     label: '王道8ビート',
+    category: 'BASIC_ROCK',
+    gridType: 'straight',
     snareSteps: [4, 12],
     timekeepSteps: [0, 2, 4, 6, 8, 10, 12, 14],
     kickTakes: {
@@ -191,6 +213,8 @@ export const BEAT_TEMPLATES: Record<BeatPatternId, BeatTemplate> = {
   SIXTEEN_BEAT: {
     id: 'SIXTEEN_BEAT',
     label: '16ビート',
+    category: 'BASIC_ROCK',
+    gridType: 'straight',
     snareSteps: [4, 12],
     timekeepSteps: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
     kickTakes: {
@@ -202,9 +226,28 @@ export const BEAT_TEMPLATES: Record<BeatPatternId, BeatTemplate> = {
     supportsSwing16th: false,
     supportsHat16th: false,
   },
+  ATAMA_UCHI: {
+    id: 'ATAMA_UCHI',
+    label: '頭打ち（邦ロック式）',
+    category: 'BASIC_ROCK',
+    gridType: 'straight',
+    customSkeleton: true,
+    snareSteps: [0, 4, 8, 12],
+    timekeepSteps: [0, 4, 8, 12],
+    kickTakes: {
+      A: [2, 6, 10, 14],
+      B: [10, 14],
+      C: [0, 2, 6, 10, 14],
+    },
+    defaultTimekeepVoice: 'HH_CLOSED',
+    supportsSwing16th: false,
+    supportsHat16th: false,
+  },
   FOUR_ON_FLOOR: {
     id: 'FOUR_ON_FLOOR',
-    label: '頭打ち・四つ打ち',
+    label: '四つ打ち（ダンス系）',
+    category: 'DANCE_MODERN',
+    gridType: 'straight',
     snareSteps: [4, 12],
     timekeepSteps: [0, 4, 8, 12],
     kickTakes: {
@@ -219,6 +262,8 @@ export const BEAT_TEMPLATES: Record<BeatPatternId, BeatTemplate> = {
   UPBEAT: {
     id: 'UPBEAT',
     label: '裏打ち・アップビート',
+    category: 'DANCE_MODERN',
+    gridType: 'straight',
     snareSteps: [4, 12],
     timekeepSteps: [0, 2, 4, 6, 8, 10, 12, 14],
     kickTakes: {
@@ -233,6 +278,8 @@ export const BEAT_TEMPLATES: Record<BeatPatternId, BeatTemplate> = {
   TWO_BEAT: {
     id: 'TWO_BEAT',
     label: 'ツービート',
+    category: 'BASIC_ROCK',
+    gridType: 'straight',
     snareSteps: [2, 6, 10, 14],
     timekeepSteps: [0, 2, 4, 6, 8, 10, 12, 14],
     kickTakes: {
@@ -247,6 +294,8 @@ export const BEAT_TEMPLATES: Record<BeatPatternId, BeatTemplate> = {
   BOUNCE: {
     id: 'BOUNCE',
     label: 'バウンス（跳ね系）',
+    category: 'BASIC_ROCK',
+    gridType: 'straight',
     snareSteps: [4, 12],
     timekeepSteps: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
     kickTakes: {
@@ -261,6 +310,8 @@ export const BEAT_TEMPLATES: Record<BeatPatternId, BeatTemplate> = {
   HALF_TIME: {
     id: 'HALF_TIME',
     label: 'ハーフタイム',
+    category: 'BASIC_ROCK',
+    gridType: 'straight',
     snareSteps: [8],
     timekeepSteps: [0, 2, 4, 6, 8, 10, 12, 14],
     kickTakes: {
@@ -275,6 +326,8 @@ export const BEAT_TEMPLATES: Record<BeatPatternId, BeatTemplate> = {
   DOUBLE_BASS: {
     id: 'DOUBLE_BASS',
     label: 'ツーバス・ドコドコ',
+    category: 'BASIC_ROCK',
+    gridType: 'straight',
     snareSteps: [4, 12],
     snareStepsByTake: {
       C: [8],
@@ -290,9 +343,196 @@ export const BEAT_TEMPLATES: Record<BeatPatternId, BeatTemplate> = {
     supportsHat16th: false,
     isDoubleBass: true,
   },
+  SOCA: {
+    id: 'SOCA',
+    label: 'ソカ（3-3-2疾走）',
+    category: 'DANCE_MODERN',
+    gridType: 'straight',
+    customSkeleton: true,
+    snareSteps: [3, 6, 11, 14],
+    timekeepSteps: [0, 2, 4, 6, 8, 10, 12, 14],
+    kickTakes: {
+      A: [0, 4, 8, 12],
+      B: [0, 4, 8, 12],
+      C: [0, 4, 8, 12, 15],
+    },
+    defaultTimekeepVoice: 'HH_CLOSED',
+    supportsSwing16th: false,
+    supportsHat16th: false,
+  },
+  SLIP_BEAT: {
+    id: 'SLIP_BEAT',
+    label: 'スリップビート（Shake系）',
+    category: 'DANCE_MODERN',
+    gridType: 'straight',
+    customSkeleton: true,
+    snareSteps: [4, 10, 14],
+    timekeepSteps: [0, 2, 4, 6, 8, 10, 12, 14],
+    kickTakes: {
+      A: [0, 5, 8, 12],
+      B: [0, 2, 6, 10, 13],
+      C: [0, 4, 7, 12],
+    },
+    defaultTimekeepVoice: 'HH_CLOSED',
+    supportsSwing16th: false,
+    supportsHat16th: false,
+  },
+  SHUFFLE: {
+    id: 'SHUFFLE',
+    label: 'シャッフル（3連）',
+    category: 'SHUFFLE_ORGANIC',
+    gridType: 'triplet',
+    customSkeleton: true,
+    snareSteps: [4, 12],
+    timekeepSteps: [0, 2, 4, 6, 8, 10, 12, 14],
+    kickTakes: {
+      A: [0, 6, 8],
+      B: [0, 2, 8, 10, 14],
+      C: [0, 2, 4, 6, 8, 10, 12, 14],
+    },
+    defaultTimekeepVoice: 'HH_CLOSED',
+    supportsSwing16th: false,
+    supportsHat16th: false,
+  },
+  HALF_TIME_SHUFFLE: {
+    id: 'HALF_TIME_SHUFFLE',
+    label: 'ハーフタイムシャッフル',
+    category: 'SHUFFLE_ORGANIC',
+    gridType: 'triplet',
+    customSkeleton: true,
+    snareSteps: [8],
+    timekeepSteps: [0, 2, 4, 6, 8, 10, 12, 14],
+    kickTakes: {
+      A: [0, 6, 14],
+      B: [0, 2, 6, 14],
+      C: [0, 4, 6, 9, 13],
+    },
+    defaultTimekeepVoice: 'HH_CLOSED',
+    supportsSwing16th: false,
+    supportsHat16th: false,
+  },
+  JUNGLE: {
+    id: 'JUNGLE',
+    label: 'ジャングルビート（タム主体）',
+    category: 'SHUFFLE_ORGANIC',
+    gridType: 'straight',
+    customSkeleton: true,
+    snareSteps: [12],
+    timekeepSteps: [0, 2, 4, 6, 8, 10, 12, 14],
+    kickTakes: {
+      A: [0, 4, 8, 12],
+      B: [0, 6, 8, 13],
+      C: [1, 3, 5, 7, 9, 11, 13, 15],
+    },
+    defaultTimekeepVoice: 'TOM_FLOOR',
+    supportsSwing16th: false,
+    supportsHat16th: false,
+  },
+  TRAIN: {
+    id: 'TRAIN',
+    label: 'トレインビート（16分スネア）',
+    category: 'SHUFFLE_ORGANIC',
+    gridType: 'straight',
+    customSkeleton: true,
+    snareSteps: [4, 12],
+    timekeepSteps: [4, 12],
+    kickTakes: {
+      A: [0, 8],
+      B: [0, 6, 8],
+      C: [0, 4, 8, 12],
+    },
+    defaultTimekeepVoice: 'HH_PEDAL',
+    supportsSwing16th: false,
+    supportsHat16th: false,
+  },
+  MARCH: {
+    id: 'MARCH',
+    label: 'マーチ（行進ルーディメンツ）',
+    category: 'SHUFFLE_ORGANIC',
+    gridType: 'straight',
+    customSkeleton: true,
+    snareSteps: [0, 4, 8, 12],
+    timekeepSteps: [4, 12],
+    kickTakes: {
+      A: [0, 4, 8, 12],
+      B: [0, 4, 8, 12],
+      C: [0, 4, 8, 12],
+    },
+    defaultTimekeepVoice: 'HH_PEDAL',
+    supportsSwing16th: false,
+    supportsHat16th: false,
+  },
+  PPPH: {
+    id: 'PPPH',
+    label: 'PPPH（Bメロ定番）',
+    category: 'DANCE_MODERN',
+    gridType: 'straight',
+    customSkeleton: true,
+    snareSteps: [0, 6, 8],
+    timekeepSteps: [0, 6, 8],
+    kickTakes: {
+      A: [0, 6, 8],
+      B: [0, 6, 8],
+      C: [0, 6, 8, 12, 14],
+    },
+    defaultTimekeepVoice: 'HH_OPEN',
+    supportsSwing16th: false,
+    supportsHat16th: false,
+  },
+  FOUR_BEAT: {
+    id: 'FOUR_BEAT',
+    label: '4ビート（ジャズ・スウィング）',
+    category: 'JAZZ_LATIN',
+    gridType: 'triplet',
+    customSkeleton: true,
+    snareSteps: [],
+    timekeepSteps: [0, 4, 6, 8, 12, 14],
+    kickTakes: {
+      A: [0, 4, 8, 12],
+      B: [0, 8],
+      C: [0, 6, 12],
+    },
+    defaultTimekeepVoice: 'RIDE_BOW',
+    supportsSwing16th: false,
+    supportsHat16th: false,
+  },
+  SAMBA: {
+    id: 'SAMBA',
+    label: 'サンバ／ボサノヴァ',
+    category: 'JAZZ_LATIN',
+    gridType: 'straight',
+    customSkeleton: true,
+    snareSteps: [],
+    timekeepSteps: [0, 2, 4, 6, 8, 10, 12, 14],
+    kickTakes: {
+      A: [0, 3, 4, 7, 8, 11, 12, 15],
+      B: [0, 3, 4, 7, 8, 11, 12, 15],
+      C: [0, 3, 4, 7, 8, 11, 12, 15],
+    },
+    defaultTimekeepVoice: 'RIDE_BOW',
+    supportsSwing16th: false,
+    supportsHat16th: false,
+  },
+  SONGO: {
+    id: 'SONGO',
+    label: 'ソンゴ（キューバン・リニア）',
+    category: 'JAZZ_LATIN',
+    gridType: 'straight',
+    customSkeleton: true,
+    snareSteps: [4, 10],
+    timekeepSteps: [0, 2, 5, 8, 9, 12, 15],
+    kickTakes: {
+      A: [3, 6, 11, 14],
+      B: [3, 6, 11, 14],
+      C: [0, 3, 6, 11, 14],
+    },
+    defaultTimekeepVoice: 'HH_CLOSED',
+    supportsSwing16th: false,
+    supportsHat16th: false,
+  },
 };
 
-export const ALL_BEAT_PATTERN_IDS: readonly BeatPatternId[] = [
+export const LEGACY_8_BEAT_PATTERN_IDS: readonly BeatPatternId[] = [
   'EIGHT_BEAT',
   'SIXTEEN_BEAT',
   'FOUR_ON_FLOOR',
@@ -302,6 +542,70 @@ export const ALL_BEAT_PATTERN_IDS: readonly BeatPatternId[] = [
   'HALF_TIME',
   'DOUBLE_BASS',
 ];
+
+export const ALL_BEAT_PATTERN_IDS: readonly BeatPatternId[] = [
+  'EIGHT_BEAT',
+  'SIXTEEN_BEAT',
+  'ATAMA_UCHI',
+  'FOUR_ON_FLOOR',
+  'UPBEAT',
+  'TWO_BEAT',
+  'BOUNCE',
+  'HALF_TIME',
+  'DOUBLE_BASS',
+  'SOCA',
+  'SLIP_BEAT',
+  'SHUFFLE',
+  'HALF_TIME_SHUFFLE',
+  'JUNGLE',
+  'TRAIN',
+  'MARCH',
+  'PPPH',
+  'FOUR_BEAT',
+  'SAMBA',
+  'SONGO',
+];
+
+export const BEAT_PATTERN_CATEGORIES: ReadonlyArray<{
+  readonly id: BeatPatternCategory;
+  readonly label: string;
+  readonly collapsible?: boolean;
+  readonly patterns: readonly BeatPatternId[];
+}> = [
+  {
+    id: 'BASIC_ROCK',
+    label: 'Basic & Rock（基本7種）',
+    patterns: [
+      'EIGHT_BEAT',
+      'SIXTEEN_BEAT',
+      'ATAMA_UCHI',
+      'TWO_BEAT',
+      'HALF_TIME',
+      'BOUNCE',
+      'DOUBLE_BASS',
+    ],
+  },
+  {
+    id: 'DANCE_MODERN',
+    label: 'Dance & Modern（ダンス・モダン5種）',
+    patterns: ['FOUR_ON_FLOOR', 'UPBEAT', 'SOCA', 'SLIP_BEAT', 'PPPH'],
+  },
+  {
+    id: 'SHUFFLE_ORGANIC',
+    label: 'Shuffle & Organic（跳ね・ノンシンバル5種）',
+    patterns: ['SHUFFLE', 'HALF_TIME_SHUFFLE', 'JUNGLE', 'TRAIN', 'MARCH'],
+  },
+  {
+    id: 'JAZZ_LATIN',
+    label: 'Specialty / Jazz & Latin（拡張3種）',
+    collapsible: true,
+    patterns: ['FOUR_BEAT', 'SAMBA', 'SONGO'],
+  },
+];
+
+export function isTripletSkeleton(patternId: BeatPatternId): boolean {
+  return BEAT_TEMPLATES[patternId]?.gridType === 'triplet';
+}
 
 // ===========================================================================
 // 3. Layer 2: 5 Master Genre Flavor Profiles & Section Deployment Mapping
@@ -458,9 +762,224 @@ export interface SectionSkeletonLock {
   readonly isMinimalLegacy: boolean;
 }
 
+export type FillTemplateId =
+  | 'FILL_1B_STRAIGHT_TOM_SNARE'
+  | 'FILL_1B_LINEAR_RLKK'
+  | 'FILL_1B_TRIPLET_BONHAM'
+  | 'FILL_2B_CLASSIC_TOM_RUN'
+  | 'FILL_2B_LINEAR_RLRLKK_RL'
+  | 'FILL_2B_FLAM_ROCK'
+  | 'FILL_2B_6TUPLET_SHUFFLE'
+  | 'FILL_4B_SNARE_CRESCENDO'
+  | 'FILL_4B_3OVER4_TOM_SYNC'
+  | 'FILL_4B_BREAK_KIME_ANISON';
+
+export interface FillTemplateEventSpec {
+  readonly offsetTick: number;
+  readonly voice: DrumVoice;
+  readonly velocity: number;
+  readonly limb: Limb;
+  readonly durationTicks?: number;
+  readonly role?: EventRole;
+}
+
+export interface FillTemplate {
+  readonly id: FillTemplateId;
+  readonly label: string;
+  readonly beats: 1 | 2 | 4;
+  readonly fillStartTick: 0 | 960 | 1440;
+  readonly grid: BeatGridType;
+  readonly maxSafeBpm?: number;
+  readonly isBreakKime?: boolean;
+  readonly events: readonly FillTemplateEventSpec[];
+}
+
+export const FILL_TEMPLATES: readonly FillTemplate[] = [
+  // 1-beat turnaround (fillStartTick: 1440)
+  {
+    id: 'FILL_1B_STRAIGHT_TOM_SNARE',
+    label: '1拍 ストレートタム＆スネア',
+    beats: 1,
+    fillStartTick: 1440,
+    grid: 'straight',
+    events: [
+      { offsetTick: 1440, voice: 'SNARE_MAIN', velocity: 108, limb: 'RH' },
+      { offsetTick: 1560, voice: 'SNARE_MAIN', velocity: 88, limb: 'LH' },
+      { offsetTick: 1680, voice: 'TOM_HI', velocity: 104, limb: 'RH' },
+      { offsetTick: 1800, voice: 'TOM_FLOOR', velocity: 112, limb: 'LH' },
+    ],
+  },
+  {
+    id: 'FILL_1B_LINEAR_RLKK',
+    label: '1拍 リニア RLKK',
+    beats: 1,
+    fillStartTick: 1440,
+    grid: 'straight',
+    events: [
+      { offsetTick: 1440, voice: 'SNARE_MAIN', velocity: 112, limb: 'RH' },
+      { offsetTick: 1560, voice: 'TOM_HI', velocity: 102, limb: 'LH' },
+      { offsetTick: 1680, voice: 'KICK_MAIN', velocity: 110, limb: 'RF' },
+      { offsetTick: 1800, voice: 'KICK_MAIN', velocity: 114, limb: 'RF' },
+    ],
+  },
+  {
+    id: 'FILL_1B_TRIPLET_BONHAM',
+    label: '1拍 3連ボンゾ風',
+    beats: 1,
+    fillStartTick: 1440,
+    grid: 'triplet',
+    events: [
+      { offsetTick: 1440, voice: 'SNARE_MAIN', velocity: 110, limb: 'RH' },
+      { offsetTick: 1600, voice: 'TOM_HI', velocity: 102, limb: 'LH' },
+      { offsetTick: 1760, voice: 'KICK_MAIN', velocity: 112, limb: 'RF' },
+    ],
+  },
+  // 2-beat cadence (fillStartTick: 960)
+  {
+    id: 'FILL_2B_CLASSIC_TOM_RUN',
+    label: '2拍 王道降下タム回し',
+    beats: 2,
+    fillStartTick: 960,
+    grid: 'straight',
+    events: [
+      { offsetTick: 960, voice: 'SNARE_MAIN', velocity: 104, limb: 'RH' },
+      { offsetTick: 1080, voice: 'SNARE_MAIN', velocity: 90, limb: 'LH' },
+      { offsetTick: 1200, voice: 'TOM_HI', velocity: 102, limb: 'RH' },
+      { offsetTick: 1320, voice: 'TOM_HI', velocity: 94, limb: 'LH' },
+      { offsetTick: 1440, voice: 'TOM_MID', velocity: 104, limb: 'RH' },
+      { offsetTick: 1560, voice: 'TOM_MID', velocity: 96, limb: 'LH' },
+      { offsetTick: 1680, voice: 'TOM_FLOOR', velocity: 110, limb: 'RH' },
+      { offsetTick: 1800, voice: 'TOM_FLOOR', velocity: 116, limb: 'LH' },
+    ],
+  },
+  {
+    id: 'FILL_2B_LINEAR_RLRLKK_RL',
+    label: '2拍 リニア RLRLKK-RL',
+    beats: 2,
+    fillStartTick: 960,
+    grid: 'straight',
+    events: [
+      { offsetTick: 960, voice: 'SNARE_MAIN', velocity: 106, limb: 'RH' },
+      { offsetTick: 1080, voice: 'SNARE_MAIN', velocity: 92, limb: 'LH' },
+      { offsetTick: 1200, voice: 'TOM_HI', velocity: 104, limb: 'RH' },
+      { offsetTick: 1320, voice: 'TOM_MID', velocity: 100, limb: 'LH' },
+      { offsetTick: 1440, voice: 'KICK_MAIN', velocity: 108, limb: 'RF' },
+      { offsetTick: 1560, voice: 'KICK_MAIN', velocity: 112, limb: 'RF' },
+      { offsetTick: 1680, voice: 'SNARE_MAIN', velocity: 116, limb: 'RH' },
+      { offsetTick: 1800, voice: 'TOM_FLOOR', velocity: 118, limb: 'LH' },
+    ],
+  },
+  {
+    id: 'FILL_2B_FLAM_ROCK',
+    label: '2拍 フラムロック',
+    beats: 2,
+    fillStartTick: 960,
+    grid: 'straight',
+    events: [
+      { offsetTick: 960, voice: 'SNARE_FLAM', velocity: 110, limb: 'RH' },
+      { offsetTick: 1200, voice: 'KICK_MAIN', velocity: 108, limb: 'RF' },
+      { offsetTick: 1320, voice: 'SNARE_MAIN', velocity: 104, limb: 'LH' },
+      { offsetTick: 1440, voice: 'SNARE_FLAM', velocity: 114, limb: 'RH' },
+      { offsetTick: 1680, voice: 'TOM_HI', velocity: 106, limb: 'RH' },
+      { offsetTick: 1800, voice: 'TOM_FLOOR', velocity: 116, limb: 'LH' },
+    ],
+  },
+  {
+    id: 'FILL_2B_6TUPLET_SHUFFLE',
+    label: '2拍 6連シャッフルタム',
+    beats: 2,
+    fillStartTick: 960,
+    grid: 'triplet',
+    maxSafeBpm: 155,
+    events: [
+      { offsetTick: 960, voice: 'SNARE_MAIN', velocity: 106, limb: 'RH', durationTicks: 70 },
+      { offsetTick: 1040, voice: 'SNARE_MAIN', velocity: 86, limb: 'LH', durationTicks: 70 },
+      { offsetTick: 1120, voice: 'TOM_HI', velocity: 98, limb: 'RH', durationTicks: 70 },
+      { offsetTick: 1200, voice: 'TOM_HI', velocity: 90, limb: 'LH', durationTicks: 70 },
+      { offsetTick: 1280, voice: 'TOM_MID', velocity: 100, limb: 'RH', durationTicks: 70 },
+      { offsetTick: 1360, voice: 'TOM_MID', velocity: 92, limb: 'LH', durationTicks: 70 },
+      { offsetTick: 1440, voice: 'SNARE_MAIN', velocity: 108, limb: 'RH', durationTicks: 70 },
+      { offsetTick: 1520, voice: 'TOM_HI', velocity: 96, limb: 'LH', durationTicks: 70 },
+      { offsetTick: 1600, voice: 'TOM_MID', velocity: 104, limb: 'RH', durationTicks: 70 },
+      { offsetTick: 1680, voice: 'TOM_FLOOR', velocity: 108, limb: 'LH', durationTicks: 70 },
+      { offsetTick: 1760, voice: 'TOM_FLOOR', velocity: 112, limb: 'RH', durationTicks: 70 },
+      { offsetTick: 1840, voice: 'SNARE_MAIN', velocity: 118, limb: 'LH', durationTicks: 70 },
+    ],
+  },
+  // 4-beat section transition (fillStartTick: 0)
+  {
+    id: 'FILL_4B_SNARE_CRESCENDO',
+    label: '4拍 スネアクレッシェンド',
+    beats: 4,
+    fillStartTick: 0,
+    grid: 'straight',
+    events: [
+      ...Array.from({ length: 16 }, (_, idx): FillTemplateEventSpec => ({
+        offsetTick: idx * 120,
+        voice: 'SNARE_MAIN',
+        velocity: Math.round(58 + ((122 - 58) * idx) / 15),
+        limb: idx % 2 === 0 ? 'RH' : 'LH',
+        durationTicks: 90,
+      })),
+      { offsetTick: 0, voice: 'KICK_MAIN', velocity: 108, limb: 'RF', role: 'KICK_CORE' },
+      { offsetTick: 480, voice: 'KICK_MAIN', velocity: 108, limb: 'RF', role: 'KICK_CORE' },
+      { offsetTick: 960, voice: 'KICK_MAIN', velocity: 112, limb: 'RF', role: 'KICK_CORE' },
+      { offsetTick: 1440, voice: 'KICK_MAIN', velocity: 116, limb: 'RF', role: 'KICK_CORE' },
+      { offsetTick: 0, voice: 'HH_PEDAL', velocity: 78, limb: 'LF', role: 'TIMEKEEP' },
+      { offsetTick: 480, voice: 'HH_PEDAL', velocity: 82, limb: 'LF', role: 'TIMEKEEP' },
+      { offsetTick: 960, voice: 'HH_PEDAL', velocity: 86, limb: 'LF', role: 'TIMEKEEP' },
+      { offsetTick: 1440, voice: 'HH_PEDAL', velocity: 90, limb: 'LF', role: 'TIMEKEEP' },
+    ],
+  },
+  {
+    id: 'FILL_4B_3OVER4_TOM_SYNC',
+    label: '4拍 3対4ポリリズムタム',
+    beats: 4,
+    fillStartTick: 0,
+    grid: 'straight',
+    events: [
+      { offsetTick: 0, voice: 'TOM_HI', velocity: 108, limb: 'RH' },
+      { offsetTick: 120, voice: 'TOM_FLOOR', velocity: 102, limb: 'LH' },
+      { offsetTick: 240, voice: 'KICK_MAIN', velocity: 110, limb: 'RF' },
+      { offsetTick: 360, voice: 'TOM_HI', velocity: 108, limb: 'RH' },
+      { offsetTick: 480, voice: 'TOM_FLOOR', velocity: 104, limb: 'LH' },
+      { offsetTick: 600, voice: 'KICK_MAIN', velocity: 110, limb: 'RF' },
+      { offsetTick: 720, voice: 'TOM_HI', velocity: 110, limb: 'RH' },
+      { offsetTick: 840, voice: 'TOM_FLOOR', velocity: 106, limb: 'LH' },
+      { offsetTick: 960, voice: 'KICK_MAIN', velocity: 112, limb: 'RF' },
+      { offsetTick: 1080, voice: 'TOM_HI', velocity: 112, limb: 'RH' },
+      { offsetTick: 1200, voice: 'TOM_MID', velocity: 108, limb: 'LH' },
+      { offsetTick: 1320, voice: 'KICK_MAIN', velocity: 112, limb: 'RF' },
+      { offsetTick: 1440, voice: 'SNARE_FLAM', velocity: 116, limb: 'RH' },
+      { offsetTick: 1680, voice: 'TOM_FLOOR', velocity: 114, limb: 'RH' },
+      { offsetTick: 1800, voice: 'SNARE_MAIN', velocity: 120, limb: 'LH' },
+    ],
+  },
+  {
+    id: 'FILL_4B_BREAK_KIME_ANISON',
+    label: '4拍 ブレイク＆キメ（アニソン式）',
+    beats: 4,
+    fillStartTick: 0,
+    grid: 'straight',
+    isBreakKime: true,
+    events: [
+      { offsetTick: 0, voice: 'CRASH_L', velocity: 118, limb: 'RH', durationTicks: 420, role: 'CRASH_ACCENT' },
+      { offsetTick: 0, voice: 'KICK_MAIN', velocity: 118, limb: 'RF', durationTicks: 140, role: 'KICK_CORE' },
+      { offsetTick: 0, voice: 'SNARE_MAIN', velocity: 118, limb: 'LH', durationTicks: 140, role: 'SNARE_BACKBEAT' },
+      // 480..1439: complete dead silence break
+      { offsetTick: 1440, voice: 'SNARE_MAIN', velocity: 108, limb: 'RH' },
+      { offsetTick: 1560, voice: 'TOM_HI', velocity: 104, limb: 'LH' },
+      { offsetTick: 1680, voice: 'TOM_MID', velocity: 110, limb: 'RH' },
+      { offsetTick: 1800, voice: 'TOM_FLOOR', velocity: 116, limb: 'LH' },
+    ],
+  },
+];
+
 export interface DrumGenerationResult {
   notes: MidiNote[];
   events: InternalDrumEvent[];
+  stage4Events?: InternalDrumEvent[];
+  selectedFillIds?: FillTemplateId[];
   kickTicks: number[];
   patternId: BeatPatternId;
   kickTake: KickTake;
@@ -472,6 +991,15 @@ export interface DrumGenerationResult {
 // ===========================================================================
 // Deterministic Utilities
 // ===========================================================================
+/** Pure deterministic 32-bit hash mixer for per-bar PRNG isolation. */
+export function hash32(a: number, b: number, c: number, d: number): number {
+  let h = (a ^ 0x9e3779b9) >>> 0;
+  h = Math.imul(h ^ (b >>> 0), 0x85ebca6b) >>> 0;
+  h = Math.imul((h ^ (h >>> 13)) ^ (c >>> 0), 0xc2b2ae35) >>> 0;
+  h = Math.imul((h ^ (h >>> 16)) ^ (d >>> 0), 0x27d4eb2d) >>> 0;
+  return (h ^ (h >>> 15)) >>> 0;
+}
+
 /** Pure deterministic Mulberry32 PRNG returning [0, 1). */
 export function mulberry32(seed: number): () => number {
   let state = seed >>> 0;
@@ -1127,6 +1655,664 @@ function generateExternalLoopEvents(
   return events;
 }
 
+function makeBarEvent(
+  barIndex: number,
+  localTick: number,
+  voice: DrumVoice,
+  velocity: number,
+  limb: Limb,
+  role: EventRole,
+  durationTicks = 110,
+  opts?: { fixedTiming?: boolean; fixedVelocity?: boolean; isAnchor?: boolean }
+): InternalDrumEvent {
+  const stepIndex = (Math.floor(localTick / STEP_TICKS) % 16) as StepIndex;
+  return {
+    tick: barIndex * BAR_TICKS + localTick,
+    durationTicks,
+    voice,
+    velocity: clamp(Math.round(velocity), 1, 127),
+    limb,
+    role,
+    barIndex,
+    stepIndex,
+    ...opts,
+  };
+}
+
+function expandCustomSkeletonBar(
+  patternId: BeatPatternId,
+  take: KickTake,
+  barIndex: number,
+  bpm: number,
+  sectionType: SectionType,
+  energy: string,
+  flavor: GenreFlavorProfile
+): InternalDrumEvent[] {
+  const out: InternalDrumEvent[] = [];
+  const kVel = flavor.dynamics.kickBaseVel;
+  const sVel = flavor.dynamics.snareBaseVel;
+  const hhOn = flavor.dynamics.timekeepOnBeatVel;
+  const hhOff = flavor.dynamics.timekeepOffBeatVel;
+  const placeCrashBar0 = barIndex === 0 && (sectionType === 'Chorus' || energy === 'High');
+
+  switch (patternId) {
+    case 'ATAMA_UCHI': {
+      const hhVoice: DrumVoice =
+        sectionType === 'Chorus' || energy === 'High' ? 'HH_HALF_OPEN' : 'HH_CLOSED';
+      const hhDur = hhVoice === 'HH_HALF_OPEN' ? 180 : 100;
+      const quarterTicks = [0, 480, 960, 1440];
+      for (const t of quarterTicks) {
+        out.push(makeBarEvent(barIndex, t, 'SNARE_MAIN', sVel, 'LH', 'SNARE_BACKBEAT', 120));
+        out.push(makeBarEvent(barIndex, t, hhVoice, hhOn, 'RH', 'TIMEKEEP', hhDur));
+      }
+      const kickTicks =
+        take === 'A'
+          ? [240, 720, 1200, 1680]
+          : take === 'B'
+            ? [1200, 1680]
+            : [0, 240, 720, 1200, 1680];
+      for (const t of kickTicks) {
+        out.push(
+          makeBarEvent(barIndex, t, 'KICK_MAIN', t === 0 ? kVel + 4 : kVel, 'RF', 'KICK_CORE', 120)
+        );
+      }
+      break;
+    }
+
+    case 'SOCA': {
+      for (const t of [0, 480, 960, 1440]) {
+        out.push(makeBarEvent(barIndex, t, 'KICK_MAIN', kVel, 'RF', 'KICK_CORE', 120));
+      }
+      if (take === 'B') {
+        const sideTicks = [360, 720, 1080, 1320, 1680];
+        for (const t of sideTicks) {
+          out.push(makeBarEvent(barIndex, t, 'SNARE_SIDESTICK', 84, 'LH', 'SNARE_BACKBEAT', 100));
+        }
+        const sideSet = new Set(sideTicks);
+        for (let step = 0; step < 16; step++) {
+          const t = step * STEP_TICKS;
+          if (sideSet.has(t)) continue;
+          const limb: Limb = step % 2 === 0 ? 'RH' : 'LH';
+          const vel = step % 4 === 0 ? hhOn : step % 2 === 0 ? hhOff : flavor.dynamics.timekeepSubVel;
+          out.push(makeBarEvent(barIndex, t, 'HH_CLOSED', vel, limb, 'TIMEKEEP', 75));
+        }
+      } else {
+        for (const t of [360, 720, 1320, 1680]) {
+          out.push(makeBarEvent(barIndex, t, 'SNARE_MAIN', sVel, 'LH', 'SNARE_BACKBEAT', 110));
+        }
+        for (const t of [0, 480, 960, 1440]) {
+          out.push(makeBarEvent(barIndex, t, 'HH_CLOSED', hhOn, 'RH', 'TIMEKEEP', 90));
+        }
+        for (const t of [240, 720, 1200, 1680]) {
+          out.push(makeBarEvent(barIndex, t, 'HH_OPEN', 94, 'RH', 'TIMEKEEP', 190));
+        }
+        if (take === 'C') {
+          out.push(makeBarEvent(barIndex, 1800, 'KICK_MAIN', kVel - 4, 'RF', 'KICK_CORE', 100));
+          out.push(
+            makeBarEvent(barIndex, 1080, 'SNARE_MAIN', 54, 'LH', 'ORNAMENT', 80, {
+              fixedVelocity: true,
+            })
+          );
+        }
+      }
+      break;
+    }
+
+    case 'SLIP_BEAT': {
+      if (take === 'A') {
+        for (const t of [0, 600, 960, 1440]) {
+          out.push(makeBarEvent(barIndex, t, 'KICK_MAIN', kVel, 'RF', 'KICK_CORE', 120));
+        }
+        for (const t of [480, 1200, 1680]) {
+          out.push(makeBarEvent(barIndex, t, 'SNARE_MAIN', sVel, 'LH', 'SNARE_BACKBEAT', 115));
+        }
+        out.push(
+          makeBarEvent(barIndex, 840, 'SNARE_MAIN', 42, 'LH', 'ORNAMENT', 80, {
+            fixedVelocity: true,
+          })
+        );
+        for (const t of [0, 240, 480, 720, 960, 1440]) {
+          out.push(
+            makeBarEvent(barIndex, t, 'HH_CLOSED', t % 480 === 0 ? hhOn : hhOff, 'RH', 'TIMEKEEP', 95)
+          );
+        }
+        for (const t of [1200, 1680]) {
+          out.push(makeBarEvent(barIndex, t, 'HH_OPEN', 96, 'RH', 'TIMEKEEP', 190));
+        }
+      } else if (take === 'B') {
+        for (const t of [0, 240, 720, 1200, 1560]) {
+          out.push(makeBarEvent(barIndex, t, 'KICK_MAIN', kVel, 'RF', 'KICK_CORE', 115));
+        }
+        for (const t of [360, 1080, 1680]) {
+          out.push(makeBarEvent(barIndex, t, 'SNARE_MAIN', sVel, 'LH', 'SNARE_BACKBEAT', 115));
+        }
+        out.push(
+          makeBarEvent(barIndex, 600, 'SNARE_MAIN', 44, 'LH', 'ORNAMENT', 80, {
+            fixedVelocity: true,
+          })
+        );
+        out.push(
+          makeBarEvent(barIndex, 1440, 'SNARE_MAIN', 46, 'LH', 'ORNAMENT', 80, {
+            fixedVelocity: true,
+          })
+        );
+        for (let t = 0; t < BAR_TICKS; t += 240) {
+          out.push(
+            makeBarEvent(barIndex, t, 'HH_CLOSED', t % 480 === 0 ? hhOn : hhOff, 'RH', 'TIMEKEEP', 95)
+          );
+        }
+      } else {
+        for (const t of [0, 480, 840, 1440]) {
+          out.push(makeBarEvent(barIndex, t, 'KICK_MAIN', kVel, 'RF', 'KICK_CORE', 115));
+        }
+        for (const t of [240, 720, 1200, 1680]) {
+          out.push(makeBarEvent(barIndex, t, 'SNARE_MAIN', sVel, 'LH', 'SNARE_BACKBEAT', 115));
+        }
+        for (let t = 0; t < BAR_TICKS; t += 240) {
+          out.push(
+            makeBarEvent(barIndex, t, 'RIDE_BOW', t % 480 === 0 ? hhOn : hhOff, 'RH', 'TIMEKEEP', 180)
+          );
+        }
+      }
+      break;
+    }
+
+    case 'SHUFFLE': {
+      const kickTicks =
+        take === 'A'
+          ? [0, 800, 960]
+          : take === 'B'
+            ? [0, 320, 960, 1280, 1760]
+            : [0, 320, 480, 800, 960, 1280, 1440, 1760];
+      for (const t of kickTicks) {
+        out.push(makeBarEvent(barIndex, t, 'KICK_MAIN', kVel, 'RF', 'KICK_CORE', 120));
+      }
+      for (const t of [480, 1440]) {
+        out.push(makeBarEvent(barIndex, t, 'SNARE_MAIN', sVel, 'LH', 'SNARE_BACKBEAT', 120));
+      }
+      if (take === 'B') {
+        for (const [idx, t] of [160, 640, 1120, 1600].entries()) {
+          out.push(
+            makeBarEvent(barIndex, t, 'SNARE_MAIN', idx % 2 === 0 ? 36 : 38, 'LH', 'ORNAMENT', 80, {
+              fixedVelocity: true,
+            })
+          );
+        }
+      }
+      if (take === 'C') {
+        for (const t of [0, 480, 960, 1440]) {
+          out.push(makeBarEvent(barIndex, t, 'HH_OPEN', 94, 'RH', 'TIMEKEEP', 240));
+        }
+      } else {
+        for (const t of [0, 480, 960, 1440]) {
+          out.push(makeBarEvent(barIndex, t, 'HH_CLOSED', 92, 'RH', 'TIMEKEEP', 110));
+        }
+        for (const t of [320, 800, 1280, 1760]) {
+          out.push(makeBarEvent(barIndex, t, 'HH_CLOSED', 72, 'RH', 'TIMEKEEP', 95));
+        }
+      }
+      break;
+    }
+
+    case 'HALF_TIME_SHUFFLE': {
+      const kickTicks =
+        take === 'A'
+          ? [0, 800, 1760]
+          : take === 'B'
+            ? [0, 320, 800, 1760]
+            : [0, 480, 800, 1120, 1600];
+      for (const t of kickTicks) {
+        out.push(makeBarEvent(barIndex, t, 'KICK_MAIN', kVel, 'RF', 'KICK_CORE', 120));
+      }
+      const accentVel = take === 'A' ? 116 : take === 'B' ? 118 : 120;
+      out.push(
+        makeBarEvent(barIndex, 960, 'SNARE_MAIN', accentVel, 'LH', 'SNARE_BACKBEAT', 120, {
+          fixedVelocity: true,
+        })
+      );
+      const ghostTicks = take === 'B' ? [640, 1600] : [160, 640, 1120, 1600];
+      const ghostVel = take === 'B' ? 38 : 36;
+      for (const t of ghostTicks) {
+        out.push(
+          makeBarEvent(barIndex, t, 'SNARE_MAIN', ghostVel, 'LH', 'ORNAMENT', 80, {
+            fixedVelocity: true,
+          })
+        );
+      }
+      const openTick = take === 'A' ? 800 : take === 'B' ? 320 : 1760;
+      const shuffleHatTicks = [0, 320, 480, 800, 960, 1280, 1440, 1760];
+      for (const t of shuffleHatTicks) {
+        if (t === openTick) {
+          out.push(makeBarEvent(barIndex, t, 'HH_OPEN', 92, 'RH', 'TIMEKEEP', 150));
+        } else {
+          out.push(
+            makeBarEvent(barIndex, t, 'HH_CLOSED', t % 480 === 0 ? 90 : 70, 'RH', 'TIMEKEEP', 95)
+          );
+        }
+      }
+      break;
+    }
+
+    case 'JUNGLE': {
+      if (take === 'A') {
+        for (const t of [0, 480, 960, 1440]) {
+          out.push(makeBarEvent(barIndex, t, 'KICK_MAIN', kVel, 'RF', 'KICK_CORE', 120));
+        }
+        for (let t = 0; t < BAR_TICKS; t += 240) {
+          out.push(
+            makeBarEvent(barIndex, t, 'TOM_FLOOR', t % 480 === 0 ? 92 : 74, 'RH', 'TIMEKEEP', 140)
+          );
+        }
+        for (const t of [360, 1320]) {
+          out.push(makeBarEvent(barIndex, t, 'TOM_HI', 96, 'LH', 'ORNAMENT', 110));
+        }
+        out.push(makeBarEvent(barIndex, 600, 'TOM_MID', 94, 'LH', 'ORNAMENT', 110));
+        out.push(makeBarEvent(barIndex, 1440, 'SNARE_MAIN', sVel, 'LH', 'SNARE_BACKBEAT', 120));
+        for (const t of [480, 1440]) {
+          out.push(makeBarEvent(barIndex, t, 'HH_PEDAL', 74, 'LF', 'TIMEKEEP', 90));
+        }
+      } else if (take === 'B') {
+        for (const t of [0, 720, 960, 1560]) {
+          out.push(makeBarEvent(barIndex, t, 'KICK_MAIN', kVel, 'RF', 'KICK_CORE', 120));
+        }
+        for (let t = 0; t < BAR_TICKS; t += 240) {
+          out.push(
+            makeBarEvent(barIndex, t, 'TOM_FLOOR', t % 480 === 0 ? 92 : 74, 'RH', 'TIMEKEEP', 140)
+          );
+        }
+        for (const t of [480, 1440]) {
+          out.push(makeBarEvent(barIndex, t, 'SNARE_MAIN', sVel, 'LH', 'SNARE_BACKBEAT', 120));
+          out.push(makeBarEvent(barIndex, t, 'HH_PEDAL', 74, 'LF', 'TIMEKEEP', 90));
+        }
+        for (const t of [600, 1320]) {
+          out.push(makeBarEvent(barIndex, t, 'TOM_HI', 94, 'LH', 'ORNAMENT', 110));
+        }
+        for (const t of [840, 1800]) {
+          out.push(makeBarEvent(barIndex, t, 'TOM_MID', 96, 'LH', 'ORNAMENT', 110));
+        }
+      } else {
+        for (let t = 120; t < BAR_TICKS; t += 240) {
+          out.push(makeBarEvent(barIndex, t, 'KICK_MAIN', kVel - 6, 'RF', 'KICK_CORE', 100));
+        }
+        for (let t = 0; t < BAR_TICKS; t += 240) {
+          out.push(
+            makeBarEvent(barIndex, t, 'TOM_FLOOR', t % 480 === 0 ? 96 : 78, 'RH', 'TIMEKEEP', 120)
+          );
+        }
+        for (const t of [480, 1440]) {
+          out.push(makeBarEvent(barIndex, t, 'SNARE_MAIN', sVel, 'LH', 'SNARE_BACKBEAT', 120));
+        }
+        out.push(makeBarEvent(barIndex, 1200, 'TOM_HI', 96, 'LH', 'ORNAMENT', 110));
+        for (const t of [0, 480, 960, 1440]) {
+          out.push(makeBarEvent(barIndex, t, 'HH_PEDAL', 76, 'LF', 'TIMEKEEP', 90));
+        }
+      }
+      break;
+    }
+
+    case 'TRAIN': {
+      const kickTicks =
+        take === 'A' ? [0, 960] : take === 'B' ? [0, 720, 960] : [0, 480, 960, 1440];
+      for (const t of kickTicks) {
+        out.push(makeBarEvent(barIndex, t, 'KICK_MAIN', kVel, 'RF', 'KICK_CORE', 115));
+      }
+      const accentTicks =
+        take === 'B' ? new Set([360, 480, 1320, 1440]) : new Set([480, 1440]);
+      for (let step = 0; step < 16; step++) {
+        const t = step * STEP_TICKS;
+        const limb: Limb = step % 2 === 0 ? 'RH' : 'LH';
+        if (accentTicks.has(t)) {
+          const voice: DrumVoice = take === 'C' ? 'SNARE_RIMSHOT' : 'SNARE_MAIN';
+          const vel = take === 'A' ? 112 : take === 'B' ? 110 : 120;
+          out.push(
+            makeBarEvent(barIndex, t, voice, vel, limb, 'SNARE_BACKBEAT', 105, {
+              fixedVelocity: true,
+            })
+          );
+        } else {
+          const isEighth = step % 2 === 0;
+          const ghostVel =
+            take === 'C' ? (isEighth ? 58 : 44) : take === 'B' ? (isEighth ? 46 : 36) : isEighth ? 48 : 36;
+          out.push(
+            makeBarEvent(barIndex, t, 'SNARE_MAIN', ghostVel, limb, 'ORNAMENT', 75, {
+              fixedVelocity: true,
+            })
+          );
+        }
+      }
+      const pedalTicks =
+        take === 'A'
+          ? [480, 1440]
+          : take === 'B'
+            ? [240, 720, 1200, 1680]
+            : [0, 480, 960, 1440];
+      for (const t of pedalTicks) {
+        out.push(makeBarEvent(barIndex, t, 'HH_PEDAL', 76, 'LF', 'TIMEKEEP', 90));
+      }
+      break;
+    }
+
+    case 'MARCH': {
+      for (const t of [0, 480, 960, 1440]) {
+        out.push(makeBarEvent(barIndex, t, 'KICK_MAIN', kVel, 'RF', 'KICK_CORE', 120));
+      }
+      if (placeCrashBar0 && take === 'C') {
+        out.push(
+          makeBarEvent(barIndex, 0, 'CRASH_L', Math.max(114, flavor.dynamics.crashVel), 'RH', 'CRASH_ACCENT', 480, {
+            fixedTiming: true,
+            fixedVelocity: true,
+            isAnchor: true,
+          })
+        );
+      }
+      if (take === 'A') {
+        for (const t of [0, 960]) {
+          out.push(makeBarEvent(barIndex, t, 'SNARE_FLAM', 114, 'RH', 'SNARE_BACKBEAT', 110));
+        }
+        for (const t of [480, 720, 1200, 1440, 1680]) {
+          out.push(makeBarEvent(barIndex, t, 'SNARE_MAIN', 104, 'RH', 'SNARE_BACKBEAT', 100));
+        }
+        for (const t of [360, 840, 1320, 1800]) {
+          out.push(
+            makeBarEvent(barIndex, t, 'SNARE_MAIN', 44, 'LH', 'ORNAMENT', 75, {
+              fixedVelocity: true,
+            })
+          );
+        }
+        for (const t of [480, 1440]) {
+          out.push(makeBarEvent(barIndex, t, 'HH_PEDAL', 76, 'LF', 'TIMEKEEP', 90));
+        }
+      } else if (take === 'B') {
+        for (const t of [0, 360, 720, 1080, 1440]) {
+          out.push(makeBarEvent(barIndex, t, 'SNARE_MAIN', 106, 'RH', 'SNARE_BACKBEAT', 105));
+        }
+        for (const t of [120, 600, 840, 1320, 1560, 1800]) {
+          out.push(
+            makeBarEvent(barIndex, t, 'SNARE_MAIN', 44, 'LH', 'ORNAMENT', 75, {
+              fixedVelocity: true,
+            })
+          );
+        }
+        for (const t of [480, 1440]) {
+          out.push(makeBarEvent(barIndex, t, 'HH_PEDAL', 76, 'LF', 'TIMEKEEP', 90));
+        }
+      } else {
+        for (const t of [0, 480, 960, 1440]) {
+          out.push(makeBarEvent(barIndex, t, 'SNARE_FLAM', 114, 'RH', 'SNARE_BACKBEAT', 110));
+        }
+        for (const t of [240, 720, 1200, 1680]) {
+          out.push(makeBarEvent(barIndex, t, 'SNARE_MAIN', 92, 'RH', 'ORNAMENT', 95));
+        }
+        for (const t of [120, 360, 600, 840, 1080, 1320, 1560, 1800]) {
+          out.push(
+            makeBarEvent(barIndex, t, 'SNARE_MAIN', 42, 'LH', 'ORNAMENT', 70, {
+              fixedVelocity: true,
+            })
+          );
+        }
+        for (const t of [0, 480, 960, 1440]) {
+          out.push(makeBarEvent(barIndex, t, 'HH_PEDAL', 76, 'LF', 'TIMEKEEP', 90));
+        }
+      }
+      break;
+    }
+
+    case 'PPPH': {
+      const doubleTime = bpm >= 155;
+      if (!doubleTime) {
+        // 1-bar cycle (bpm < 155)
+        if (take === 'A') {
+          for (const t of [0, 720, 960]) {
+            out.push(makeBarEvent(barIndex, t, 'KICK_MAIN', kVel, 'RF', 'KICK_CORE', 120));
+            out.push(makeBarEvent(barIndex, t, 'SNARE_MAIN', sVel, 'LH', 'SNARE_BACKBEAT', 120));
+            out.push(makeBarEvent(barIndex, t, 'HH_OPEN', 100, 'RH', 'TIMEKEEP', 220));
+          }
+          out.push(
+            makeBarEvent(barIndex, 1440, 'HH_PEDAL', 82, 'LF', 'TIMEKEEP', 90, {
+              fixedTiming: true,
+            })
+          );
+        } else if (take === 'B') {
+          for (const t of [0, 720, 960]) {
+            out.push(makeBarEvent(barIndex, t, 'KICK_MAIN', kVel, 'RF', 'KICK_CORE', 120));
+            out.push(makeBarEvent(barIndex, t, 'SNARE_MAIN', sVel, 'LH', 'SNARE_BACKBEAT', 120));
+          }
+          for (const t of [0, 480, 960, 1440]) {
+            out.push(makeBarEvent(barIndex, t, 'HH_CLOSED', hhOn, 'RH', 'TIMEKEEP', 90));
+          }
+          for (const t of [240, 720, 1200, 1680]) {
+            out.push(makeBarEvent(barIndex, t, 'HH_OPEN', 94, 'RH', 'TIMEKEEP', 190));
+          }
+        } else {
+          for (const t of [0, 960]) {
+            out.push(makeBarEvent(barIndex, t, 'CRASH_L', flavor.dynamics.crashVel, 'RH', 'CRASH_ACCENT', 360));
+          }
+          for (const t of [0, 720, 960]) {
+            out.push(makeBarEvent(barIndex, t, 'KICK_MAIN', kVel, 'RF', 'KICK_CORE', 120));
+            out.push(makeBarEvent(barIndex, t, 'SNARE_MAIN', sVel, 'LH', 'SNARE_BACKBEAT', 120));
+          }
+          out.push(makeBarEvent(barIndex, 1440, 'KICK_MAIN', kVel, 'RF', 'KICK_CORE', 120));
+          out.push(makeBarEvent(barIndex, 1440, 'TOM_FLOOR', 110, 'RH', 'ORNAMENT', 120));
+          out.push(makeBarEvent(barIndex, 1440, 'TOM_HI', 106, 'LH', 'ORNAMENT', 120));
+          out.push(makeBarEvent(barIndex, 1680, 'KICK_MAIN', kVel, 'RF', 'KICK_CORE', 120));
+          out.push(makeBarEvent(barIndex, 1680, 'TOM_FLOOR', 114, 'RH', 'ORNAMENT', 120));
+          out.push(makeBarEvent(barIndex, 1680, 'TOM_MID', 110, 'LH', 'ORNAMENT', 120));
+        }
+      } else {
+        // 2-bar cycle double-time (bpm >= 155)
+        const isSecondBar = barIndex % 2 === 1;
+        if (take === 'A') {
+          if (!isSecondBar) {
+            for (const t of [0, 1440]) {
+              out.push(makeBarEvent(barIndex, t, 'KICK_MAIN', kVel, 'RF', 'KICK_CORE', 120));
+              out.push(makeBarEvent(barIndex, t, 'SNARE_MAIN', sVel, 'LH', 'SNARE_BACKBEAT', 120));
+              out.push(makeBarEvent(barIndex, t, 'HH_OPEN', 100, 'RH', 'TIMEKEEP', 240));
+            }
+            for (const t of [480, 960]) {
+              out.push(
+                makeBarEvent(barIndex, t, 'HH_PEDAL', 78, 'LF', 'TIMEKEEP', 90, {
+                  fixedTiming: true,
+                })
+              );
+            }
+          } else {
+            out.push(makeBarEvent(barIndex, 0, 'KICK_MAIN', kVel, 'RF', 'KICK_CORE', 120));
+            out.push(makeBarEvent(barIndex, 0, 'SNARE_MAIN', sVel, 'LH', 'SNARE_BACKBEAT', 120));
+            out.push(makeBarEvent(barIndex, 0, 'HH_OPEN', 100, 'RH', 'TIMEKEEP', 240));
+            out.push(
+              makeBarEvent(barIndex, 480, 'HH_PEDAL', 84, 'LF', 'TIMEKEEP', 90, {
+                fixedTiming: true,
+              })
+            );
+          }
+        } else if (take === 'B') {
+          const hitTicks = isSecondBar ? [0] : [0, 1440];
+          for (const t of hitTicks) {
+            out.push(makeBarEvent(barIndex, t, 'KICK_MAIN', kVel, 'RF', 'KICK_CORE', 120));
+            out.push(makeBarEvent(barIndex, t, 'SNARE_MAIN', sVel, 'LH', 'SNARE_BACKBEAT', 120));
+          }
+          for (const t of [0, 480, 960, 1440]) {
+            out.push(makeBarEvent(barIndex, t, 'HH_CLOSED', hhOn, 'RH', 'TIMEKEEP', 90));
+          }
+          for (const t of [240, 720, 1200, 1680]) {
+            out.push(makeBarEvent(barIndex, t, 'HH_OPEN', 94, 'RH', 'TIMEKEEP', 190));
+          }
+        } else {
+          if (!isSecondBar) {
+            for (const t of [0, 1440]) {
+              out.push(makeBarEvent(barIndex, t, 'CRASH_L', flavor.dynamics.crashVel, 'RH', 'CRASH_ACCENT', 360));
+              out.push(makeBarEvent(barIndex, t, 'KICK_MAIN', kVel, 'RF', 'KICK_CORE', 120));
+              out.push(makeBarEvent(barIndex, t, 'SNARE_MAIN', sVel, 'LH', 'SNARE_BACKBEAT', 120));
+            }
+            for (const t of [480, 960]) {
+              out.push(makeBarEvent(barIndex, t, 'KICK_MAIN', kVel - 4, 'RF', 'KICK_CORE', 120));
+            }
+          } else {
+            out.push(makeBarEvent(barIndex, 0, 'CRASH_L', flavor.dynamics.crashVel, 'RH', 'CRASH_ACCENT', 360));
+            out.push(makeBarEvent(barIndex, 0, 'KICK_MAIN', kVel, 'RF', 'KICK_CORE', 120));
+            out.push(makeBarEvent(barIndex, 0, 'SNARE_MAIN', sVel, 'LH', 'SNARE_BACKBEAT', 120));
+            for (const t of [960, 1440]) {
+              out.push(makeBarEvent(barIndex, t, 'KICK_MAIN', kVel, 'RF', 'KICK_CORE', 120));
+              out.push(makeBarEvent(barIndex, t, 'TOM_FLOOR', 112, 'RH', 'ORNAMENT', 120));
+              out.push(makeBarEvent(barIndex, t, 'TOM_MID', 108, 'LH', 'ORNAMENT', 120));
+            }
+          }
+        }
+      }
+      break;
+    }
+
+    case 'FOUR_BEAT': {
+      // Triplet ride legato (0, 480, 800, 960, 1440, 1760) + 2/4 HHP
+      const ridePattern: Array<{ t: number; vel: number; voice?: DrumVoice }> = [
+        { t: 0, vel: 94 },
+        { t: 480, vel: 92 },
+        { t: 800, vel: 70 },
+        { t: 960, vel: 94, voice: take === 'C' ? 'RIDE_BELL' : 'RIDE_BOW' },
+        { t: 1440, vel: 92 },
+        { t: 1760, vel: 70 },
+      ];
+      for (const r of ridePattern) {
+        out.push(makeBarEvent(barIndex, r.t, r.voice ?? 'RIDE_BOW', r.vel, 'RH', 'TIMEKEEP', 150));
+      }
+      for (const t of [480, 1440]) {
+        out.push(makeBarEvent(barIndex, t, 'HH_PEDAL', 76, 'LF', 'TIMEKEEP', 90));
+      }
+      if (take === 'A') {
+        for (const t of [0, 480, 960, 1440]) {
+          out.push(makeBarEvent(barIndex, t, 'KICK_MAIN', 52, 'RF', 'KICK_CORE', 120));
+        }
+        out.push(makeBarEvent(barIndex, 800, 'SNARE_MAIN', 64, 'LH', 'ORNAMENT', 95));
+        out.push(makeBarEvent(barIndex, 1600, 'SNARE_MAIN', 58, 'LH', 'ORNAMENT', 95));
+      } else if (take === 'B') {
+        for (const t of [0, 960]) {
+          out.push(makeBarEvent(barIndex, t, 'KICK_MAIN', 56, 'RF', 'KICK_CORE', 120));
+        }
+        out.push(makeBarEvent(barIndex, 320, 'SNARE_MAIN', 68, 'LH', 'ORNAMENT', 95));
+        out.push(makeBarEvent(barIndex, 1120, 'SNARE_MAIN', 62, 'LH', 'ORNAMENT', 95));
+        out.push(makeBarEvent(barIndex, 1760, 'SNARE_MAIN', 72, 'LH', 'ORNAMENT', 95));
+      } else {
+        for (const t of [0, 800, 1440]) {
+          out.push(makeBarEvent(barIndex, t, 'KICK_MAIN', 68, 'RF', 'KICK_CORE', 120));
+        }
+        out.push(makeBarEvent(barIndex, 480, 'SNARE_MAIN', 74, 'LH', 'ORNAMENT', 100));
+        out.push(makeBarEvent(barIndex, 1280, 'SNARE_MAIN', 70, 'LH', 'ORNAMENT', 100));
+      }
+      break;
+    }
+
+    case 'SAMBA': {
+      // Surdo kick + 8th-offbeat HHP
+      const surdoTicks = [0, 360, 480, 840, 960, 1320, 1440, 1800];
+      for (const t of surdoTicks) {
+        const isDown = t % 480 === 0;
+        const vel = take === 'B' ? (isDown ? 82 : 64) : isDown ? 106 : 84;
+        out.push(makeBarEvent(barIndex, t, 'KICK_MAIN', vel, 'RF', 'KICK_CORE', 110));
+      }
+      for (const t of [240, 720, 1200, 1680]) {
+        out.push(makeBarEvent(barIndex, t, 'HH_PEDAL', 74, 'LF', 'TIMEKEEP', 90));
+      }
+      if (take === 'B') {
+        // Bossa Nova
+        for (let t = 0; t < BAR_TICKS; t += 240) {
+          out.push(
+            makeBarEvent(barIndex, t, 'HH_CLOSED', t % 480 === 0 ? 78 : 62, 'RH', 'TIMEKEEP', 90)
+          );
+        }
+        for (const t of [0, 360, 720, 1200, 1560]) {
+          out.push(makeBarEvent(barIndex, t, 'SNARE_SIDESTICK', 80, 'LH', 'SNARE_BACKBEAT', 100));
+        }
+      } else if (take === 'C') {
+        for (let t = 0; t < BAR_TICKS; t += 240) {
+          out.push(
+            makeBarEvent(barIndex, t, 'RIDE_BELL', t % 480 === 0 ? 96 : 76, 'RH', 'TIMEKEEP', 150)
+          );
+        }
+        for (const t of [360, 840, 1320, 1800]) {
+          out.push(makeBarEvent(barIndex, t, 'SNARE_MAIN', 96, 'LH', 'SNARE_BACKBEAT', 100));
+        }
+      } else {
+        const rideStep = bpm > 142 ? 240 : 120;
+        for (let t = 0; t < BAR_TICKS; t += rideStep) {
+          out.push(
+            makeBarEvent(
+              barIndex,
+              t,
+              'RIDE_BOW',
+              t % 480 === 0 ? 90 : t % 240 === 0 ? 74 : 58,
+              'RH',
+              'TIMEKEEP',
+              rideStep === 120 ? 80 : 140
+            )
+          );
+        }
+        for (const t of [0, 360, 720, 1200, 1560]) {
+          out.push(makeBarEvent(barIndex, t, 'SNARE_SIDESTICK', 84, 'LH', 'SNARE_BACKBEAT', 100));
+        }
+      }
+      break;
+    }
+
+    case 'SONGO': {
+      if (take === 'A') {
+        for (const t of [360, 720, 1320, 1680]) {
+          out.push(makeBarEvent(barIndex, t, 'KICK_MAIN', kVel, 'RF', 'KICK_CORE', 115));
+        }
+        out.push(makeBarEvent(barIndex, 480, 'SNARE_MAIN', 108, 'LH', 'SNARE_BACKBEAT', 110));
+        out.push(makeBarEvent(barIndex, 840, 'SNARE_MAIN', 68, 'LH', 'ORNAMENT', 90));
+        out.push(makeBarEvent(barIndex, 1200, 'SNARE_MAIN', 106, 'LH', 'SNARE_BACKBEAT', 110));
+        out.push(makeBarEvent(barIndex, 1560, 'SNARE_MAIN', 68, 'LH', 'ORNAMENT', 90));
+        for (const t of [0, 240, 600, 960, 1080, 1440, 1800]) {
+          out.push(makeBarEvent(barIndex, t, 'HH_CLOSED', t % 480 === 0 ? hhOn : hhOff, 'RH', 'TIMEKEEP', 90));
+        }
+        for (const t of [0, 960]) {
+          out.push(makeBarEvent(barIndex, t, 'HH_PEDAL', 74, 'LF', 'TIMEKEEP', 90));
+        }
+      } else if (take === 'B') {
+        for (const t of [360, 720, 1320, 1680]) {
+          out.push(makeBarEvent(barIndex, t, 'KICK_MAIN', kVel, 'RF', 'KICK_CORE', 115));
+        }
+        for (const t of [480, 1200]) {
+          out.push(makeBarEvent(barIndex, t, 'SNARE_MAIN', 106, 'LH', 'SNARE_BACKBEAT', 110));
+        }
+        for (const t of [120, 840, 1560]) {
+          out.push(
+            makeBarEvent(barIndex, t, 'SNARE_MAIN', 48, 'LH', 'ORNAMENT', 80, {
+              fixedVelocity: true,
+            })
+          );
+        }
+        for (const t of [0, 240, 360, 600, 960, 1080, 1320, 1680]) {
+          out.push(makeBarEvent(barIndex, t, 'RIDE_BOW', t % 480 === 0 ? 94 : 76, 'RH', 'TIMEKEEP', 130));
+        }
+      } else {
+        // Mozambique bell
+        for (const t of [0, 360, 720, 1320, 1680]) {
+          out.push(makeBarEvent(barIndex, t, 'KICK_MAIN', kVel, 'RF', 'KICK_CORE', 115));
+        }
+        for (const t of [0, 240, 480, 600, 840, 1080, 1200, 1440, 1680]) {
+          out.push(makeBarEvent(barIndex, t, 'RIDE_BELL', t % 480 === 0 ? 100 : 82, 'RH', 'TIMEKEEP', 120));
+        }
+        for (const t of [480, 1200]) {
+          out.push(makeBarEvent(barIndex, t, 'SNARE_MAIN', 106, 'LH', 'SNARE_BACKBEAT', 110));
+        }
+        for (const t of [960, 1560]) {
+          out.push(makeBarEvent(barIndex, t, 'TOM_FLOOR', 98, 'LH', 'ORNAMENT', 110));
+        }
+        for (const t of [0, 480, 960, 1440]) {
+          out.push(makeBarEvent(barIndex, t, 'HH_PEDAL', 76, 'LF', 'TIMEKEEP', 90));
+        }
+      }
+      break;
+    }
+
+    default:
+      break;
+  }
+
+  return out;
+}
+
 // ===========================================================================
 // Stage 2: Base Skeleton Expansion + Safe drumHat16thEnabled
 // ===========================================================================
@@ -1211,6 +2397,23 @@ function expandBaseSkeleton(
           fixedVelocity: true,
         });
       }
+      continue;
+    }
+
+    // -----------------------------------------------------------------------
+    // 2A-2. Extended 12 Custom Skeletons (480 TPQN exact tick placement)
+    // -----------------------------------------------------------------------
+    if (template.customSkeleton) {
+      const barEvents = expandCustomSkeletonBar(
+        lock.patternId,
+        lock.kickTake,
+        barIndex,
+        bpm,
+        section.type,
+        section.energy,
+        flavor
+      );
+      events.push(...barEvents);
       continue;
     }
 
@@ -1690,17 +2893,144 @@ function applyChordAndAnticipationTracking(
 }
 
 // ===========================================================================
-// Stage 4: Safe drumFillEnabled / drumBreakEnabled
+// Stage 4: 10-Template Context Fill Pipeline, Pre-Fill Groove Masking & Breaks
 // ===========================================================================
+export function selectFillTemplate(options: {
+  beats: 1 | 2 | 4;
+  patternId: BeatPatternId;
+  bpm: number;
+  breakEnabled: boolean;
+  lastFillId: FillTemplateId | null;
+  rng: () => number;
+}): FillTemplate {
+  const { beats, patternId, bpm, breakEnabled, lastFillId, rng } = options;
+  const tripletMode = isTripletSkeleton(patternId);
+
+  const scoreCandidates = (list: readonly FillTemplate[]) => {
+    const scored: Array<{ tpl: FillTemplate; weight: number }> = [];
+    for (const tpl of list) {
+      if (tpl.maxSafeBpm !== undefined && bpm > tpl.maxSafeBpm) continue;
+      if (tpl.isBreakKime && !breakEnabled) continue;
+
+      let weight = 1.0;
+      if (tripletMode) {
+        if (tpl.grid === 'triplet') {
+          weight *= 3.0;
+        } else if (bpm > 130) {
+          continue; // Suppress straight 16th fills on triplet skeletons when bpm > 130
+        } else {
+          weight *= 0.4;
+        }
+      } else if (tpl.grid === 'triplet') {
+        weight *= 0.35;
+      }
+
+      if (breakEnabled && tpl.isBreakKime) {
+        weight *= 6.0;
+      }
+
+      if (lastFillId && tpl.id === lastFillId) {
+        weight *= 0.15;
+      }
+
+      if (weight > 0) {
+        scored.push({ tpl, weight });
+      }
+    }
+    return scored;
+  };
+
+  let candidates = scoreCandidates(FILL_TEMPLATES.filter((t) => t.beats === beats));
+  if (candidates.length === 0) {
+    // Fallback: e.g. triplet skeleton at bpm > 155 where 2-beat 6-tuplet is excluded -> 1-beat triplet
+    candidates = scoreCandidates(FILL_TEMPLATES.filter((t) => t.grid === (tripletMode ? 'triplet' : 'straight')));
+  }
+  if (candidates.length === 0) {
+    return FILL_TEMPLATES[0];
+  }
+
+  const totalWeight = candidates.reduce((acc, c) => acc + c.weight, 0);
+  let target = rng() * totalWeight;
+  for (const c of candidates) {
+    target -= c.weight;
+    if (target <= 0) return c.tpl;
+  }
+  return candidates[candidates.length - 1].tpl;
+}
+
+function applyPreFillGrooveMaskAndRender(
+  events: InternalDrumEvent[],
+  barIndex: number,
+  tpl: FillTemplate,
+  lockLeftFootForDoubleBass: boolean
+): InternalDrumEvent[] {
+  const barStart = barIndex * BAR_TICKS;
+  const fillStartAbs = barStart + tpl.fillStartTick;
+
+  // Check if HH_OPEN / HH_HALF_OPEN was the last hi-hat hit before fillStartTick in this bar
+  let lastHatBeforeFill: InternalDrumEvent | null = null;
+  for (const ev of events) {
+    if (ev.barIndex !== barIndex || ev.tick >= fillStartAbs) continue;
+    if (isHiHatOpenVoice(ev.voice) || isHiHatClosedOrPedalVoice(ev.voice)) {
+      if (!lastHatBeforeFill || ev.tick >= lastHatBeforeFill.tick) {
+        lastHatBeforeFill = ev;
+      }
+    }
+  }
+
+  // Mask all skeleton events at or after fillStartTick in this bar
+  const out = events.filter(
+    (e) => !(e.barIndex === barIndex && e.tick >= fillStartAbs)
+  );
+
+  // Auto-insert HH_PEDAL choke at fillStartTick if open hat was ringing
+  if (
+    tpl.fillStartTick > 0 &&
+    !lockLeftFootForDoubleBass &&
+    lastHatBeforeFill &&
+    isHiHatOpenVoice(lastHatBeforeFill.voice)
+  ) {
+    out.push({
+      tick: fillStartAbs,
+      durationTicks: 85,
+      voice: 'HH_PEDAL',
+      velocity: 80,
+      limb: 'LF',
+      role: 'TIMEKEEP',
+      barIndex,
+      stepIndex: (Math.floor(tpl.fillStartTick / STEP_TICKS) % 16) as StepIndex,
+      fixedTiming: true,
+    });
+  }
+
+  // Render template events
+  for (const spec of tpl.events) {
+    out.push({
+      tick: barStart + spec.offsetTick,
+      durationTicks: spec.durationTicks ?? 105,
+      voice: spec.voice,
+      velocity: spec.velocity,
+      limb: spec.limb,
+      role: spec.role ?? 'FILL_EVENT',
+      barIndex,
+      stepIndex: (Math.floor(spec.offsetTick / STEP_TICKS) % 16) as StepIndex,
+    });
+  }
+
+  return out;
+}
+
 function applyFillsAndBreaks(
   input: EngineInput,
   lock: SectionSkeletonLock,
   events: InternalDrumEvent[],
-  rng: () => number
-): InternalDrumEvent[] {
-  const { section, style } = input;
+  _rng: () => number
+): { events: InternalDrumEvent[]; selectedFillIds: FillTemplateId[] } {
+  const { song, section, style, seed, sectionIndex } = input;
+  const bpm = input.bpm ?? song.bpm;
   const totalBars = Math.max(1, section.bars);
   const flavor = GENRE_FLAVOR_PROFILES[lock.genreId];
+  const lockLeftFoot = lock.patternId === 'DOUBLE_BASS';
 
   const fillEnabled =
     input.drumFillEnabled ??
@@ -1714,22 +3044,25 @@ function applyFillsAndBreaks(
     fillEnabled || (lock.isDiscoBoogieLegacy && style === 'C');
 
   if (!effectiveFillEnabled && !breakEnabled) {
-    return events;
+    return { events, selectedFillIds: [] };
   }
 
   let out = [...events];
+  const selectedFillIds: FillTemplateId[] = [];
+  let lastFillId: FillTemplateId | null = null;
   const lastBarIndex = totalBars - 1;
 
   // 1. Internal 4-bar boundaries (barIndex % 4 === 3 && barIndex < lastBarIndex)
   if (effectiveFillEnabled) {
     for (let b = 3; b < lastBarIndex; b += 4) {
       const barStart = b * BAR_TICKS;
-      const roll = rng();
+      const barSeed = hash32(seed, sectionIndex, b, 0xf111);
+      const barRng = mulberry32(barSeed);
+      const roll = barRng();
 
       if (roll < 0.7) {
         // 70%: subtle non-destructive turnaround (preserves skeleton!)
         if (lock.patternId === 'DOUBLE_BASS') {
-          // METAL_QUAD_CHINA accent on Step 14
           out.push({
             tick: barStart + 14 * STEP_TICKS,
             durationTicks: 240,
@@ -1740,8 +3073,19 @@ function applyFillsAndBreaks(
             barIndex: b,
             stepIndex: 14,
           });
+        } else if (isTripletSkeleton(lock.patternId)) {
+          // Triplet-safe turnaround on 1760 (last 8th triplet)
+          out.push({
+            tick: barStart + 1760,
+            durationTicks: 100,
+            voice: 'SNARE_MAIN',
+            velocity: clamp(flavor.dynamics.snareBaseVel - 10, 72, 118),
+            limb: 'LH',
+            role: 'FILL_EVENT',
+            barIndex: b,
+            stepIndex: 14,
+          });
         } else if (roll < 0.25) {
-          // OPEN_HH_4AND on Step 14
           out = out.filter(
             (e) => !(e.barIndex === b && e.stepIndex === 14 && e.role === 'TIMEKEEP')
           );
@@ -1755,8 +3099,7 @@ function applyFillsAndBreaks(
             barIndex: b,
             stepIndex: 14,
           });
-        } else if (roll < 0.5) {
-          // KICK_DOUBLE_PICKUP on Steps 14-15
+        } else if (roll < 0.5 && bpm <= 165) {
           out.push({
             tick: barStart + 15 * STEP_TICKS,
             durationTicks: 100,
@@ -1768,7 +3111,6 @@ function applyFillsAndBreaks(
             stepIndex: 15,
           });
         } else {
-          // SNARE_DOUBLE_TAIL on Step 15
           out.push({
             tick: barStart + 15 * STEP_TICKS,
             durationTicks: 100,
@@ -1781,30 +3123,19 @@ function applyFillsAndBreaks(
           });
         }
       } else {
-        // 30%: compact 1-beat tom turnaround on Steps 12..15 + crash landing on next bar Step 0
-        out = out.filter(
-          (e) =>
-            !(
-              e.barIndex === b &&
-              e.stepIndex >= 12 &&
-              (e.role === 'TIMEKEEP' || e.role === 'ORNAMENT')
-            )
-        );
-        const voices: DrumVoice[] = ['TOM_HI', 'TOM_MID', 'TOM_MID', 'TOM_FLOOR'];
-        for (let idx = 0; idx < 4; idx++) {
-          const step = (12 + idx) as StepIndex;
-          out.push({
-            tick: barStart + step * STEP_TICKS,
-            durationTicks: 105,
-            voice: voices[idx],
-            velocity: clamp(92 + idx * 6, 75, 122),
-            limb: idx % 2 === 0 ? 'RH' : 'LH',
-            role: 'FILL_EVENT',
-            barIndex: b,
-            stepIndex: step,
-          });
-        }
-        // Crash + Kick landing on next bar Step 0
+        // 30%: 1-beat turnaround fill from 10-template library + crash landing on next bar Step 0
+        const tpl = selectFillTemplate({
+          beats: 1,
+          patternId: lock.patternId,
+          bpm,
+          breakEnabled: false,
+          lastFillId,
+          rng: barRng,
+        });
+        out = applyPreFillGrooveMaskAndRender(out, b, tpl, lockLeftFoot);
+        selectedFillIds.push(tpl.id);
+        lastFillId = tpl.id;
+
         const nextBar = b + 1;
         out = out.filter(
           (e) => !(e.barIndex === nextBar && e.stepIndex === 0 && e.role === 'TIMEKEEP')
@@ -1825,80 +3156,81 @@ function applyFillsAndBreaks(
 
   // 2. Section final bar: Fill / Break / Fill+Break
   const lastBarStart = lastBarIndex * BAR_TICKS;
+  const lastBarSeed = hash32(seed, sectionIndex, lastBarIndex, 0xf111);
+  const lastBarRng = mulberry32(lastBarSeed);
 
   if (effectiveFillEnabled && !breakEnabled) {
-    // COMPACT_TOM_2BEAT on Steps 8..15 (removes groove cymbals & ornaments in 8..15)
-    out = out.filter(
-      (e) =>
-        !(
-          e.barIndex === lastBarIndex &&
-          e.stepIndex >= 8 &&
-          !isKickVoice(e.voice)
-        )
-    );
-    const tomSeq: Array<{ step: StepIndex; voice: DrumVoice; vel: number }> = [
-      { step: 8, voice: 'SNARE_MAIN', vel: 106 },
-      { step: 9, voice: 'TOM_HI', vel: 92 },
-      { step: 10, voice: 'TOM_HI', vel: 102 },
-      { step: 11, voice: 'TOM_MID', vel: 94 },
-      { step: 12, voice: 'TOM_MID', vel: 108 },
-      { step: 13, voice: 'TOM_FLOOR', vel: 98 },
-      { step: 14, voice: 'TOM_FLOOR', vel: 112 },
-      { step: 15, voice: 'SNARE_MAIN', vel: 116 },
-    ];
-    for (let i = 0; i < tomSeq.length; i++) {
-      const item = tomSeq[i];
-      out.push({
-        tick: lastBarStart + item.step * STEP_TICKS,
-        durationTicks: 105,
-        voice: item.voice,
-        velocity: item.vel,
-        limb: i % 2 === 0 ? 'RH' : 'LH',
-        role: 'FILL_EVENT',
-        barIndex: lastBarIndex,
-        stepIndex: item.step,
-      });
-    }
+    const wants4Beat =
+      totalBars >= 8 &&
+      (section.type === 'Pre-Chorus' || section.energy === 'High') &&
+      !isTripletSkeleton(lock.patternId) &&
+      lastBarRng() < 0.4;
+    const tpl = selectFillTemplate({
+      beats: wants4Beat ? 4 : 2,
+      patternId: lock.patternId,
+      bpm,
+      breakEnabled: false,
+      lastFillId,
+      rng: lastBarRng,
+    });
+    out = applyPreFillGrooveMaskAndRender(out, lastBarIndex, tpl, lockLeftFoot);
+    selectedFillIds.push(tpl.id);
+    lastFillId = tpl.id;
   } else if (effectiveFillEnabled && breakEnabled) {
-    // Fill + Break combo: compact tom fill on beats 2-3 (Steps 4..11), dead silence on beat 4 (Steps 12..15)
-    out = out.filter(
-      (e) => !(e.barIndex === lastBarIndex && e.stepIndex >= 4)
-    );
-    const fillSeq: Array<{ step: StepIndex; voice: DrumVoice; vel: number }> = [
-      { step: 4, voice: 'SNARE_MAIN', vel: 112 },
-      { step: 6, voice: 'TOM_HI', vel: 100 },
-      { step: 7, voice: 'TOM_HI', vel: 94 },
-      { step: 8, voice: 'TOM_MID', vel: 106 },
-      { step: 9, voice: 'TOM_MID', vel: 98 },
-      { step: 10, voice: 'TOM_FLOOR', vel: 112 },
-      { step: 11, voice: 'SNARE_MAIN', vel: 116 },
-    ];
-    for (let i = 0; i < fillSeq.length; i++) {
-      const item = fillSeq[i];
+    if (totalBars >= 8) {
+      // 8+ bar section with break enabled: prioritize FILL_4B_BREAK_KIME_ANISON
+      const tpl = selectFillTemplate({
+        beats: 4,
+        patternId: lock.patternId,
+        bpm,
+        breakEnabled: true,
+        lastFillId,
+        rng: lastBarRng,
+      });
+      out = applyPreFillGrooveMaskAndRender(out, lastBarIndex, tpl, lockLeftFoot);
+      selectedFillIds.push(tpl.id);
+      lastFillId = tpl.id;
+    } else {
+      // 4-bar Fill + Break combo (backwards-compatible with drumEngine.test.ts):
+      // compact tom fill on beats 2-3 (Steps 4..11), dead silence on beat 4 (Steps 12..15)
+      out = out.filter(
+        (e) => !(e.barIndex === lastBarIndex && e.stepIndex >= 4)
+      );
+      const fillSeq: Array<{ step: StepIndex; voice: DrumVoice; vel: number }> = [
+        { step: 4, voice: 'SNARE_MAIN', vel: 112 },
+        { step: 6, voice: 'TOM_HI', vel: 100 },
+        { step: 7, voice: 'TOM_HI', vel: 94 },
+        { step: 8, voice: 'TOM_MID', vel: 106 },
+        { step: 9, voice: 'TOM_MID', vel: 98 },
+        { step: 10, voice: 'TOM_FLOOR', vel: 112 },
+        { step: 11, voice: 'SNARE_MAIN', vel: 116 },
+      ];
+      for (let i = 0; i < fillSeq.length; i++) {
+        const item = fillSeq[i];
+        out.push({
+          tick: lastBarStart + item.step * STEP_TICKS,
+          durationTicks: 105,
+          voice: item.voice,
+          velocity: item.vel,
+          limb: i % 2 === 0 ? 'RH' : 'LH',
+          role: 'FILL_EVENT',
+          barIndex: lastBarIndex,
+          stepIndex: item.step,
+          fixedTiming: true,
+        });
+      }
       out.push({
-        tick: lastBarStart + item.step * STEP_TICKS,
-        durationTicks: 105,
-        voice: item.voice,
-        velocity: item.vel,
-        limb: i % 2 === 0 ? 'RH' : 'LH',
-        role: 'FILL_EVENT',
+        tick: lastBarStart + 8 * STEP_TICKS,
+        durationTicks: 120,
+        voice: 'KICK_MAIN',
+        velocity: 114,
+        limb: 'RF',
+        role: 'KICK_CORE',
         barIndex: lastBarIndex,
-        stepIndex: item.step,
+        stepIndex: 8,
         fixedTiming: true,
       });
     }
-    // Anchor kick on beat 3 (step 8)
-    out.push({
-      tick: lastBarStart + 8 * STEP_TICKS,
-      durationTicks: 120,
-      voice: 'KICK_MAIN',
-      velocity: 114,
-      limb: 'RF',
-      role: 'KICK_CORE',
-      barIndex: lastBarIndex,
-      stepIndex: 8,
-      fixedTiming: true,
-    });
   } else if (!effectiveFillEnabled && breakEnabled) {
     // Break only: Beat 3 hit (Step 8, tick +960) + clean silence on Steps 10..15 [1200..1920)
     out = out.filter(
@@ -1929,11 +3261,154 @@ function applyFillsAndBreaks(
     });
   }
 
+  return { events: out, selectedFillIds };
+}
+
+// ===========================================================================
+// Biomechanical Speed Guard (runs on pure integer grid BEFORE Stage 4 Solver)
+// ===========================================================================
+export function applyBiomechanicalGuard(
+  events: InternalDrumEvent[],
+  patternId: BeatPatternId,
+  bpm: number
+): InternalDrumEvent[] {
+  let out = events.map((e) => ({ ...e }));
+
+  // 1. One-handed 16th guard (bpm > 142): switch continuous RH 16th timekeep to alternating R-L-R-L
+  if (bpm > 142) {
+    const snareTicks = new Set(
+      out
+        .filter((e) => e.role === 'SNARE_BACKBEAT' && e.limb === 'LH')
+        .map((e) => e.tick)
+    );
+    const rhTimekeep = out
+      .filter((e) => e.role === 'TIMEKEEP' && e.limb === 'RH' && !e.fixedTiming)
+      .sort((a, b) => a.tick - b.tick);
+    const fastRhTicks = new Set<number>();
+    let run = 1;
+    for (let i = 1; i < rhTimekeep.length; i++) {
+      if (rhTimekeep[i].tick - rhTimekeep[i - 1].tick === STEP_TICKS) {
+        run++;
+        if (run >= 4) {
+          fastRhTicks.add(rhTimekeep[i].tick);
+          fastRhTicks.add(rhTimekeep[i - 1].tick);
+          fastRhTicks.add(rhTimekeep[i - 2].tick);
+          fastRhTicks.add(rhTimekeep[i - 3].tick);
+        }
+      } else {
+        run = 1;
+      }
+    }
+    if (fastRhTicks.size > 0) {
+      out = out
+        .map((e) => {
+          if (e.role === 'TIMEKEEP' && e.limb === 'RH' && fastRhTicks.has(e.tick)) {
+            const isOddStep = e.stepIndex % 2 === 1;
+            if (isOddStep) {
+              return { ...e, limb: 'LH' as Limb };
+            }
+          }
+          return e;
+        })
+        .filter(
+          (e) =>
+            !(
+              e.role === 'TIMEKEEP' &&
+              e.limb === 'LH' &&
+              fastRhTicks.has(e.tick) &&
+              snareTicks.has(e.tick)
+            )
+        );
+    }
+  }
+
+  // 2. 32nd-note snare roll guard (bpm > 120): collapse 60t snare runs into SNARE_ROLL
+  if (bpm > 120) {
+    const snareIndices = out
+      .map((e, idx) => ({ e, idx }))
+      .filter(({ e }) => e.voice === 'SNARE_MAIN' && !e.fixedTiming)
+      .sort((a, b) => a.e.tick - b.e.tick);
+    const toRemove = new Set<number>();
+    const toRoll = new Set<number>();
+    let i = 0;
+    while (i < snareIndices.length) {
+      let j = i;
+      while (
+        j + 1 < snareIndices.length &&
+        snareIndices[j + 1].e.tick - snareIndices[j].e.tick <= 65 &&
+        snareIndices[j + 1].e.tick - snareIndices[j].e.tick > 0
+      ) {
+        j++;
+      }
+      if (j - i >= 2) {
+        toRoll.add(snareIndices[i].idx);
+        for (let k = i + 1; k <= j; k++) {
+          toRemove.add(snareIndices[k].idx);
+        }
+      }
+      i = j + 1;
+    }
+    if (toRoll.size > 0) {
+      out = out
+        .map((e, idx) =>
+          toRoll.has(idx)
+            ? {
+                ...e,
+                voice: 'SNARE_ROLL' as DrumVoice,
+                limb: 'RH' as Limb,
+                durationTicks: 180,
+              }
+            : e
+        )
+        .filter((_, idx) => !toRemove.has(idx));
+    }
+  }
+
+  // 3. Single-pedal 3+ consecutive 16th kicks guard (outside DOUBLE_BASS)
+  //    Active when bpm > 165 or 16th IOI < 95ms
+  const sixteenthMs = 15000 / Math.max(1, bpm);
+  if (patternId !== 'DOUBLE_BASS' && (bpm > 165 || sixteenthMs < 95)) {
+    const kickEntries = out
+      .map((e, idx) => ({ e, idx }))
+      .filter(({ e }) => isKickVoice(e.voice) && !e.isAnchor)
+      .sort((a, b) => a.e.tick - b.e.tick);
+
+    const rhOccupiedTicks = new Set(
+      out.filter((e) => e.limb === 'RH').map((e) => e.tick)
+    );
+    const replaced = new Set<number>();
+
+    for (let i = 0; i + 2 < kickEntries.length; i++) {
+      if (replaced.has(kickEntries[i].idx) || replaced.has(kickEntries[i + 1].idx)) {
+        continue;
+      }
+      const k0 = kickEntries[i];
+      const k1 = kickEntries[i + 1];
+      const k2 = kickEntries[i + 2];
+      const d1 = k1.e.tick - k0.e.tick;
+      const d2 = k2.e.tick - k1.e.tick;
+      if (d1 > 0 && d1 <= 130 && d2 > 0 && d2 <= 130) {
+        // Prefer replacing 1800:K (before next bar 0:K), else replace tail k2
+        const target =
+          k1.e.tick % BAR_TICKS === 1800 ? k1 : k2;
+        const useSnare = rhOccupiedTicks.has(target.e.tick);
+        out[target.idx] = {
+          ...target.e,
+          voice: useSnare ? 'SNARE_MAIN' : 'TOM_FLOOR',
+          limb: useSnare ? 'LH' : 'RH',
+          role: 'FILL_EVENT',
+        };
+        replaced.add(target.idx);
+      }
+    }
+  }
+
   return out;
 }
 
 // ===========================================================================
-// Stage 5: Priority-Based 4-Limb Conflict Solver & Hi-Hat Choke
+// Stage 4 Solver v2: Priority-Based 4-Limb + Flam 2-Hand + Hi-Hat Continuity
+// (Always executed on pure integer grid BEFORE Stage 5 expansion/microtiming)
 // ===========================================================================
 const ROLE_PRIORITY: Record<EventRole, number> = {
   SNARE_BACKBEAT: 1,
@@ -1947,56 +3422,194 @@ const ROLE_PRIORITY: Record<EventRole, number> = {
   ORNAMENT: 8,
 };
 
+function compareEventPriority(a: InternalDrumEvent, b: InternalDrumEvent): number {
+  if (Boolean(a.isAnchor) !== Boolean(b.isAnchor)) {
+    return a.isAnchor ? -1 : 1;
+  }
+  const pd = ROLE_PRIORITY[a.role] - ROLE_PRIORITY[b.role];
+  if (pd !== 0) return pd;
+  return b.velocity - a.velocity;
+}
+
 export function resolveLimbConflicts(
   events: InternalDrumEvent[],
   lockLeftFootForDoubleBass: boolean
 ): InternalDrumEvent[] {
-  const grouped = new Map<string, InternalDrumEvent[]>();
-  const subStepExtras: InternalDrumEvent[] = [];
-
+  // 1. Group by exact integer tick to enforce strict simultaneous 4-limb & flam 2-hand occupancy
+  const byTick = new Map<number, InternalDrumEvent[]>();
   for (const ev of events) {
     if (lockLeftFootForDoubleBass && ev.voice === 'HH_PEDAL') continue;
-
-    // Preserve sub-16th trap rolls or bounced disco 16ths that sit at distinct ticks
-    if (ev.fixedTiming && ev.tick % STEP_TICKS !== 0) {
-      subStepExtras.push(ev);
-      continue;
-    }
-
-    const key = `${ev.barIndex}:${ev.stepIndex}:${ev.limb}`;
-    const bucket = grouped.get(key) ?? [];
+    const bucket = byTick.get(ev.tick) ?? [];
     bucket.push(ev);
-    grouped.set(key, bucket);
+    byTick.set(ev.tick, bucket);
   }
 
-  const resolved: InternalDrumEvent[] = [...subStepExtras];
-  for (const bucket of grouped.values()) {
-    bucket.sort((a, b) => ROLE_PRIORITY[a.role] - ROLE_PRIORITY[b.role]);
-    resolved.push(bucket[0]);
-  }
+  const tickResolved: InternalDrumEvent[] = [];
+  for (const bucket of byTick.values()) {
+    const rf: InternalDrumEvent[] = [];
+    const lf: InternalDrumEvent[] = [];
+    const upper: InternalDrumEvent[] = [];
 
-  // Prevent simultaneous HH_OPEN / HH_HALF_OPEN with HH_CLOSED / HH_PEDAL on the same step
-  const openStepSet = new Set<string>();
-  for (const ev of resolved) {
-    if (isHiHatOpenVoice(ev.voice)) {
-      openStepSet.add(`${ev.barIndex}:${ev.stepIndex}`);
+    for (const ev of bucket) {
+      if (ev.limb === 'RF') rf.push(ev);
+      else if (ev.limb === 'LF') lf.push(ev);
+      else upper.push(ev);
+    }
+
+    if (rf.length > 0) {
+      rf.sort(compareEventPriority);
+      tickResolved.push(rf[0]);
+    }
+    if (lf.length > 0) {
+      lf.sort(compareEventPriority);
+      tickResolved.push(lf[0]);
+    }
+
+    if (upper.length > 0) {
+      const flams = upper.filter((e) => e.voice === 'SNARE_FLAM');
+      const nonFlams = upper.filter((e) => e.voice !== 'SNARE_FLAM');
+      const anchorCrash = nonFlams.find(
+        (e) => e.role === 'CRASH_ACCENT' && (e.isAnchor || e.voice === 'CRASH_L')
+      );
+
+      if (flams.length > 0 && anchorCrash) {
+        // Crash + Flam collision on downbeat: downgrade SNARE_FLAM to single-hand SNARE_MAIN (LH)
+        flams.sort(compareEventPriority);
+        tickResolved.push(anchorCrash);
+        tickResolved.push({
+          ...flams[0],
+          voice: 'SNARE_MAIN',
+          limb: 'LH',
+        });
+      } else if (flams.length > 0) {
+        // SNARE_FLAM occupies BOTH upper limbs (2 slots)
+        flams.sort(compareEventPriority);
+        tickResolved.push(flams[0]);
+      } else {
+        const rh = nonFlams.filter((e) => e.limb === 'RH').sort(compareEventPriority);
+        const lh = nonFlams.filter((e) => e.limb === 'LH').sort(compareEventPriority);
+        if (rh.length > 0) tickResolved.push(rh[0]);
+        if (lh.length > 0) tickResolved.push(lh[0]);
+      }
     }
   }
-  const filtered = resolved.filter((ev) => {
-    if (isHiHatClosedOrPedalVoice(ev.voice) && !ev.fixedTiming) {
-      if (openStepSet.has(`${ev.barIndex}:${ev.stepIndex}`)) {
-        return false;
-      }
+
+  // 2. Hi-hat simultaneous state continuity on exact tick:
+  //    Never allow HH_OPEN / HH_HALF_OPEN together with HH_CLOSED / HH_PEDAL on same tick
+  const openTickSet = new Set<number>();
+  const fixedChokeTickSet = new Set<number>();
+  for (const ev of tickResolved) {
+    if (isHiHatOpenVoice(ev.voice)) openTickSet.add(ev.tick);
+    if (isHiHatClosedOrPedalVoice(ev.voice) && ev.fixedTiming) {
+      fixedChokeTickSet.add(ev.tick);
+    }
+  }
+  const hatClean = tickResolved.filter((ev) => {
+    if (isHiHatOpenVoice(ev.voice) && fixedChokeTickSet.has(ev.tick)) {
+      return false;
+    }
+    if (isHiHatClosedOrPedalVoice(ev.voice) && !ev.fixedTiming && openTickSet.has(ev.tick)) {
+      return false;
     }
     return true;
   });
 
-  return filtered.sort((a, b) => a.tick - b.tick);
+  // 3. Ensure (barIndex, stepIndex, limb) uniqueness for standard 16th-aligned events
+  const stepLimbMap = new Map<string, InternalDrumEvent>();
+  const subStepExtras: InternalDrumEvent[] = [];
+  for (const ev of hatClean) {
+    if (ev.fixedTiming && ev.tick % STEP_TICKS !== 0) {
+      subStepExtras.push(ev);
+      continue;
+    }
+    const key = `${ev.barIndex}:${ev.stepIndex}:${ev.limb}`;
+    const existing = stepLimbMap.get(key);
+    if (!existing || compareEventPriority(ev, existing) < 0) {
+      stepLimbMap.set(key, ev);
+    }
+  }
+
+  return [...subStepExtras, ...stepLimbMap.values()].sort((a, b) => a.tick - b.tick);
 }
 
 // ===========================================================================
-// Stage 6: Genre Flavor, Swing, Microtiming, Double-Bass Physics & Invariants
+// Stage 5: Flam Grace Expansion, Genre Flavor, Swing, Microtiming & Physics
 // ===========================================================================
+export function expandFlamsAndRollsStage5(
+  events: InternalDrumEvent[],
+  bpm: number,
+  midiMapMode: MidiMapMode
+): InternalDrumEvent[] {
+  const flamOffset = Math.max(8, msToTicks(25, bpm));
+  const out: InternalDrumEvent[] = [];
+
+  for (const ev of events) {
+    if (ev.voice === 'SNARE_FLAM') {
+      const graceVel = clamp(Math.round(ev.velocity * 0.58), 24, 96);
+      if (ev.tick > 0) {
+        out.push({
+          ...ev,
+          tick: Math.max(0, ev.tick - flamOffset),
+          durationTicks: 40,
+          voice: 'SNARE_MAIN',
+          velocity: graceVel,
+          limb: 'LH',
+          fixedTiming: true,
+          fixedVelocity: true,
+        });
+        out.push({
+          ...ev,
+          voice: 'SNARE_MAIN',
+          limb: 'RH',
+        });
+      } else {
+        out.push({
+          ...ev,
+          tick: 0,
+          durationTicks: 40,
+          voice: 'SNARE_MAIN',
+          velocity: graceVel,
+          limb: 'LH',
+          fixedTiming: true,
+          fixedVelocity: true,
+        });
+        out.push({
+          ...ev,
+          tick: flamOffset,
+          voice: 'SNARE_MAIN',
+          limb: 'RH',
+          fixedTiming: true,
+        });
+      }
+      continue;
+    }
+
+    if (ev.voice === 'SNARE_ROLL' && midiMapMode === 'GM_STANDARD') {
+      // GM fallback for 32nd-note roll > 120 BPM: drag/flam approximation on Note 38
+      const graceVel = clamp(Math.round(ev.velocity * 0.58), 24, 96);
+      out.push({
+        ...ev,
+        tick: Math.max(0, ev.tick - flamOffset),
+        durationTicks: 40,
+        voice: 'SNARE_MAIN',
+        velocity: graceVel,
+        limb: 'LH',
+        fixedTiming: true,
+        fixedVelocity: true,
+      });
+      out.push({
+        ...ev,
+        voice: 'SNARE_MAIN',
+        limb: 'RH',
+      });
+      continue;
+    }
+
+    out.push(ev);
+  }
+
+  return out;
+}
 export function applyGenreFlavor(
   events: InternalDrumEvent[],
   template: { supportsSwing16th: boolean },
@@ -2205,19 +3818,25 @@ export function generateDrumResult(input: EngineInput): DrumGenerationResult {
   // Stage 3: Non-Destructive Chord Change & Offbeat Anticipation Tracking
   const stage3 = applyChordAndAnticipationTracking(input, skeleton, stage2);
 
-  // Stage 4: Safe drumFillEnabled / drumBreakEnabled
-  const stage4 = applyFillsAndBreaks(input, skeleton, stage3, rng);
+  // Stage 3.5: 10-Template Context Fill Pipeline & Breaks + Biomechanical Guard
+  const fillRes = applyFillsAndBreaks(input, skeleton, stage3, rng);
+  const bioGuarded = applyBiomechanicalGuard(
+    fillRes.events,
+    skeleton.patternId,
+    bpm
+  );
 
-  // Stage 5: Priority-Based 4-Limb Conflict Solver
+  // Stage 4: Priority-Based 4-Limb + Flam 2-Hand + Hi-Hat Solver v2 (Pure Integer Grid)
   const lockLeftFoot = skeleton.patternId === 'DOUBLE_BASS';
-  const stage5 = resolveLimbConflicts(stage4, lockLeftFoot);
+  const stage4Events = resolveLimbConflicts(bioGuarded, lockLeftFoot);
 
-  // Stage 6: Genre Flavor, Swing, Microtiming, Double-Bass Physics & MIDI Map
+  // Stage 5: Flam Grace Expansion, Genre Flavor, Swing, Microtiming, Double-Bass Physics & MIDI Map
   const template = BEAT_TEMPLATES[skeleton.patternId];
   const flavor = GENRE_FLAVOR_PROFILES[skeleton.genreId];
-  const stage6 = applyGenreFlavor(stage5, template, flavor, bpm, rng);
+  const stage5Expanded = expandFlamsAndRollsStage5(stage4Events, bpm, midiMapMode);
+  const stage5Flavored = applyGenreFlavor(stage5Expanded, template, flavor, bpm, rng);
   const finalEvents = enforceFinalInvariants(
-    stage6,
+    stage5Flavored,
     sectionStartTick,
     sectionEndTick,
     midiMapMode
@@ -2238,6 +3857,8 @@ export function generateDrumResult(input: EngineInput): DrumGenerationResult {
   return {
     notes,
     events: finalEvents,
+    stage4Events,
+    selectedFillIds: fillRes.selectedFillIds,
     kickTicks,
     patternId: skeleton.patternId,
     kickTake: skeleton.kickTake,
