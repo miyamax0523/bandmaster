@@ -6,7 +6,7 @@ import {
   type QuantizeGrid,
   type ScaleType,
 } from '../types/song';
-import { snapPitchToScale } from './chordUtils';
+import { semitoneToKeyName, snapPitchToScale } from './chordUtils';
 
 export interface RawRiffNote {
   pitch: number;
@@ -356,4 +356,177 @@ export function processVocalMelody(
     cleanedVocalNotes,
     resolvedGrid,
   };
+}
+
+export interface NormalizeOverrideBassOptions {
+  shiftOctaveDown?: boolean; // default true: guitar E2(40).. -> bass E1(28)..G3(55)
+  minDurationTicks?: number; // default 60: filter out ultra-short ghost noise
+}
+
+/**
+ * Normalizes Basic Pitch / imported MIDI notes for Bass MIDI Override mode:
+ * - Removes ghost noise shorter than minDurationTicks (default 60t)
+ * - Optionally shifts guitar register down by 1 octave (-12) and folds into E1(28)..G3(55)
+ * - Enforces strict bottom-note monophony (>= 5t clearance)
+ * - Loops to cover sectionBars if shorter, clips to sectionEnd
+ */
+export function normalizeOverrideBassNotes(
+  rawNotes: readonly RawRiffNote[] | readonly MidiNote[],
+  sectionBars: number,
+  options?: NormalizeOverrideBassOptions
+): MidiNote[] {
+  const totalBars = Math.max(1, Math.round(sectionBars));
+  const sectionEnd = totalBars * TICKS_PER_BAR;
+  const shiftOctaveDown = options?.shiftOctaveDown ?? true;
+  const minDur = options?.minDurationTicks ?? 60;
+
+  if (!rawNotes || rawNotes.length === 0) return [];
+
+  const filtered = rawNotes
+    .map((n) => {
+      const vel =
+        'amplitude' in n && n.amplitude !== undefined
+          ? Math.min(127, Math.max(1, Math.round(n.amplitude * 127)))
+          : Math.min(127, Math.max(1, Math.round(n.velocity ?? 100)));
+      return {
+        pitch: Math.round(n.pitch),
+        startTick: Math.max(0, Math.round(n.startTick)),
+        durationTicks: Math.round(n.durationTicks),
+        velocity: vel,
+      };
+    })
+    .filter((n) => n.durationTicks >= minDur && n.startTick < sectionEnd);
+
+  if (filtered.length === 0) return [];
+
+  // Determine source clip span in whole bars (for clean looping when clip < sectionBars)
+  const maxEnd = filtered.reduce(
+    (m, n) => Math.max(m, n.startTick + n.durationTicks),
+    0
+  );
+  const clipBars = Math.max(1, Math.min(totalBars, Math.ceil(maxEnd / TICKS_PER_BAR)));
+  const clipLen = clipBars * TICKS_PER_BAR;
+
+  // Bottom-note monophonization within source clip
+  const lowestAtTick = new Map<number, (typeof filtered)[number]>();
+  for (const n of filtered) {
+    const existing = lowestAtTick.get(n.startTick);
+    if (!existing || n.pitch < existing.pitch) {
+      lowestAtTick.set(n.startTick, { ...n });
+    }
+  }
+  const monoClip = Array.from(lowestAtTick.values()).sort(
+    (a, b) => a.startTick - b.startTick
+  );
+
+  // Pitch normalization to E1(28)..G3(55)
+  const pitchedClip = monoClip.map((n) => {
+    let p = n.pitch;
+    if (shiftOctaveDown && p >= 40) {
+      p -= 12;
+    }
+    while (p > 55) p -= 12;
+    while (p < 28) p += 12;
+    return {
+      ...n,
+      pitch: Math.min(55, Math.max(28, p)),
+    };
+  });
+
+  // Expand/loop across sectionEnd
+  const expanded: MidiNote[] = [];
+  for (let base = 0; base < sectionEnd; base += clipLen) {
+    for (const n of pitchedClip) {
+      const st = base + n.startTick;
+      if (st >= sectionEnd) continue;
+      const dur = Math.max(1, Math.min(n.durationTicks, sectionEnd - st));
+      expanded.push({
+        pitch: n.pitch,
+        velocity: n.velocity,
+        startTick: st,
+        durationTicks: dur,
+        channel: 0,
+      });
+    }
+  }
+
+  expanded.sort((a, b) => a.startTick - b.startTick || a.pitch - b.pitch);
+
+  // Final strict monophony pass with >= 5-tick clearance
+  const out: MidiNote[] = [];
+  for (const note of expanded) {
+    const prev = out[out.length - 1];
+    if (prev) {
+      if (prev.startTick === note.startTick) {
+        if (note.pitch < prev.pitch) {
+          out[out.length - 1] = { ...note };
+        }
+        continue;
+      }
+      const maxEndPrev = note.startTick - 5;
+      if (prev.startTick + prev.durationTicks > maxEndPrev) {
+        prev.durationTicks = Math.max(1, maxEndPrev - prev.startTick);
+      }
+    }
+    out.push({ ...note });
+  }
+  return out;
+}
+
+/**
+ * Infers a provisional bar-by-bar power-chord progression (e.g. "E5 | F5 | G5 | E5")
+ * from the dominant root notes (weighted by duration & strong beat) of overrideBassNotes.
+ */
+export function inferPowerChordProgressionFromBassNotes(
+  notes: readonly MidiNote[],
+  sectionBars: number
+): string {
+  const totalBars = Math.max(1, Math.round(sectionBars));
+  if (!notes || notes.length === 0) return '';
+
+  const barChords: string[] = [];
+  let lastChord: string | null = null;
+
+  for (let b = 0; b < totalBars; b++) {
+    const barStart = b * TICKS_PER_BAR;
+    const barEnd = barStart + TICKS_PER_BAR;
+    const scores = new Map<number, number>();
+
+    for (const n of notes) {
+      const ovStart = Math.max(barStart, n.startTick);
+      const ovEnd = Math.min(barEnd, n.startTick + n.durationTicks);
+      if (ovEnd <= ovStart) continue;
+      const ovDur = ovEnd - ovStart;
+      const rel = n.startTick - barStart;
+      const beatWeight =
+        rel >= 0 && rel < 120
+          ? 1.9
+          : rel >= 960 && rel < 1080
+            ? 1.35
+            : rel >= 0 && rel % 480 < 60
+              ? 1.15
+              : 1.0;
+      const pc = ((n.pitch % 12) + 12) % 12;
+      scores.set(pc, (scores.get(pc) ?? 0) + ovDur * beatWeight);
+    }
+
+    if (scores.size === 0) {
+      barChords.push(lastChord ? '%' : 'E5');
+      continue;
+    }
+
+    let bestPc = 0;
+    let bestScore = -1;
+    for (const [pc, sc] of scores.entries()) {
+      if (sc > bestScore) {
+        bestScore = sc;
+        bestPc = pc;
+      }
+    }
+    const chord = `${semitoneToKeyName(bestPc)}5`;
+    barChords.push(chord);
+    lastChord = chord;
+  }
+
+  return barChords.join(' | ');
 }

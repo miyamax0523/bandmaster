@@ -1,6 +1,14 @@
 import { generateBassResult } from '../engines/bassEngine';
 import { generateDrumNotes } from '../engines/drumEngine';
 import { generateKeyboardResult } from '../engines/keyboardEngine';
+import {
+  buildSectionChordEvents,
+  computeVocalMinMidiByBar,
+  deriveSubSeed,
+  parseCustomChordProgression,
+  resolveVocalVoiceProfile,
+  serializeChordSlotsToText,
+} from '../engines/musicCore';
 import { generatePadResult } from '../engines/padEngine';
 import { generateVocalNotes } from '../engines/vocalEngine';
 import {
@@ -9,10 +17,14 @@ import {
   CURRENT_ENGINE_VERSION,
   getDefaultDrumFillEnabled,
   TICKS_PER_BAR,
+  TRACK_CHANNELS,
   type AccompanimentTake,
+  type BassLockMode,
   type BassSkeletonId,
   type BeatPatternId,
   type ChapterInternalForm,
+  type ChordEvent,
+  type ChordLockMode,
   type ChordSlot,
   type CopiedPartPhrase,
   type DensityLevel,
@@ -33,6 +45,7 @@ import {
   type UnisonRiffData,
   type VocalHarmonyMode,
   type VocalMelodyData,
+  type VocalVoicePresetId,
 } from '../types/song';
 import type {
   BandState,
@@ -45,7 +58,15 @@ import {
   normalizeSectionChords,
   resizeTimelineToBars,
 } from './chordTimeline';
-import { getDefaultProgression, getDiatonicChords } from './chordUtils';
+import {
+  getDefaultProgression,
+  getDiatonicChords,
+  noteNameToSemitone,
+} from './chordUtils';
+import {
+  inferPowerChordProgressionFromBassNotes,
+  normalizeOverrideBassNotes,
+} from './riffProcessor';
 import { resolveInstrumentParams } from './keywordParser';
 import {
   MASTER_GENRES,
@@ -59,6 +80,15 @@ export const GENERATION_ORDER: readonly InstrumentType[] = [
   'keyboard',
   'pad',
   'vocal',
+];
+
+/** Strict 1-way pipeline order: Stage 2 (vocal) runs BEFORE Stage 3 (keyboard, pad). */
+export const PIPELINE_EXECUTION_ORDER: readonly InstrumentType[] = [
+  'drums',
+  'bass',
+  'vocal',
+  'keyboard',
+  'pad',
 ];
 
 const TAKES: readonly TakeStyle[] = ['A', 'B', 'C'];
@@ -124,6 +154,14 @@ export function cloneSection(sec: Section): Section {
     keyboardTake: sec.keyboardTake ?? 'auto',
     padSkeleton: sec.padSkeleton ?? 'auto',
     padTake: sec.padTake ?? 'auto',
+    chordLockMode: sec.chordLockMode ?? 'auto',
+    customChordsText: sec.customChordsText ?? '',
+    bassLockMode: sec.bassLockMode ?? 'auto',
+    overrideBassNotes: sec.overrideBassNotes
+      ? sec.overrideBassNotes.map((n) => ({ ...n }))
+      : null,
+    overrideBassSourceLabel: sec.overrideBassSourceLabel,
+    overrideBassShiftOctave: sec.overrideBassShiftOctave ?? true,
     chords: normalizeSectionChords(sec.chords, sec.bars),
     patternPresets: clonedPresets
       ? { ...clonedPresets }
@@ -140,6 +178,9 @@ export function cloneSection(sec: Section): Section {
 export function cloneSongConfig(song: SongConfig): SongConfig {
   return {
     ...song,
+    vocalVoiceProfileId: song.vocalVoiceProfileId ?? 'chisa_jp',
+    vocalCustomMinMidi: song.vocalCustomMinMidi ?? 55,
+    vocalCustomMaxMidi: song.vocalCustomMaxMidi ?? 74,
     uploadedDrumLoop: cloneDrumLoop(song.uploadedDrumLoop),
     members: {
       drums: { ...song.members.drums },
@@ -192,6 +233,34 @@ export function createSeedTriple(baseSeed: number): Record<TakeStyle, number> {
   };
 }
 
+export function resolveSectionChordEvents(
+  song: SongConfig,
+  section: Section
+): ChordEvent[] {
+  if (
+    section.chordLockMode === 'custom' &&
+    section.customChordsText &&
+    section.customChordsText.trim().length > 0
+  ) {
+    const genreHint =
+      section.patternPresets?.keyboard ??
+      section.patternPresets?.vocal ??
+      song.members.keyboard.patternPreset ??
+      song.members.vocal?.patternPreset;
+    const parsed = parseCustomChordProgression(
+      section.customChordsText,
+      section.bars,
+      noteNameToSemitone(song.key),
+      song.scale,
+      genreHint
+    );
+    if (parsed.valid && parsed.chordEvents.length > 0) {
+      return parsed.chordEvents;
+    }
+  }
+  return buildSectionChordEvents(section, song.key, song.scale);
+}
+
 export function generateCellTakesWithCC(
   song: SongConfig,
   section: Section,
@@ -205,6 +274,8 @@ export function generateCellTakesWithCC(
     bassNotes?: MidiNote[];
     keyboardNotes?: MidiNote[];
     vocalNotes?: MidiNote[];
+    chordEvents?: readonly ChordEvent[];
+    vocalMinMidiByBar?: readonly (number | null)[];
   }
 ): {
   takes: Record<TakeStyle, MidiNote[]>;
@@ -213,6 +284,20 @@ export function generateCellTakesWithCC(
   const takes = {} as Record<TakeStyle, MidiNote[]>;
   const controlChangesByTake = {} as Record<TakeStyle, MidiControlChangeEvent[]>;
   let hasAnyCC = false;
+
+  const chordEvents =
+    contextNotes?.chordEvents ?? resolveSectionChordEvents(song, section);
+  const vocalVoiceProfile = resolveVocalVoiceProfile(song);
+  const vocalMinMidiByBar =
+    contextNotes?.vocalMinMidiByBar ??
+    computeVocalMinMidiByBar(contextNotes?.vocalNotes, section.bars);
+  const lastChorusIdx = song.sections.reduce(
+    (last, s, idx) => (s.type === 'Chorus' ? idx : last),
+    -1
+  );
+  const isFinalChorusSection =
+    section.type === 'Chorus' &&
+    (sectionIndex === lastChorusIdx || lastChorusIdx === -1);
 
   const drumSource =
     instrument === 'bass'
@@ -233,6 +318,14 @@ export function generateCellTakesWithCC(
       style,
       seed: seeds[style],
       params,
+      chordEvents,
+      vocalVoiceProfile,
+      vocalMinMidiByBar:
+        instrument === 'keyboard' || instrument === 'pad'
+          ? vocalMinMidiByBar
+          : undefined,
+      isFinalChorusSection:
+        instrument === 'vocal' ? isFinalChorusSection : undefined,
       drumNotes:
         instrument === 'bass' || instrument === 'keyboard' || instrument === 'pad'
           ? drumSource
@@ -308,10 +401,33 @@ export function generateCellTakesWithCC(
     if (instrument === 'drums') {
       takes[style] = generateDrumNotes(input);
     } else if (instrument === 'bass') {
-      const res = generateBassResult(input);
-      takes[style] = res.notes;
-      controlChangesByTake[style] = res.controlChanges;
-      if (res.controlChanges.length > 0) hasAnyCC = true;
+      if (
+        section.bassLockMode === 'midi_override' &&
+        section.overrideBassNotes &&
+        section.overrideBassNotes.length > 0
+      ) {
+        // Bypass bassEngine: adopt normalized Basic Pitch / imported MIDI bass notes verbatim
+        const sectionEnd = Math.max(1, section.bars) * TICKS_PER_BAR;
+        const lockedNotes = section.overrideBassNotes
+          .filter((n) => n.startTick >= 0 && n.startTick < sectionEnd)
+          .map((n) => ({
+            ...n,
+            durationTicks: Math.max(1, Math.min(n.durationTicks, sectionEnd - n.startTick)),
+            channel: TRACK_CHANNELS.bass,
+          }));
+        takes[style] = lockedNotes;
+        // Maintain MODO BASS 2 CC#9 = 0 safety reset
+        controlChangesByTake[style] = [
+          { tick: 0, controller: 9, value: 0, channel: TRACK_CHANNELS.bass },
+          { tick: sectionEnd, controller: 9, value: 0, channel: TRACK_CHANNELS.bass },
+        ];
+        hasAnyCC = true;
+      } else {
+        const res = generateBassResult(input);
+        takes[style] = res.notes;
+        controlChangesByTake[style] = res.controlChanges;
+        if (res.controlChanges.length > 0) hasAnyCC = true;
+      }
     } else if (instrument === 'keyboard') {
       const res = generateKeyboardResult(input);
       takes[style] = res.notes;
@@ -424,7 +540,9 @@ export function generateSectionCells(
       const seeds =
         prev && !newSeeds
           ? { ...prev.seeds }
-          : createSeedTriple(rng.nextInt(1, 0x7ffffff0));
+          : createSeedTriple(
+              deriveSubSeed(baseSeed, `stage:${inst}:${sectionIndex}`)
+            );
       result[inst] = {
         engineVersion: CURRENT_ENGINE_VERSION,
         seeds,
@@ -434,9 +552,13 @@ export function generateSectionCells(
       };
     }
   }
+  void rng;
 
-  // Strictly execute generation in order: drums -> bass -> keyboard -> pad -> vocal
-  for (const inst of GENERATION_ORDER) {
+  // Stage 1: Resolve dynamic Berklee ChordEvent[] once per section (respecting custom chord lock)
+  const chordEvents = resolveSectionChordEvents(song, section);
+
+  // Strictly execute in 1-way pipeline order: drums -> bass -> vocal (Stage 2) -> keyboard -> pad (Stage 3)
+  for (const inst of PIPELINE_EXECUTION_ORDER) {
     const prev = existing?.[inst];
     if (prev?.locked) continue;
     if (!targets.has(inst)) continue;
@@ -462,12 +584,20 @@ export function generateSectionCells(
       section.enabledParts?.keyboard !== false
         ? kbCell.takes[kbCell.selectedTake] ?? []
         : [];
+    const resolvedVocalCell = result.vocal ?? existing?.vocal;
     const vocalNotesForContext =
       inst === 'keyboard' || inst === 'pad'
         ? section.vocalMelody?.notes ??
-          (existing?.vocal && existing.vocal.selectedTake !== 'OFF'
-            ? existing.vocal.takes[existing.vocal.selectedTake]
+          (resolvedVocalCell &&
+          resolvedVocalCell.selectedTake !== 'OFF' &&
+          section.enabledParts?.vocal !== false &&
+          song.members.vocal?.enabled !== false
+            ? resolvedVocalCell.takes[resolvedVocalCell.selectedTake]
             : undefined)
+        : undefined;
+    const vocalMinMidiByBar =
+      inst === 'keyboard' || inst === 'pad'
+        ? computeVocalMinMidiByBar(vocalNotesForContext, section.bars)
         : undefined;
 
     const generated = generateCellTakesWithCC(
@@ -480,14 +610,14 @@ export function generateSectionCells(
       inst === 'vocal' || inst === 'keyboard' || inst === 'pad'
         ? options?.prevVocalAvgPitch
         : undefined,
-      inst === 'keyboard' || inst === 'pad'
-        ? {
-            drumNotes,
-            bassNotes: bassNotesForContext,
-            keyboardNotes: kbNotesForPad,
-            vocalNotes: vocalNotesForContext,
-          }
-        : undefined
+      {
+        drumNotes,
+        bassNotes: bassNotesForContext,
+        keyboardNotes: kbNotesForPad,
+        vocalNotes: vocalNotesForContext,
+        chordEvents,
+        vocalMinMidiByBar,
+      }
     );
     result[inst].takes = generated.takes;
     result[inst].controlChangesByTake = generated.controlChangesByTake;
@@ -1801,6 +1931,9 @@ export function createDefaultSongConfig(
     swingTarget: '8th',
     exportOnlyActiveTracks: true,
     split808KickTrack: true,
+    vocalVoiceProfileId: 'chisa_jp',
+    vocalCustomMinMidi: 55,
+    vocalCustomMaxMidi: 74,
     members: {
       drums: {
         enabled: true,
@@ -2474,5 +2607,271 @@ export function setSectionAccompanimentTake(
         [sectionId]: updatedCells,
       },
     },
+  };
+}
+
+/**
+ * Updates Song-level VocalVoiceProfile (default: chisa_jp).
+ * Sub-seed isolation preserves Stage 1 harmony (chords) and drums/bass untouched,
+ * recalculating ONLY Stage 2 (vocal) and Stage 3 (keyboard, pad clamping).
+ */
+export function setSongVocalVoiceProfile(
+  song: SongConfig,
+  bandState: BandState,
+  patch: {
+    vocalVoiceProfileId?: VocalVoicePresetId;
+    vocalCustomMinMidi?: number;
+    vocalCustomMaxMidi?: number;
+  }
+): { song: SongConfig; bandState: BandState } {
+  const nextSong = cloneSongConfig(song);
+  if (patch.vocalVoiceProfileId !== undefined) {
+    nextSong.vocalVoiceProfileId = patch.vocalVoiceProfileId;
+  }
+  const rawMin = Math.max(
+    36,
+    Math.min(76, Math.round(patch.vocalCustomMinMidi ?? nextSong.vocalCustomMinMidi ?? 55))
+  );
+  const rawMax = Math.max(
+    rawMin + 12,
+    Math.min(88, Math.round(patch.vocalCustomMaxMidi ?? nextSong.vocalCustomMaxMidi ?? 74))
+  );
+  nextSong.vocalCustomMinMidi = rawMin;
+  nextSong.vocalCustomMaxMidi = rawMax;
+
+  const cellsBySection: Record<string, SectionBandCells> = {};
+  for (let i = 0; i < nextSong.sections.length; i++) {
+    const sec = nextSong.sections[i];
+    const prevVocalAvgPitch =
+      i > 0
+        ? getAverageVocalPitch(cellsBySection[nextSong.sections[i - 1].id])
+        : undefined;
+    cellsBySection[sec.id] = generateSectionCells(
+      nextSong,
+      sec,
+      i,
+      bandState.cellsBySection[sec.id],
+      6510 + i * 37,
+      {
+        newSeeds: false,
+        instruments: ['vocal', 'keyboard', 'pad'],
+        prevVocalAvgPitch,
+      }
+    );
+  }
+
+  return { song: nextSong, bandState: { cellsBySection } };
+}
+
+/**
+ * Copies the section's current chord progression into customChordsText and locks chordLockMode='custom'.
+ */
+export function lockCurrentChordsToCustom(
+  song: SongConfig,
+  bandState: BandState,
+  sectionId: string
+): { song: SongConfig; bandState: BandState } {
+  const nextSong = cloneSongConfig(song);
+  const secIdx = nextSong.sections.findIndex((s) => s.id === sectionId);
+  if (secIdx === -1) return { song, bandState };
+
+  const sec = nextSong.sections[secIdx];
+  const serialized =
+    sec.customChordsText && sec.customChordsText.trim().length > 0
+      ? sec.customChordsText.trim()
+      : serializeChordSlotsToText(sec.chords, sec.bars);
+
+  sec.chordLockMode = 'custom';
+  sec.customChordsText = serialized;
+  return { song: nextSong, bandState };
+}
+
+/**
+ * Updates section chordLockMode ("auto" | "custom") and optional customChordsText.
+ * When mode === 'custom' and text parses cleanly, updates section.chords and recalculates
+ * downstream parts (bass/vocal/keyboard/pad) while preserving locked cells.
+ * If text has parse errors, stores text for UI error feedback and safely keeps previous valid chords.
+ */
+export function setSectionChordLock(
+  song: SongConfig,
+  bandState: BandState,
+  sectionId: string,
+  patch: {
+    chordLockMode?: ChordLockMode;
+    customChordsText?: string;
+  }
+): { song: SongConfig; bandState: BandState; parseErrors: readonly string[] } {
+  const nextSong = cloneSongConfig(song);
+  const secIdx = nextSong.sections.findIndex((s) => s.id === sectionId);
+  if (secIdx === -1) return { song, bandState, parseErrors: [] };
+
+  const sec = nextSong.sections[secIdx];
+  if (patch.chordLockMode !== undefined) {
+    sec.chordLockMode = patch.chordLockMode;
+  }
+  if (patch.customChordsText !== undefined) {
+    sec.customChordsText = patch.customChordsText;
+  } else if (
+    sec.chordLockMode === 'custom' &&
+    (!sec.customChordsText || sec.customChordsText.trim().length === 0)
+  ) {
+    sec.customChordsText = serializeChordSlotsToText(sec.chords, sec.bars);
+  }
+
+  let parseErrors: readonly string[] = [];
+  if (sec.chordLockMode === 'custom') {
+    const genreHint =
+      sec.patternPresets?.keyboard ??
+      sec.patternPresets?.vocal ??
+      nextSong.members.keyboard.patternPreset ??
+      nextSong.members.vocal?.patternPreset;
+    const parsed = parseCustomChordProgression(
+      sec.customChordsText ?? '',
+      sec.bars,
+      noteNameToSemitone(nextSong.key),
+      nextSong.scale,
+      genreHint
+    );
+    if (!parsed.valid) {
+      return {
+        song: nextSong,
+        bandState,
+        parseErrors: parsed.errors,
+      };
+    }
+    sec.chords = parsed.slots;
+  }
+
+  const nextState = cloneBandState(bandState);
+  const prevVocalAvgPitch =
+    secIdx > 0
+      ? getAverageVocalPitch(
+          nextState.cellsBySection[nextSong.sections[secIdx - 1].id]
+        )
+      : undefined;
+
+  nextState.cellsBySection[sectionId] = generateSectionCells(
+    nextSong,
+    sec,
+    secIdx,
+    nextState.cellsBySection[sectionId],
+    6710 + secIdx * 29,
+    {
+      newSeeds: false,
+      instruments: ['bass', 'vocal', 'keyboard', 'pad'],
+      prevVocalAvgPitch,
+    }
+  );
+
+  return { song: nextSong, bandState: nextState, parseErrors };
+}
+
+/**
+ * Sets or clears Basic Pitch / imported MIDI Bass Override lock for a section.
+ * Recalculates bass + Stage 3 (keyboard, pad) so LIL checks reference the locked bass pitches.
+ */
+export function setSectionBassMidiOverride(
+  song: SongConfig,
+  bandState: BandState,
+  sectionId: string,
+  options: {
+    bassLockMode: BassLockMode;
+    rawNotes?: readonly MidiNote[] | null;
+    sourceLabel?: string;
+    shiftOctaveDown?: boolean;
+  }
+): { song: SongConfig; bandState: BandState } {
+  const nextSong = cloneSongConfig(song);
+  const secIdx = nextSong.sections.findIndex((s) => s.id === sectionId);
+  if (secIdx === -1) return { song, bandState };
+
+  const sec = nextSong.sections[secIdx];
+  sec.bassLockMode = options.bassLockMode;
+  if (options.shiftOctaveDown !== undefined) {
+    sec.overrideBassShiftOctave = options.shiftOctaveDown;
+  }
+  if (options.sourceLabel !== undefined) {
+    sec.overrideBassSourceLabel = options.sourceLabel;
+  }
+
+  const shiftOctave = sec.overrideBassShiftOctave ?? true;
+  if (options.bassLockMode === 'midi_override') {
+    const sourceNotes =
+      options.rawNotes !== undefined
+        ? options.rawNotes
+        : sec.overrideBassNotes ?? sec.unisonRiff?.cleanedBassNotes ?? null;
+    if (sourceNotes && sourceNotes.length > 0) {
+      sec.overrideBassNotes = normalizeOverrideBassNotes(sourceNotes, sec.bars, {
+        shiftOctaveDown: shiftOctave,
+        minDurationTicks: 60,
+      });
+    } else {
+      sec.bassLockMode = 'auto';
+      sec.overrideBassNotes = null;
+    }
+  } else if (options.rawNotes === null) {
+    sec.overrideBassNotes = null;
+  }
+
+  const nextState = cloneBandState(bandState);
+  const prevVocalAvgPitch =
+    secIdx > 0
+      ? getAverageVocalPitch(
+          nextState.cellsBySection[nextSong.sections[secIdx - 1].id]
+        )
+      : undefined;
+
+  nextState.cellsBySection[sectionId] = generateSectionCells(
+    nextSong,
+    sec,
+    secIdx,
+    nextState.cellsBySection[sectionId],
+    6810 + secIdx * 31,
+    {
+      newSeeds: false,
+      instruments: ['bass', 'keyboard', 'pad'],
+      prevVocalAvgPitch,
+    }
+  );
+
+  return { song: nextSong, bandState: nextState };
+}
+
+/**
+ * Infers a provisional power-chord progression (e.g. "E5 | F5 | G5 | E5") from
+ * the section's overrideBassNotes (or unisonRiff bass notes) and locks it into customChordsText.
+ */
+export function inferCustomChordsFromOverrideBass(
+  song: SongConfig,
+  bandState: BandState,
+  sectionId: string
+): { song: SongConfig; bandState: BandState; inferredText: string } {
+  const sec = song.sections.find((s) => s.id === sectionId);
+  if (!sec) return { song, bandState, inferredText: '' };
+
+  const sourceNotes =
+    sec.overrideBassNotes && sec.overrideBassNotes.length > 0
+      ? sec.overrideBassNotes
+      : sec.unisonRiff?.cleanedBassNotes ?? [];
+  if (sourceNotes.length === 0) {
+    return { song, bandState, inferredText: '' };
+  }
+
+  const inferredText = inferPowerChordProgressionFromBassNotes(
+    sourceNotes,
+    sec.bars
+  );
+  if (!inferredText) {
+    return { song, bandState, inferredText: '' };
+  }
+
+  const res = setSectionChordLock(song, bandState, sectionId, {
+    chordLockMode: 'custom',
+    customChordsText: inferredText,
+  });
+  return {
+    song: res.song,
+    bandState: res.bandState,
+    inferredText,
   };
 }

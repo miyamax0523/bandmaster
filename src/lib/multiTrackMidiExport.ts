@@ -18,6 +18,7 @@ import {
   buildMidiFile,
   buildMTrk,
   createControlChangeEvent,
+  createKeySignatureEvent,
   createMarkerEvent,
   createNoteOffEvent,
   createNoteOnEvent,
@@ -28,6 +29,7 @@ import {
   createTimeSignatureEvent,
   createTrackNameEvent,
   isAsciiString,
+  keyToSharpsFlats,
   type MidiTrackEvent,
 } from './midiWriter';
 import { countTotalActiveNotes, selectSongTracks } from './noteSelector';
@@ -36,6 +38,7 @@ export interface MidiExportTrackSpec {
   name: string;
   channel: number;
   program?: number;
+  keySignature?: { sf: number; mi: 0 | 1 };
   rpnBendRangeSemitones?: 2 | 4;
   pitchBends?: PitchBendEvent[];
   controlChanges?: MidiControlChangeEvent[];
@@ -62,10 +65,12 @@ export interface MultiTrackMidiExportResult {
 }
 
 function buildConductorTrack(song: SongConfig): Uint8Array {
+  const { sf, mi } = keyToSharpsFlats(song.key, song.scale);
   const events: MidiTrackEvent[] = [
     createTrackNameEvent(0, 'Conductor'),
     createTempoEvent(0, song.bpm),
     createTimeSignatureEvent(0, 4, 2, 24, 8),
+    createKeySignatureEvent(0, sf, mi),
   ];
 
   const typeCounts = new Map<string, number>();
@@ -90,6 +95,11 @@ function buildConductorTrack(song: SongConfig): Uint8Array {
 
 function buildPerformanceTrack(spec: MidiExportTrackSpec): Uint8Array {
   const events: MidiTrackEvent[] = [createTrackNameEvent(0, spec.name)];
+  if (spec.keySignature !== undefined) {
+    events.push(
+      createKeySignatureEvent(0, spec.keySignature.sf, spec.keySignature.mi)
+    );
+  }
   if (spec.program !== undefined) {
     events.push(createProgramChangeEvent(0, spec.channel, spec.program));
   }
@@ -180,6 +190,7 @@ export function buildVocalSmfTrack(
     name: 'Vocal',
     channel,
     program,
+    keySignature: target === 'voisona_clean_smf' ? { sf: 0, mi: 0 } : undefined,
     rpnBendRangeSemitones:
       target === 'cubase_smf_expressive' ? bendRangeSemitones : undefined,
     pitchBends: target === 'cubase_smf_expressive' ? pitchBends : undefined,
@@ -221,9 +232,18 @@ export function exportMultiTrackMidi(
     const has4 = rawGenVocal.some(
       (n) => n.hasFall && n.fallConfig?.bendRangeSemitones === 4
     );
+    const vocalGenreHint = `${song.sections[0]?.patternPresets?.vocal ?? ''} ${song.members.vocal?.patternPreset ?? ''} ${song.title ?? ''}`.toLowerCase();
+    const genreDefaultBendRange: 2 | 4 =
+      vocalGenreHint.includes('shoegaze') ||
+      vocalGenreHint.includes('deftones') ||
+      vocalGenreHint.includes('mixture') ||
+      vocalGenreHint.includes('linkin')
+        ? 4
+        : 2;
     vocalBendRange = has4
       ? 4
-      : (rawGenVocal.find((n) => n.fallConfig)?.fallConfig?.bendRangeSemitones ?? 2);
+      : (rawGenVocal.find((n) => n.fallConfig)?.fallConfig?.bendRangeSemitones ??
+        genreDefaultBendRange);
     normalizedGenVocal = rawGenVocal.map((n) =>
       n.hasFall && n.fallConfig && n.fallConfig.bendRangeSemitones !== vocalBendRange
         ? {
@@ -324,10 +344,13 @@ export function exportMultiTrackMidi(
     })),
   });
 
+  const songKeySig = keyToSharpsFlats(song.key, song.scale);
+
   specs.push({
     name: 'Vocal',
     channel: TRACK_CHANNELS.vocal,
     program: 53, // Voice Oohs
+    keySignature: exportTarget === 'voisona_clean_smf' ? songKeySig : undefined,
     rpnBendRangeSemitones:
       exportTarget === 'cubase_smf_expressive' && adaptedVocal.length > 0
         ? vocalBendRange
@@ -366,6 +389,7 @@ export function exportMultiTrackMidi(
       name: 'Vocal Harmony',
       channel: TRACK_CHANNELS.vocalHarmony,
       program: 53, // Voice Oohs
+      keySignature: exportTarget === 'voisona_clean_smf' ? songKeySig : undefined,
       notes: adaptedHarmony,
     });
   }

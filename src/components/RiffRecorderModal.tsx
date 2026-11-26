@@ -37,6 +37,11 @@ interface RiffRecorderModalProps {
   scale?: ScaleType;
   onStopPreviewPlayback: () => void;
   onSave?: (riff: UnisonRiffData) => void;
+  onSaveBassOverride?: (
+    notes: MidiNote[],
+    sourceLabel: string,
+    shiftOctaveDown: boolean
+  ) => void;
   onSaveVocal?: (melody: VocalMelodyData) => void;
   onClose: () => void;
 }
@@ -61,6 +66,7 @@ export function RiffRecorderModal({
   scale = 'Minor',
   onStopPreviewPlayback,
   onSave,
+  onSaveBassOverride,
   onSaveVocal,
   onClose,
 }: RiffRecorderModalProps) {
@@ -671,6 +677,26 @@ export function RiffRecorderModal({
           >
             キャンセル
           </button>
+          {!isVocal && onSaveBassOverride && (
+            <button
+              type="button"
+              className="btn btn-accent"
+              disabled={isBusy || activeNotes.length === 0}
+              onClick={() => {
+                const cleaned = activeNotes.map((n) => ({
+                  pitch: Math.min(55, Math.max(28, n.pitch)),
+                  velocity: Math.min(127, Math.max(1, n.velocity)),
+                  startTick: n.startTick,
+                  durationTicks: n.durationTicks,
+                  channel: 0,
+                }));
+                onSaveBassOverride(cleaned, sourceName, false);
+              }}
+              title="Basic Pitch / MIDI 変換結果をベースパートとして優先ロックし、鍵盤・PADのLIL判定へ連動"
+            >
+              🔒 ベース（ユニゾン）として固定適用
+            </button>
+          )}
           <button
             type="button"
             className="btn btn-primary"

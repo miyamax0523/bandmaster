@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react';
+import { midiToSpnLabel, VOCAL_VOICE_PROFILES } from '../engines/musicCore';
 import { KEY_NAMES } from '../lib/chordUtils';
 import type { MasterGenreId } from '../lib/masterGenres';
-import type { ScaleType, SongConfig } from '../types/song';
+import type { ScaleType, SongConfig, VocalVoicePresetId } from '../types/song';
 import {
   buildSongFromQuickSetup,
   QUICK_CHORD_PRESETS,
@@ -53,6 +54,15 @@ export function QuickGenerateModal({
   const [chordPreset, setChordPreset] = useState<QuickChordPresetId>('auto_by_genre');
   const [customChordsText, setCustomChordsText] = useState<string>('Fmaj7 G6 Em7 Am7');
   const [includeAnticipation, setIncludeAnticipation] = useState<boolean>(true);
+  const [voiceProfileId, setVoiceProfileId] = useState<VocalVoicePresetId>(
+    initialSong.vocalVoiceProfileId ?? 'chisa_jp'
+  );
+  const [customMinMidi, setCustomMinMidi] = useState<number>(
+    initialSong.vocalCustomMinMidi ?? 55
+  );
+  const [customMaxMidi, setCustomMaxMidi] = useState<number>(
+    initialSong.vocalCustomMaxMidi ?? 74
+  );
 
   const templatesForLength = useMemo(
     () => TEMPLATE_LIST.filter((t) => t.lengthId === songLength),
@@ -101,6 +111,9 @@ export function QuickGenerateModal({
         chordPreset,
         customChordsText: chordPreset === 'custom' ? customChordsText : undefined,
         includeAnticipation,
+        vocalVoiceProfileId: voiceProfileId,
+        vocalCustomMinMidi: customMinMidi,
+        vocalCustomMaxMidi: Math.max(customMinMidi + 12, customMaxMidi),
       },
       seed
     );
@@ -309,6 +322,73 @@ export function QuickGenerateModal({
                 onChange={(e) => setIncludeAnticipation(e.target.checked)}
               />
             </label>
+
+            <label
+              className="field"
+              title="VoiSona基準 (C4=60) によるボーカル音域設定（初期値: 知声 G3–D5）"
+            >
+              <span>6. ボーカル音域（VoiSona基準 C4=60）</span>
+              <select
+                value={voiceProfileId}
+                onChange={(e) =>
+                  setVoiceProfileId(e.target.value as VocalVoicePresetId)
+                }
+                aria-label="ボーカルボイスプリセット"
+              >
+                <option value="chisa_jp">{VOCAL_VOICE_PROFILES.chisa_jp.label}</option>
+                <option value="female_high">
+                  {VOCAL_VOICE_PROFILES.female_high.label}
+                </option>
+                <option value="male_rock">{VOCAL_VOICE_PROFILES.male_rock.label}</option>
+                <option value="custom">カスタム</option>
+              </select>
+            </label>
+
+            {voiceProfileId === 'custom' && (
+              <div className="quick-gen-row-2">
+                <label className="field" title="VoiSona基準 (C4=60)">
+                  <span>Min ({midiToSpnLabel(customMinMidi)})</span>
+                  <select
+                    value={customMinMidi}
+                    aria-label="カスタムボーカル最低音"
+                    onChange={(e) => {
+                      const nextMin = Number(e.target.value);
+                      setCustomMinMidi(nextMin);
+                      if (customMaxMidi < nextMin + 12) {
+                        setCustomMaxMidi(Math.min(88, nextMin + 12));
+                      }
+                    }}
+                  >
+                    {Array.from({ length: 37 }, (_, i) => 40 + i).map((m) => (
+                      <option key={m} value={m}>
+                        {midiToSpnLabel(m)} (MIDI {m})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field" title="VoiSona基準 (C4=60)">
+                  <span>Max ({midiToSpnLabel(Math.max(customMinMidi + 12, customMaxMidi))})</span>
+                  <select
+                    value={Math.max(customMinMidi + 12, customMaxMidi)}
+                    aria-label="カスタムボーカル最高音"
+                    onChange={(e) =>
+                      setCustomMaxMidi(
+                        Math.max(customMinMidi + 12, Number(e.target.value))
+                      )
+                    }
+                  >
+                    {Array.from(
+                      { length: Math.max(1, 88 - (customMinMidi + 12) + 1) },
+                      (_, i) => customMinMidi + 12 + i
+                    ).map((m) => (
+                      <option key={m} value={m}>
+                        {midiToSpnLabel(m)} (MIDI {m})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            )}
           </div>
         </div>
 

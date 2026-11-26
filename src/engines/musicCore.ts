@@ -5,6 +5,9 @@ import {
   type MidiNote,
   type ScaleType,
   type Section,
+  type SongConfig,
+  type VocalVoicePresetId,
+  type VocalVoiceProfile,
 } from '../types/song';
 import {
   getActiveChordAtTick,
@@ -56,6 +59,138 @@ export function deriveSeed(masterSeed: number, salt: string): number {
     h = Math.imul(h, 16777619) >>> 0;
   }
   return h >>> 0;
+}
+
+/**
+ * Stage × Section deterministic sub-seed separator (FNV-1a 32-bit).
+ * Guarantees that changing keyboard or voice profile never alters Stage 1 harmony.
+ */
+export function deriveSubSeed(masterSeed: number, tag: string): number {
+  return deriveSeed(masterSeed, tag);
+}
+
+export function createStageRng(masterSeed: number, tag: string): () => number {
+  return mulberry32(deriveSubSeed(masterSeed, tag));
+}
+
+// ===========================================================================
+// SPN (C4 = 60) Pitch Naming & VocalVoiceProfile Presets (Default: chisa_jp)
+// ===========================================================================
+const SPN_NOTE_NAMES = [
+  'C',
+  'C#',
+  'D',
+  'Eb',
+  'E',
+  'F',
+  'F#',
+  'G',
+  'Ab',
+  'A',
+  'Bb',
+  'B',
+] as const;
+
+/** Formats MIDI note number in Scientific Pitch Notation (VoiSona standard: C4 = 60). */
+export function midiToSpnLabel(midi: number): string {
+  const m = clamp(Math.round(midi), 0, 127);
+  const pc = m % 12;
+  const octave = Math.floor(m / 12) - 1; // MIDI 60 -> 60/12 - 1 = 4 -> C4
+  return `${SPN_NOTE_NAMES[pc]}${octave}`;
+}
+
+export const VOCAL_VOICE_PROFILES: Record<
+  Exclude<VocalVoicePresetId, 'custom'>,
+  VocalVoiceProfile
+> = {
+  chisa_jp: {
+    id: 'chisa_jp',
+    label: '知声 (G3–D5)',
+    minMidi: 55, // G3
+    maxMidi: 74, // D5
+    optimalTessituraCenter: 64, // E4
+    minQuantizeTicks: 60,
+    maxPhraseDurationSec: 3.5,
+  },
+  female_high: {
+    id: 'female_high',
+    label: '女声高め (Ab3–F5)',
+    minMidi: 56, // Ab3
+    maxMidi: 77, // F5
+    optimalTessituraCenter: 66, // F#4
+    minQuantizeTicks: 60,
+    maxPhraseDurationSec: 3.5,
+  },
+  male_rock: {
+    id: 'male_rock',
+    label: '男声ロック (C#3–C#5)',
+    minMidi: 49, // C#3
+    maxMidi: 73, // C#5
+    optimalTessituraCenter: 61, // C#4
+    minQuantizeTicks: 60,
+    maxPhraseDurationSec: 3.6,
+  },
+};
+
+export function buildCustomVocalVoiceProfile(
+  rawMinMidi = 55,
+  rawMaxMidi = 74
+): VocalVoiceProfile {
+  const minMidi = clamp(Math.round(rawMinMidi), 36, 76);
+  // Enforce >= 1 octave (12 semitones) guard
+  const maxMidi = clamp(
+    Math.max(minMidi + 12, Math.round(rawMaxMidi)),
+    minMidi + 12,
+    88
+  );
+  const optimalTessituraCenter = Math.round((minMidi + maxMidi) / 2);
+  return {
+    id: 'custom',
+    label: `カスタム (${midiToSpnLabel(minMidi)}–${midiToSpnLabel(maxMidi)})`,
+    minMidi,
+    maxMidi,
+    optimalTessituraCenter,
+    minQuantizeTicks: 60,
+    maxPhraseDurationSec: 3.5,
+  };
+}
+
+export function resolveVocalVoiceProfile(
+  song?: Pick<
+    SongConfig,
+    'vocalVoiceProfileId' | 'vocalCustomMinMidi' | 'vocalCustomMaxMidi'
+  > | null
+): VocalVoiceProfile {
+  const id = song?.vocalVoiceProfileId ?? 'chisa_jp';
+  if (id === 'custom') {
+    return buildCustomVocalVoiceProfile(
+      song?.vocalCustomMinMidi ?? 55,
+      song?.vocalCustomMaxMidi ?? 74
+    );
+  }
+  return VOCAL_VOICE_PROFILES[id] ?? VOCAL_VOICE_PROFILES.chisa_jp;
+}
+
+export function computeVocalMinMidiByBar(
+  vocalNotes: readonly MidiNote[] | undefined,
+  bars: number
+): Array<number | null> {
+  const totalBars = Math.max(1, bars);
+  const result: Array<number | null> = Array.from({ length: totalBars }, () => null);
+  if (!vocalNotes || vocalNotes.length === 0) return result;
+
+  for (const n of vocalNotes) {
+    const startBar = Math.max(0, Math.floor(n.startTick / BAR_TICKS));
+    const endTick = Math.max(n.startTick + 1, n.startTick + n.durationTicks);
+    const endBar = Math.min(totalBars - 1, Math.floor((endTick - 1) / BAR_TICKS));
+    for (let b = startBar; b <= endBar; b++) {
+      if (b >= 0 && b < totalBars) {
+        const curr = result[b];
+        result[b] = curr === null ? n.pitch : Math.min(curr, n.pitch);
+      }
+    }
+  }
+  return result;
 }
 
 export function mapTickToSubdivision(
@@ -692,3 +827,36 @@ export function flattenToOrderedSmfEvents(
       a.data1 - b.data1
   );
 }
+
+export {
+  analyzeParsedChordToEvent,
+  buildSectionChordEvents,
+  evaluateSpiralArrayMetrics,
+  generateGenreHarmonySection,
+  pitchClassToFifthIndex,
+} from './harmonyEngine';
+
+export {
+  applyChorusGuitarHeadroom,
+  computeBassIntegratedLilPenalty,
+  generateChordEventVoicingCandidates,
+  GUITAR_CHORUS_GENRES,
+  GUITAR_HEADROOM_MAX_MIDI,
+  GUITAR_HEADROOM_MIN_MIDI,
+  solveSectionVoicingsViterbi,
+  type SolveSectionVoicingsOptions,
+  type VoicingArchetype,
+  type VoicingCandidate,
+} from './voicingOptimizer';
+
+export {
+  parseCustomChordProgression,
+  serializeChordSlotsToText,
+  type CustomChordParseResult,
+} from './customChordParser';
+
+export {
+  suggestChords,
+  type ChordSuggestion,
+  type ChordSuggestionCategory,
+} from './chordSuggester';

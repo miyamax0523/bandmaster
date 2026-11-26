@@ -8,6 +8,8 @@ import {
   duplicateSectionInSong,
   generateAllSections,
   generateSectionCells,
+  inferCustomChordsFromOverrideBass as applyInferChordsFromBass,
+  lockCurrentChordsToCustom as applyLockChordsToCustom,
   pastePartPhraseToSection,
   pushUndoSnapshot,
   regenerateInstrumentCell,
@@ -16,6 +18,9 @@ import {
   selectInstrumentTake,
   setSectionAccompanimentSkeleton as applySectionAccompanimentSkeleton,
   setSectionAccompanimentTake as applySectionAccompanimentTake,
+  setSectionBassMidiOverride as applySectionBassMidiOverride,
+  setSectionChordLock as applySectionChordLock,
+  setSongVocalVoiceProfile as applySongVocalVoiceProfile,
   setSectionBassChromatic,
   setSectionBassFillEnabled,
   setSectionDrumBreakEnabled as applySectionDrumBreakEnabled,
@@ -55,9 +60,11 @@ import {
   createDefaultEnabledParts,
   createDefaultPartPresets,
   type AccompanimentTake,
+  type BassLockMode,
   type BassSkeletonId,
   type BeatPatternId,
   type ChapterInternalForm,
+  type ChordLockMode,
   type ChordSlot,
   type CopiedPartPhrase,
   type DensityLevel,
@@ -68,6 +75,7 @@ import {
   type KeyboardSkeletonId,
   type KickMode,
   type KickTake,
+  type MidiNote,
   type PadSkeletonId,
   type MemberConfig,
   type Section,
@@ -76,6 +84,7 @@ import {
   type UnisonRiffData,
   type VocalHarmonyMode,
   type VocalMelodyData,
+  type VocalVoicePresetId,
 } from '../types/song';
 import type { BandState } from '../types/track';
 
@@ -749,6 +758,62 @@ export function useBandGenerator() {
     [song, bandState, commitChange]
   );
 
+  const changeVocalVoiceProfile = useCallback(
+    (patch: {
+      vocalVoiceProfileId?: VocalVoicePresetId;
+      vocalCustomMinMidi?: number;
+      vocalCustomMaxMidi?: number;
+    }) => {
+      const res = applySongVocalVoiceProfile(song, bandState, patch);
+      commitChange(res.song, res.bandState, true, true);
+    },
+    [song, bandState, commitChange]
+  );
+
+  const lockSectionChordsToCustom = useCallback(
+    (sectionId: string) => {
+      const res = applyLockChordsToCustom(song, bandState, sectionId);
+      commitChange(res.song, res.bandState, true, true);
+    },
+    [song, bandState, commitChange]
+  );
+
+  const changeSectionChordLock = useCallback(
+    (
+      sectionId: string,
+      patch: { chordLockMode?: ChordLockMode; customChordsText?: string }
+    ) => {
+      const res = applySectionChordLock(song, bandState, sectionId, patch);
+      commitChange(res.song, res.bandState, true, true);
+      return res.parseErrors;
+    },
+    [song, bandState, commitChange]
+  );
+
+  const changeSectionBassMidiOverride = useCallback(
+    (
+      sectionId: string,
+      options: {
+        bassLockMode: BassLockMode;
+        rawNotes?: readonly MidiNote[] | null;
+        sourceLabel?: string;
+        shiftOctaveDown?: boolean;
+      }
+    ) => {
+      const res = applySectionBassMidiOverride(song, bandState, sectionId, options);
+      commitChange(res.song, res.bandState, true, true);
+    },
+    [song, bandState, commitChange]
+  );
+
+  const inferSectionChordsFromBass = useCallback(
+    (sectionId: string) => {
+      const res = applyInferChordsFromBass(song, bandState, sectionId);
+      commitChange(res.song, res.bandState, true, true);
+    },
+    [song, bandState, commitChange]
+  );
+
   const copyTimelineToAllSections = useCallback(
     (sourceSectionId: string) => {
       const src = song.sections.find((s) => s.id === sourceSectionId);
@@ -820,6 +885,11 @@ export function useBandGenerator() {
     setSectionDrumKickTake,
     setSectionAccompanimentSkeleton,
     setSectionAccompanimentTake,
+    changeVocalVoiceProfile,
+    lockSectionChordsToCustom,
+    changeSectionChordLock,
+    changeSectionBassMidiOverride,
+    inferSectionChordsFromBass,
     copyTimelineToAllSections,
     pastePartPhrase,
     loadSnapshotData,

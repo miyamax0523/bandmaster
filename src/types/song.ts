@@ -80,6 +80,61 @@ export interface MidiControlChangeEvent {
   value: number; // 0..127
   channel?: number;
 }
+
+export type VocalVoicePresetId =
+  | 'chisa_jp'
+  | 'female_high'
+  | 'male_rock'
+  | 'custom';
+
+export interface VocalVoiceProfile {
+  readonly id: VocalVoicePresetId;
+  readonly label: string;
+  readonly minMidi: number; // SPN C4 = 60
+  readonly maxMidi: number; // SPN C4 = 60
+  readonly optimalTessituraCenter: number;
+  readonly minQuantizeTicks: 60;
+  readonly maxPhraseDurationSec: number;
+}
+
+export type HarmonicFunction = 'T' | 'SD' | 'D' | 'MODAL' | 'CHROMATIC';
+
+export type ChordScaleName =
+  | 'ionian'
+  | 'dorian'
+  | 'phrygian'
+  | 'lydian'
+  | 'mixolydian'
+  | 'aeolian'
+  | 'locrian'
+  | 'harmonic_minor'
+  | 'melodic_minor'
+  | 'lydian_dominant'
+  | 'altered'
+  | 'half_whole_dim'
+  | 'phrygian_dominant';
+
+export interface ChordEvent {
+  readonly startTick: number;
+  readonly durationTicks: number;
+  readonly localKeyRootPc: number;
+  readonly localKeyMode: ScaleType;
+  readonly romanSymbol: string;
+  readonly chordSymbol: string;
+  readonly rootPc: number;
+  readonly bassPc: number;
+  readonly quality: string;
+  readonly harmonicFunction: HarmonicFunction;
+  readonly isNonDiatonic: boolean;
+  readonly fifthLineIndices: readonly number[]; // F=-1, C=0, G=1, D=2...
+  readonly chordTonePcs: readonly number[];
+  readonly guideTonePcs: readonly number[]; // 3rd & 7th
+  readonly availableTensionPcs: readonly number[];
+  readonly avoidPcs: readonly number[];
+  readonly scalePcs: readonly number[];
+  readonly hookPcs: readonly number[]; // Non-diatonic characteristic pitch classes
+  readonly chordScale: ChordScaleName;
+}
 export type Bass808Behavior = 'octaveUp' | 'tacet' | 'normal';
 export type TakeStyle = 'A' | 'B' | 'C';
 export type InstrumentType = 'drums' | 'bass' | 'keyboard' | 'pad' | 'vocal';
@@ -274,6 +329,9 @@ export function getDefaultDrumFillEnabled(
   return false;
 }
 
+export type ChordLockMode = 'auto' | 'custom';
+export type BassLockMode = 'auto' | 'midi_override';
+
 export interface Section {
   id: string;
   type: SectionType;
@@ -281,6 +339,12 @@ export interface Section {
   bars: number; // 1..32
   energy: EnergyLevel;
   kickMode: KickMode;
+  chordLockMode?: ChordLockMode; // default 'auto'
+  customChordsText?: string; // e.g. "E5 | F5 | G5 F5 | E5"
+  bassLockMode?: BassLockMode; // default 'auto'
+  overrideBassNotes?: MidiNote[] | null; // 480 TPQN normalized, E1(28)..G3(55)
+  overrideBassSourceLabel?: string;
+  overrideBassShiftOctave?: boolean; // default true for guitar -> bass octave down
   drumAnticipationMode?: DrumAnticipationMode; // default 'sync'
   drumPatternId?: BeatPatternId | 'auto'; // default 'auto'
   drumKickTake?: KickTake | 'auto'; // default 'auto'
@@ -325,6 +389,9 @@ export interface SongConfig {
   swingTarget: SwingTarget;
   exportOnlyActiveTracks: boolean;
   split808KickTrack: boolean;
+  vocalVoiceProfileId?: VocalVoicePresetId; // default 'chisa_jp'
+  vocalCustomMinMidi?: number; // SPN C4=60, default 55 (G3)
+  vocalCustomMaxMidi?: number; // SPN C4=60, default 74 (D5)
   uploadedDrumLoop?: DrumLoopData;
   members: Record<InstrumentType, MemberConfig>;
   sections: Section[];

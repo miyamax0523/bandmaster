@@ -3,6 +3,7 @@ import {
   TRACK_CHANNELS,
   type ChapterInternalForm,
   type ChapterRole,
+  type ChordEvent,
   type EightBarScheme,
   type EnergyLevel,
   type ExportTarget,
@@ -13,6 +14,7 @@ import {
   type NoteRole,
   type ScaleType,
   type VocalHarmonyMode,
+  type VocalVoiceProfile,
 } from '../types/song';
 import { getActiveChordAtTick } from '../lib/chordTimeline';
 import {
@@ -26,6 +28,12 @@ import {
   type MasterGenreId,
 } from '../lib/masterGenres';
 import { createSeededRng } from '../lib/random';
+import { buildSectionChordEvents } from './harmonyEngine';
+import {
+  computeVocalMinMidiByBar,
+  deriveSubSeed,
+  resolveVocalVoiceProfile,
+} from './musicCore';
 import type { EngineInput } from './types';
 import {
   GENRE_VOCAL_GRAMMARS,
@@ -1091,31 +1099,120 @@ export function buildFallPitchBendEvents(
   return events;
 }
 
+export const VOISONA_QUANTIZE_TICKS = 60 as const;
+
+export function validateVoisonaVocalNotes(
+  notes: readonly { startTick: number; durationTicks: number }[]
+): { valid: boolean; errors: string[] } {
+  const errors: string[] = [];
+  for (let i = 0; i < notes.length; i++) {
+    const curr = notes[i];
+    if (curr.startTick % VOISONA_QUANTIZE_TICKS !== 0) {
+      errors.push(
+        `Note ${i} startTick (${curr.startTick}) is not quantized to ${VOISONA_QUANTIZE_TICKS} ticks`
+      );
+    }
+    if (
+      curr.durationTicks < VOISONA_QUANTIZE_TICKS ||
+      curr.durationTicks % VOISONA_QUANTIZE_TICKS !== 0
+    ) {
+      errors.push(
+        `Note ${i} durationTicks (${curr.durationTicks}) is not a positive multiple of ${VOISONA_QUANTIZE_TICKS} ticks`
+      );
+    }
+    if (i + 1 < notes.length) {
+      const next = notes[i + 1];
+      const end = curr.startTick + curr.durationTicks;
+      if (end > next.startTick) {
+        errors.push(
+          `Note ${i} (${curr.startTick}..${end}) overlaps Note ${i + 1} (${next.startTick})`
+        );
+      }
+    }
+  }
+  return { valid: errors.length === 0, errors };
+}
+
 export function adaptNotesForExportTarget(
   notes: readonly GeneratedVocalNote[],
   target: ExportTarget
 ): { notes: GeneratedVocalNote[]; pitchBends: PitchBendEvent[] } {
   if (target === 'voisona_clean_smf') {
     const BREATH_THRESHOLD_TICKS = 180;
-    const cleanNotes = notes.map((n, i) => {
-      const next = notes[i + 1];
-      const gap = next
-        ? next.startTick - (n.startTick + n.gridDuration)
-        : PHRASE_2BAR_TICKS;
-      const rawFinalDur =
-        next && gap < BREATH_THRESHOLD_TICKS
-          ? next.startTick - n.startTick
-          : n.gridDuration;
-      const finalDur = next
-        ? Math.max(120, Math.min(rawFinalDur, next.startTick - n.startTick))
-        : Math.max(120, rawFinalDur);
+    const Q = VOISONA_QUANTIZE_TICKS; // 60 ticks (1/32 note at 480 TPQN)
+    if (notes.length === 0) {
+      return { notes: [], pitchBends: [] };
+    }
+
+    // 1. Snap startTicks to strict 60-tick grid and deduplicate any colliding starts
+    const snappedStarts: Array<{ src: GeneratedVocalNote; qStart: number }> = [];
+    for (const n of notes) {
+      const qStart = Math.max(0, Math.round(n.startTick / Q) * Q);
+      if (
+        snappedStarts.length > 0 &&
+        qStart <= snappedStarts[snappedStarts.length - 1].qStart
+      ) {
+        const prevStart = snappedStarts[snappedStarts.length - 1].qStart;
+        // Shift by +60 if room exists before next note, else skip duplicate onset
+        const shifted = prevStart + Q;
+        if (n.startTick + n.gridDuration > shifted) {
+          snappedStarts.push({ src: n, qStart: shifted });
+        }
+        continue;
+      }
+      snappedStarts.push({ src: n, qStart });
+    }
+
+    // 2. Snap durations to multiples of 60 ticks, glue micro-gaps < 180t, and guarantee zero overlap
+    const cleanNotes: GeneratedVocalNote[] = snappedStarts.map((item, i) => {
+      const { src, qStart } = item;
+      const next = snappedStarts[i + 1];
+      const qGrid = Math.max(120, Math.round(src.gridDuration / Q) * Q);
+      if (!next) {
+        return {
+          ...src,
+          startTick: qStart,
+          gridDuration: qGrid,
+          gateDuration: qGrid,
+          hasFall: false,
+          fallConfig: undefined,
+        };
+      }
+
+      const availSpan = Math.max(Q, next.qStart - qStart);
+      if (availSpan <= 180) {
+        // Span is <= 180 ticks: glue directly to next onset with zero gap & zero overlap
+        return {
+          ...src,
+          startTick: qStart,
+          gridDuration: availSpan,
+          gateDuration: availSpan,
+          hasFall: false,
+          fallConfig: undefined,
+        };
+      }
+
+      const rawGap = next.qStart - (qStart + qGrid);
+      let finalDur: number;
+      if (rawGap < BREATH_THRESHOLD_TICKS) {
+        // Micro-gap < 180 ticks -> legato glue to next note onset
+        finalDur = availSpan;
+      } else {
+        // Pure breath gap >= 180 ticks -> preserve quantized duration (multiple of 60)
+        finalDur = Math.max(120, Math.min(qGrid, availSpan - BREATH_THRESHOLD_TICKS));
+        finalDur = Math.max(Q, Math.floor(finalDur / Q) * Q);
+      }
+
       return {
-        ...n,
+        ...src,
+        startTick: qStart,
+        gridDuration: Math.max(finalDur, Math.min(qGrid, availSpan)),
         gateDuration: finalDur,
         hasFall: false,
         fallConfig: undefined,
       };
     });
+
     return { notes: cleanNotes, pitchBends: [] };
   }
 
@@ -2340,11 +2437,748 @@ export function generateVocalNotes(input: EngineInput): MidiNote[] {
   if (isLegacyPureRap) {
     const keySemitone = noteNameToSemitone(song.key);
     const scalePcs = new Set(getScalePitchClasses(song.key, song.scale));
-    return generateLegacyRapPresetNotes(input, preset, scalePcs, keySemitone);
+    const voice = input.vocalVoiceProfile ?? resolveVocalVoiceProfile(song);
+    const rawRap = generateLegacyRapPresetNotes(input, preset, scalePcs, keySemitone);
+    return rawRap.map((n) => ({
+      ...n,
+      pitch: fitNoteIntoVoiceRange(n.pitch, voice.minMidi, voice.maxMidi, scalePcs),
+    }));
   }
 
-  // Execute Dialectical 3-Chapter x 2-Form Vocal Melody Pipeline
-  return generateDialecticalVocal(input).midiNotes;
+  // Execute Phase 2 Harmonic & Voice-Profile Aware Dialectical Vocal Pipeline
+  return generateHarmonicVocalResult(input).midiNotes;
+}
+
+// ===========================================================================
+// Phase 2: Chord-Aware & Voice-Profile Aware Harmonic Vocal Engine
+// ===========================================================================
+
+export interface HarmonicVocalGenerationResult {
+  readonly genreId: MasterGenre;
+  readonly voiceProfile: VocalVoiceProfile;
+  readonly chordEvents: readonly ChordEvent[];
+  readonly scheme: EightBarScheme;
+  readonly thesisForm: ChapterInternalForm;
+  readonly chapters: readonly DialecticalChapterPlan[];
+  readonly notes: GeneratedVocalNote[];
+  readonly midiNotes: MidiNote[];
+  readonly vocalMinMidiByBar: Array<number | null>;
+}
+
+/**
+ * Resolves the effective ChordEvent governing a vocal note, including <= 240-tick
+ * syncopated anticipation lookahead across upcoming chord boundaries.
+ */
+export function resolveEffectiveChord(
+  noteStartTick: number,
+  noteDurationTicks: number,
+  chordEvents: readonly ChordEvent[]
+): ChordEvent {
+  if (chordEvents.length === 0) {
+    throw new Error('resolveEffectiveChord requires at least one ChordEvent');
+  }
+  const safeTick = Math.max(0, noteStartTick);
+  const safeEnd = safeTick + Math.max(1, noteDurationTicks);
+
+  let activeIdx = 0;
+  for (let i = 0; i < chordEvents.length; i++) {
+    const ev = chordEvents[i];
+    if (safeTick >= ev.startTick) {
+      activeIdx = i;
+    } else {
+      break;
+    }
+  }
+
+  // Anticipation lookahead: if note starts within <= 240 ticks before next chord
+  // AND crosses or touches the upcoming chord boundary, target the upcoming chord.
+  if (activeIdx + 1 < chordEvents.length) {
+    const nextChord = chordEvents[activeIdx + 1];
+    const leadTicks = nextChord.startTick - safeTick;
+    if (leadTicks > 0 && leadTicks <= 240 && safeEnd >= nextChord.startTick) {
+      return nextChord;
+    }
+  }
+
+  return chordEvents[activeIdx];
+}
+
+/**
+ * Attenuates 16th-note (120t) syncopated anticipation probability at fast tempos (BPM > 120).
+ */
+export function computeAnticipationProbability(
+  baseProb: number,
+  bpm: number,
+  gridTicks: number
+): number {
+  if (bpm <= 120) return baseProb;
+  if (gridTicks <= 120) {
+    const factor = Math.max(0.15, 1 - (bpm - 120) / 75);
+    return baseProb * factor;
+  }
+  if (gridTicks <= 240 && bpm >= 165) {
+    return baseProb * 0.75;
+  }
+  return baseProb;
+}
+
+function fitNoteIntoVoiceRange(
+  pitch: number,
+  minMidi: number,
+  maxMidi: number,
+  scalePcs: ReadonlySet<number>
+): number {
+  let p = Math.round(pitch);
+  while (p < minMidi) p += 12;
+  while (p > maxMidi) p -= 12;
+  if (p >= minMidi && p <= maxMidi && scalePcs.has(p % 12)) {
+    return p;
+  }
+  let best = Math.max(minMidi, Math.min(maxMidi, p));
+  let bestDist = Infinity;
+  for (let cand = minMidi; cand <= maxMidi; cand++) {
+    if (!scalePcs.has(cand % 12)) continue;
+    const d = Math.abs(cand - pitch);
+    if (d < bestDist) {
+      bestDist = d;
+      best = cand;
+    }
+  }
+  return best;
+}
+
+function sampleTopKSoftmax(
+  scored: ReadonlyArray<{ pitch: number; score: number }>,
+  topK: number,
+  temperature: number,
+  rng: () => number
+): number {
+  if (scored.length === 0) return 60;
+  const sorted = [...scored].sort((a, b) => b.score - a.score || a.pitch - b.pitch);
+  const kSlice = sorted.slice(0, Math.max(1, Math.min(topK, sorted.length)));
+  if (kSlice.length === 1 || temperature <= 0.05) {
+    return kSlice[0].pitch;
+  }
+  const maxScore = kSlice[0].score;
+  const weights = kSlice.map((c) =>
+    Math.exp(Math.max(-20, (c.score - maxScore) / temperature))
+  );
+  const sumW = weights.reduce((acc, w) => acc + w, 0);
+  if (sumW <= 0) return kSlice[0].pitch;
+
+  const r = rng() * sumW;
+  let cum = 0;
+  for (let i = 0; i < kSlice.length; i++) {
+    cum += weights[i];
+    if (r <= cum) return kSlice[i].pitch;
+  }
+  return kSlice[kSlice.length - 1].pitch;
+}
+
+export function generateHarmonicVocalResult(
+  input: EngineInput
+): HarmonicVocalGenerationResult {
+  const { song, section, seed, style, prevVocalAvgPitch } = input;
+  const genreId: MasterGenre = resolveMasterGenreForVocal(input);
+  const profile = GENRE_DIALECTICAL_PROFILES[genreId];
+  const rfProfile = RHYTHM_FIRST_GENRE_PROFILES[genreId];
+  const sectionRole = normalizeSectionRole(section.type, section.energy, section.name);
+
+  const voice = input.vocalVoiceProfile ?? resolveVocalVoiceProfile(song);
+  const chordEvents: readonly ChordEvent[] =
+    input.chordEvents && input.chordEvents.length > 0
+      ? input.chordEvents
+      : buildSectionChordEvents(section, song.key, song.scale);
+
+  // Stage-isolated deterministic RNG (independent of keyboard/pad settings)
+  const vocalSubSeed = deriveSubSeed(
+    seed,
+    `vocal:sec${input.sectionIndex}:${style}:${voice.id}:${voice.minMidi}-${voice.maxMidi}`
+  );
+  const rng = mulberry32(vocalSubSeed);
+
+  const keySemitone = noteNameToSemitone(song.key);
+  const parentScalePcs = new Set(getScalePitchClasses(song.key, song.scale));
+  const pentaOffsets =
+    song.scale === 'Minor' ? [0, 3, 5, 7, 10] : [0, 2, 4, 7, 9];
+  const pentatonicPcs = new Set(pentaOffsets.map((o) => (keySemitone + o) % 12));
+
+  // Section tessitura gradient: Verse (-2) -> Pre-Chorus (0) -> Chorus (+2, Final Chorus +3)
+  const sectionOffset =
+    sectionRole === 'chorus'
+      ? input.isFinalChorusSection
+        ? 3
+        : 2
+      : sectionRole === 'pre_chorus'
+        ? 0
+        : sectionRole === 'bridge'
+          ? section.energy === 'Low'
+            ? -2
+            : 1
+          : sectionRole === 'instrumental'
+            ? -1
+            : -2;
+
+  let sectionCenter = voice.optimalTessituraCenter + sectionOffset;
+  if (prevVocalAvgPitch !== undefined && !Number.isNaN(prevVocalAvgPitch)) {
+    sectionCenter = Math.max(
+      prevVocalAvgPitch - 1.5,
+      Math.min(prevVocalAvgPitch + 5.5, sectionCenter)
+    );
+  }
+  const safeMinCenter = Math.min(voice.maxMidi - 2, voice.minMidi + 3);
+  const safeMaxCenter = Math.max(safeMinCenter, voice.maxMidi - 3);
+  sectionCenter = Math.max(safeMinCenter, Math.min(safeMaxCenter, sectionCenter));
+
+  const schemeOverride =
+    input.vocalDialecticalScheme ?? section.vocalDialecticalScheme ?? 'auto';
+  const formOverride =
+    input.vocalChapterForm ?? section.vocalChapterForm ?? 'auto';
+  const activePreset = (
+    section.patternPresets?.vocal ??
+    section.partPresets?.vocal ??
+    song.members.vocal?.patternPreset ??
+    'auto'
+  ).trim();
+  const vocalDensity = Math.max(1.0, Math.min(5.0, section.vocalDensity ?? 3.0));
+  const sectionEndTick = section.bars * BAR_TICKS;
+
+  // Build dialectical chapter roles & forms
+  const numChapters = Math.max(1, Math.ceil(section.bars / 2));
+  const isClimaxSection = sectionRole === 'chorus' || sectionRole === 'bridge';
+  let scheme: EightBarScheme;
+  if (schemeOverride === 'T-A-T-A' || schemeOverride === 'T-A-T-S') {
+    scheme = schemeOverride;
+  } else if (section.bars === 16) {
+    scheme = 'T-A-T-S';
+  } else {
+    const prob = isClimaxSection
+      ? profile.chorusTatsProb
+      : profile.chorusTatsProb * 0.45;
+    scheme = rng() < prob ? 'T-A-T-S' : 'T-A-T-A';
+  }
+
+  const thesisForm: ChapterInternalForm =
+    formOverride === 'two_bar_continuous' ||
+    formOverride === 'one_bar_repeat_with_passing'
+      ? formOverride
+      : rng() < profile.pattern2Prob
+        ? 'one_bar_repeat_with_passing'
+        : 'two_bar_continuous';
+
+  const roles: ChapterRole[] = [];
+  if (numChapters === 8) {
+    const secondHalfFinal: ChapterRole =
+      schemeOverride === 'T-A-T-A' ? 'antithesis' : 'synthesis';
+    roles.push(
+      'thesis',
+      'antithesis',
+      'thesis',
+      'antithesis',
+      'thesis',
+      'antithesis',
+      'thesis',
+      secondHalfFinal
+    );
+  } else if (numChapters === 4) {
+    roles.push(
+      'thesis',
+      'antithesis',
+      'thesis',
+      scheme === 'T-A-T-S' ? 'synthesis' : 'antithesis'
+    );
+  } else if (numChapters === 2) {
+    roles.push('thesis', scheme === 'T-A-T-S' ? 'synthesis' : 'antithesis');
+  } else {
+    for (let c = 0; c < numChapters; c++) {
+      if (c === numChapters - 1 && numChapters >= 3 && scheme === 'T-A-T-S') {
+        roles.push('synthesis');
+      } else {
+        roles.push(c % 2 === 0 ? 'thesis' : 'antithesis');
+      }
+    }
+  }
+
+  // Reserve highest 1..2 semitones of voice range exclusively for Chorus 2nd-half climax
+  const nonClimaxMaxMidi = Math.max(voice.minMidi + 8, voice.maxMidi - 2);
+  const thesisAnchor = fitNoteIntoVoiceRange(
+    Math.round(sectionCenter),
+    voice.minMidi + 2,
+    Math.max(voice.minMidi + 2, nonClimaxMaxMidi - 2),
+    parentScalePcs
+  );
+  const thesisTop = fitNoteIntoVoiceRange(
+    thesisAnchor + 3,
+    thesisAnchor + 1,
+    nonClimaxMaxMidi,
+    parentScalePcs
+  );
+  const antiAnchor = fitNoteIntoVoiceRange(
+    thesisAnchor - 2,
+    voice.minMidi,
+    Math.max(voice.minMidi, thesisAnchor - 1),
+    parentScalePcs
+  );
+  const antiTop = fitNoteIntoVoiceRange(
+    thesisTop - 2,
+    voice.minMidi + 1,
+    Math.max(voice.minMidi + 1, thesisTop - 1),
+    parentScalePcs
+  );
+  const synthTop = fitNoteIntoVoiceRange(
+    thesisTop + 3,
+    Math.min(voice.maxMidi, thesisTop + 1),
+    sectionRole === 'chorus' ? voice.maxMidi : nonClimaxMaxMidi,
+    parentScalePcs
+  );
+  const synthAnchor = fitNoteIntoVoiceRange(
+    thesisAnchor + 2,
+    thesisAnchor,
+    Math.max(thesisAnchor, synthTop - 1),
+    parentScalePcs
+  );
+
+  const chapters: DialecticalChapterPlan[] = roles.map((role, idx) => {
+    const isRunwayToSynthesis =
+      idx + 1 < roles.length && roles[idx + 1] === 'synthesis';
+    const isStrongCadence = idx === roles.length - 1;
+    const form: ChapterInternalForm =
+      role === 'synthesis'
+        ? formOverride === 'two_bar_continuous'
+          ? 'two_bar_continuous'
+          : rng() < profile.synthesisContinuousProb
+            ? 'two_bar_continuous'
+            : 'one_bar_repeat_with_passing'
+        : formOverride === 'two_bar_continuous' ||
+            formOverride === 'one_bar_repeat_with_passing'
+          ? formOverride
+          : thesisForm;
+
+    return {
+      chapterIndex: idx,
+      startTick: idx * CHAPTER_TICKS,
+      role,
+      form,
+      anchorPitch:
+        role === 'synthesis'
+          ? synthAnchor
+          : role === 'antithesis'
+            ? antiAnchor
+            : thesisAnchor,
+      topPitch:
+        role === 'synthesis'
+          ? synthTop
+          : role === 'antithesis'
+            ? antiTop
+            : thesisTop,
+      isRunwayToSynthesis,
+      isStrongCadence,
+    };
+  });
+
+  const thesisZone1Template =
+    PATTERN2_ZONE1_TEMPLATES[
+      Math.floor(rng() * PATTERN2_ZONE1_TEMPLATES.length)
+    ];
+  const thesisContinuousTemplate =
+    PATTERN1_CONTINUOUS_TEMPLATES[
+      Math.floor(rng() * PATTERN1_CONTINUOUS_TEMPLATES.length)
+    ];
+
+  const baseVelocity =
+    sectionRole === 'chorus' || section.energy === 'High'
+      ? 104
+      : section.energy === 'Low'
+        ? 84
+        : 94;
+  const fallCfg: FallExpressionConfig = {
+    ...rfProfile.fallConfig,
+    dropSemitones: profile.fallSemitones,
+  };
+  const temperature = style === 'A' ? 0.55 : style === 'B' ? 0.75 : 0.95;
+
+  // Track reference Thesis step contour & climax peak quota
+  let referenceThesisDeltas: number[] | null = null;
+  let climaxHighCount = 0;
+  let prevNotePitch: number | undefined;
+  let prevDelta = 0;
+  let prevWasHookOrGuide = false;
+  let prevChordRootPc: number | undefined;
+  let samePitchRun = 0;
+
+  // Physiological breath tracking (continuous singing duration in ticks)
+  const maxPhraseTicks = Math.max(
+    BAR_TICKS,
+    Math.round((voice.maxPhraseDurationSec * song.bpm * TPQN) / 60)
+  );
+  let activePhraseStartTick: number | null = null;
+  let lastNoteOffTick = -BAR_TICKS;
+
+  const generatedNotes: GeneratedVocalNote[] = [];
+
+  for (let cIdx = 0; cIdx < chapters.length; cIdx++) {
+    const ch = chapters[cIdx];
+    const chEndTick = Math.min(sectionEndTick, ch.startTick + CHAPTER_TICKS);
+    const chLen = chEndTick - ch.startTick;
+
+    // Attenuate syncopated pickup when BPM > 120
+    const attenuatedProfile: GenreDialecticalProfile =
+      song.bpm > 120
+        ? {
+            ...profile,
+            allowSyncopatedPickup:
+              profile.allowSyncopatedPickup &&
+              rng() < computeAnticipationProbability(1.0, song.bpm, 120),
+          }
+        : profile;
+
+    const slots = buildChapterSlotsForForm({
+      chapter: ch,
+      chapterLenTicks: chLen,
+      profile: attenuatedProfile,
+      rfProfile,
+      vocalDensity,
+      activePreset,
+      formOverride,
+      thesisZone1Template,
+      thesisContinuousTemplate,
+      rng,
+    });
+
+    const isChorusSecondHalfClimax =
+      sectionRole === 'chorus' &&
+      (ch.role === 'synthesis' || cIdx >= Math.floor(chapters.length / 2));
+
+    const chapterCenter =
+      sectionCenter +
+      (ch.role === 'synthesis' ? 2.5 : ch.role === 'antithesis' ? -2.0 : 0);
+
+    const chapterPitches: number[] = [];
+    const chapterDeltas: number[] = [];
+    const zone1Pitches: number[] = [];
+
+    for (let sIdx = 0; sIdx < slots.length; sIdx++) {
+      const s = slots[sIdx];
+      const absStart = ch.startTick + s.relTick;
+      if (absStart >= sectionEndTick) continue;
+
+      const nextSlotStart =
+        sIdx + 1 < slots.length
+          ? ch.startTick + slots[sIdx + 1].relTick
+          : chEndTick;
+      const maxSpan = Math.max(60, nextSlotStart - absStart);
+      let gridDur = Math.max(
+        120,
+        Math.min(s.gridDuration, maxSpan)
+      );
+      // Quantize gridDur cleanly to 60-tick units
+      gridDur = Math.max(60, Math.round(gridDur / 60) * 60);
+      if (gridDur > maxSpan) {
+        gridDur = Math.max(60, Math.floor(maxSpan / 60) * 60);
+      }
+
+      // Physiological breath guard: enforce >= 240-tick rest before exceeding maxPhraseDurationSec
+      const gapSinceLast = absStart - lastNoteOffTick;
+      if (gapSinceLast >= 240 || activePhraseStartTick === null) {
+        activePhraseStartTick = absStart;
+      } else {
+        const projectedSpan = absStart + gridDur - activePhraseStartTick;
+        if (projectedSpan > maxPhraseTicks) {
+          // If this is a short passing/step note and not the chapter onset or cadence, skip it to create a breath!
+          const isSkippable =
+            sIdx > 0 &&
+            sIdx < slots.length - 1 &&
+            gridDur <= 360 &&
+            !s.isPeakSlot;
+          if (isSkippable) {
+            activePhraseStartTick = null;
+            continue;
+          }
+          // Otherwise trim previous note by >= 240 ticks if previous note was >= 600 ticks
+          const prevGen = generatedNotes[generatedNotes.length - 1];
+          if (prevGen && prevGen.gateDuration >= 600) {
+            const trimmedDur = Math.max(
+              240,
+              Math.min(prevGen.gateDuration, absStart - 240 - prevGen.startTick)
+            );
+            if (trimmedDur >= 240 && absStart - (prevGen.startTick + trimmedDur) >= 240) {
+              generatedNotes[generatedNotes.length - 1] = {
+                ...prevGen,
+                gridDuration: trimmedDur,
+                gateDuration: trimmedDur,
+                hasFall: false,
+                fallConfig: undefined,
+              };
+              lastNoteOffTick = prevGen.startTick + trimmedDur;
+              activePhraseStartTick = absStart;
+            }
+          }
+        }
+      }
+
+      const effChord = resolveEffectiveChord(absStart, gridDur, chordEvents);
+      const nextChordIdx = chordEvents.indexOf(effChord) + 1;
+      const nextChord =
+        nextChordIdx > 0 && nextChordIdx < chordEvents.length
+          ? chordEvents[nextChordIdx]
+          : undefined;
+
+      // Determine ceiling for this slot (reserving top 1..2 semitones for Chorus 2nd-half climax, max 2 hits)
+      const allowClimaxTop =
+        isChorusSecondHalfClimax &&
+        climaxHighCount < 2 &&
+        Boolean(s.isPeakSlot || ch.role === 'synthesis');
+      const slotMaxMidi = allowClimaxTop ? voice.maxMidi : nonClimaxMaxMidi;
+      const slotMinMidi = voice.minMidi;
+
+      // Build candidate pitches strictly inside [voice.minMidi, slotMaxMidi]
+      const ctSet = new Set(effChord.chordTonePcs);
+      const gtSet = new Set(effChord.guideTonePcs);
+      const atSet = new Set(effChord.availableTensionPcs);
+      const avSet = new Set(effChord.avoidPcs);
+      const hookSet = new Set(effChord.hookPcs);
+      const chordScaleSet = new Set(effChord.scalePcs);
+      const nextCtSet = nextChord ? new Set(nextChord.chordTonePcs) : null;
+
+      const isStrongOrLong =
+        gridDur >= 480 || STRONG_BEAT_REL_TICKS.has(s.relTick) || s.tag === 'cadence';
+
+      // Target contour delta from Thesis T1 (or Zone 1 repeat in Pattern 2)
+      let targetStepDelta: number | undefined;
+      if (
+        ch.form === 'one_bar_repeat_with_passing' &&
+        s.relTick >= BAR_TICKS &&
+        s.relTick < 3360 &&
+        zone1Pitches.length >= 2
+      ) {
+        const z3Pos = chapterPitches.length - zone1Pitches.length - 1;
+        if (z3Pos >= 1 && z3Pos < zone1Pitches.length) {
+          targetStepDelta = zone1Pitches[z3Pos] - zone1Pitches[z3Pos - 1];
+        }
+      } else if (
+        referenceThesisDeltas &&
+        sIdx > 0 &&
+        sIdx < referenceThesisDeltas.length
+      ) {
+        targetStepDelta = referenceThesisDeltas[sIdx];
+      }
+
+      const scoredCandidates: Array<{ pitch: number; score: number }> = [];
+      for (let p = slotMinMidi; p <= slotMaxMidi; p++) {
+        const pc = p % 12;
+
+        // When chord is diatonic, strictly stay inside parent key scale (100% key conformance)
+        if (!effChord.isNonDiatonic && !parentScalePcs.has(pc)) {
+          continue;
+        }
+        // When chord is non-diatonic, stay inside active chord scale / chord tones / hook tones
+        if (
+          effChord.isNonDiatonic &&
+          !chordScaleSet.has(pc) &&
+          !ctSet.has(pc) &&
+          !hookSet.has(pc) &&
+          !parentScalePcs.has(pc)
+        ) {
+          continue;
+        }
+
+        // 1. H(p, effChord): Harmonic consonance vs tension vs avoid
+        let hScore = 0;
+        if (gtSet.has(pc)) {
+          hScore = isStrongOrLong ? 3.5 : 2.3;
+        } else if (ctSet.has(pc)) {
+          hScore = isStrongOrLong ? 3.1 : 2.1;
+        } else if (atSet.has(pc)) {
+          hScore = isStrongOrLong ? 2.2 : 1.9;
+        } else if (avSet.has(pc)) {
+          hScore = isStrongOrLong ? -6.5 : -1.4;
+        } else if (chordScaleSet.has(pc)) {
+          hScore = isStrongOrLong ? 0.4 : 1.4;
+        } else {
+          hScore = -8.0;
+        }
+
+        // Cadence tonic gravity at final note of section
+        if (ch.isStrongCadence && sIdx === slots.length - 1 && pc === keySemitone) {
+          hScore += 2.2;
+        }
+
+        // 2. K(p, effChord, nextChord): Non-diatonic color-tone hook & smooth resolution
+        let kScore = 0;
+        if (effChord.isNonDiatonic && hookSet.has(pc)) {
+          kScore += isStrongOrLong ? 3.0 : 2.0;
+        }
+        if (
+          prevNotePitch !== undefined &&
+          prevWasHookOrGuide &&
+          prevChordRootPc !== undefined &&
+          prevChordRootPc !== effChord.rootPc &&
+          Math.abs(p - prevNotePitch) >= 1 &&
+          Math.abs(p - prevNotePitch) <= 2 &&
+          ctSet.has(pc)
+        ) {
+          kScore += 2.8;
+        }
+        if (
+          nextCtSet &&
+          nextChord &&
+          nextChord.rootPc !== effChord.rootPc &&
+          absStart + gridDur >= nextChord.startTick - 240
+        ) {
+          const resolvesClose =
+            nextCtSet.has((pc + 1) % 12) ||
+            nextCtSet.has((pc + 11) % 12) ||
+            nextCtSet.has((pc + 2) % 12) ||
+            nextCtSet.has((pc + 10) % 12);
+          if (resolvesClose) kScore += 1.0;
+        }
+
+        // 3. Prox(p, prevP): Melodic proximity & anti-monotone
+        let proxScore = 0;
+        if (prevNotePitch !== undefined) {
+          const dist = Math.abs(p - prevNotePitch);
+          if (dist === 0) {
+            proxScore = samePitchRun >= 3 ? -2.2 : 0.9;
+          } else if (dist <= 2) {
+            proxScore = 2.5;
+          } else if (dist <= 4) {
+            proxScore = 1.3;
+          } else if (dist === 5 || dist === 7) {
+            proxScore = s.isPeakSlot ? 1.1 : -0.5;
+          } else if (dist === 6) {
+            proxScore = -6.0; // Avoid melodic tritone leap
+          } else {
+            proxScore = -4.5 - (dist - 7) * 1.3;
+          }
+
+          // Guard chapter-end upward leap
+          if (sIdx === slots.length - 1) {
+            const maxEndUp = ch.isRunwayToSynthesis ? 2 : 0;
+            if (p - prevNotePitch > maxEndUp) {
+              proxScore -= 6.0;
+            }
+          }
+        }
+
+        // 4. Rev(p, prevP, prevDelta): Post-skip (>= 5st) gap-fill reversal
+        let revScore = 0;
+        if (prevNotePitch !== undefined && Math.abs(prevDelta) >= 5) {
+          const currStep = p - prevNotePitch;
+          if (currStep * prevDelta < 0 && Math.abs(currStep) >= 1 && Math.abs(currStep) <= 3) {
+            revScore = 3.4;
+          } else if (currStep * prevDelta > 0) {
+            revScore = -4.2;
+          }
+        }
+
+        // 5. Cont(p): Dialectical Thesis contour preservation across changing chords
+        let contScore = 0;
+        if (prevNotePitch !== undefined && targetStepDelta !== undefined) {
+          const currDelta = p - prevNotePitch;
+          if (Math.sign(currDelta) === Math.sign(targetStepDelta)) {
+            contScore += 2.3;
+          }
+          if (Math.abs(currDelta - targetStepDelta) <= 2) {
+            contScore += 1.7;
+          }
+        } else if (s.isPeakSlot) {
+          // Encourage reaching chapter top target on peak slot
+          contScore += -0.35 * Math.abs(p - ch.topPitch);
+        }
+
+        // 6. G(p): Pentatonic singability gravity
+        const gScore = pentatonicPcs.has(pc) ? 0.85 : 0;
+
+        // 7. Tess(p): Voice profile optimal tessitura pull
+        const tessDiff = p - chapterCenter;
+        const tessScore = -0.15 * tessDiff * tessDiff;
+
+        const totalScore =
+          hScore + kScore + proxScore + revScore + contScore + gScore + tessScore;
+        scoredCandidates.push({ pitch: p, score: totalScore });
+      }
+
+      const chosenPitch =
+        scoredCandidates.length > 0
+          ? sampleTopKSoftmax(scoredCandidates, 3, temperature, rng)
+          : fitNoteIntoVoiceRange(
+              Math.round(chapterCenter),
+              voice.minMidi,
+              slotMaxMidi,
+              parentScalePcs
+            );
+
+      if (chosenPitch >= voice.maxMidi - 1) {
+        climaxHighCount++;
+      }
+
+      const stepDelta =
+        prevNotePitch !== undefined ? chosenPitch - prevNotePitch : 0;
+      samePitchRun =
+        prevNotePitch !== undefined && chosenPitch === prevNotePitch
+          ? samePitchRun + 1
+          : 1;
+      prevDelta = stepDelta;
+      prevNotePitch = chosenPitch;
+      prevWasHookOrGuide =
+        hookSet.has(chosenPitch % 12) || gtSet.has(chosenPitch % 12);
+      prevChordRootPc = effChord.rootPc;
+
+      chapterPitches.push(chosenPitch);
+      chapterDeltas.push(stepDelta);
+      if (s.relTick < 1440) {
+        zone1Pitches.push(chosenPitch);
+      }
+
+      const maxGateWithGap =
+        sIdx + 1 < slots.length || chEndTick < sectionEndTick
+          ? Math.max(120, maxSpan - VOISONA_MIN_GAP_TICKS)
+          : maxSpan;
+      const gateDur = Math.max(
+        120,
+        Math.min(gridDur, maxGateWithGap, Math.round(gridDur * s.gateRatio))
+      );
+
+      const trailingPureRest = nextSlotStart - (absStart + gridDur);
+      const isFallCandidate =
+        (s.role === 'top_fall' || Boolean(ch.role === 'synthesis' && s.isPeakSlot)) &&
+        gridDur >= fallCfg.minGridDurationTicks &&
+        trailingPureRest >= fallCfg.minTrailingRestTicks;
+      const hasFall = isFallCandidate && rng() < fallCfg.probability;
+
+      generatedNotes.push({
+        startTick: absStart,
+        gridDuration: gridDur,
+        gateDuration: gateDur,
+        midiPitch: chosenPitch,
+        velocity: clampVelocity(Math.round(baseVelocity * s.velocityScale)),
+        role: s.role,
+        hasFall,
+        fallConfig: hasFall ? { ...fallCfg } : undefined,
+      });
+
+      lastNoteOffTick = absStart + gateDur;
+    }
+
+    if (ch.role === 'thesis' && referenceThesisDeltas === null && chapterDeltas.length > 0) {
+      referenceThesisDeltas = chapterDeltas;
+    }
+  }
+
+  const midiNotes: MidiNote[] = toMidiNotesFromGenerated(generatedNotes);
+  const vocalMinMidiByBar = computeVocalMinMidiByBar(midiNotes, section.bars);
+
+  return {
+    genreId,
+    voiceProfile: voice,
+    chordEvents,
+    scheme,
+    thesisForm,
+    chapters,
+    notes: generatedNotes,
+    midiNotes,
+    vocalMinMidiByBar,
+  };
 }
 
 // ===========================================================================

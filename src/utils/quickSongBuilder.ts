@@ -8,7 +8,9 @@ import {
   type Section,
   type SectionType,
   type SongConfig,
+  type VocalVoicePresetId,
 } from '../types/song';
+import { generateGenreHarmonySection } from '../engines/harmonyEngine';
 import { shiftChordBoundary } from '../lib/chordTimeline';
 import {
   noteNameToSemitone,
@@ -64,6 +66,9 @@ export interface QuickSongSetupParams {
   chordPreset: QuickChordPresetId;
   customChordsText?: string;
   includeAnticipation?: boolean;
+  vocalVoiceProfileId?: VocalVoicePresetId;
+  vocalCustomMinMidi?: number;
+  vocalCustomMaxMidi?: number;
 }
 
 export type QuickGenreMeta = MasterGenreMeta;
@@ -450,25 +455,39 @@ export function buildSongFromQuickSetup(
   const semitoneShift = noteNameToSemitone(key);
 
   const sections: Section[] = template.sections.map((spec, idx) => {
-    const baseChordsInC =
-      customChords.length > 0
-        ? customChords
-        : transposeChords(
-            resolveBaseChordsInC(
-              params.chordPreset,
-              normalizedGenre,
-              scale,
-              spec.role
-            ),
-            semitoneShift
-          );
+    let chords: ChordSlot[];
+    if (params.chordPreset === 'auto_by_genre' && customChords.length === 0) {
+      chords = generateGenreHarmonySection({
+        genreId: normalizedGenre,
+        sectionType: spec.type,
+        key,
+        scale,
+        bars: spec.bars,
+        bpm,
+        masterSeed: seed,
+        sectionIndex: idx,
+      }).slots;
+    } else {
+      const baseChordsInC =
+        customChords.length > 0
+          ? customChords
+          : transposeChords(
+              resolveBaseChordsInC(
+                params.chordPreset,
+                normalizedGenre,
+                scale,
+                spec.role
+              ),
+              semitoneShift
+            );
 
-    let chords = buildDeterministicChordTimeline(
-      baseChordsInC,
-      spec.bars,
-      idx,
-      seed
-    );
+      chords = buildDeterministicChordTimeline(
+        baseChordsInC,
+        spec.bars,
+        idx,
+        seed
+      );
+    }
 
     if (
       includeAnticipation &&
@@ -552,6 +571,9 @@ export function buildSongFromQuickSetup(
     swingTarget: '8th',
     exportOnlyActiveTracks: true,
     split808KickTrack: true,
+    vocalVoiceProfileId: params.vocalVoiceProfileId ?? 'chisa_jp',
+    vocalCustomMinMidi: params.vocalCustomMinMidi ?? 55,
+    vocalCustomMaxMidi: params.vocalCustomMaxMidi ?? 74,
     members: {
       drums: {
         enabled: true,

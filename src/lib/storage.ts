@@ -192,6 +192,9 @@ export function hydrateProject(stored: StoredBandProject): {
   bandState: BandState;
 } {
   const song = deepCopyJson(stored.song);
+  song.vocalVoiceProfileId = song.vocalVoiceProfileId ?? 'chisa_jp';
+  song.vocalCustomMinMidi = song.vocalCustomMinMidi ?? 55;
+  song.vocalCustomMaxMidi = song.vocalCustomMaxMidi ?? 74;
   if (!song.members.vocal) {
     song.members.vocal = {
       enabled: true,
@@ -226,6 +229,14 @@ export function hydrateProject(stored: StoredBandProject): {
 
     const section: Section = {
       ...rawSec,
+      chordLockMode: rawSec.chordLockMode ?? 'auto',
+      customChordsText: rawSec.customChordsText ?? '',
+      bassLockMode: rawSec.bassLockMode ?? 'auto',
+      overrideBassNotes: rawSec.overrideBassNotes
+        ? rawSec.overrideBassNotes.map((n) => ({ ...n }))
+        : null,
+      overrideBassSourceLabel: rawSec.overrideBassSourceLabel,
+      overrideBassShiftOctave: rawSec.overrideBassShiftOctave ?? true,
       drumAnticipationMode: rawSec.drumAnticipationMode ?? 'sync',
       drumHat16thEnabled: rawSec.drumHat16thEnabled ?? false,
       drumFillEnabled:

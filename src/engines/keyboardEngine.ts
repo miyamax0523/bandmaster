@@ -16,16 +16,16 @@ import {
   type ParsedChord,
 } from '../lib/chordUtils';
 import {
+  applyChorusGuitarHeadroom,
   buildChordWindows,
   clamp as clampCore,
   deriveSeed,
   findChordAtTick,
   findVocalRestGaps,
-  getParsedChordPitchClasses,
   mapTickToSubdivision,
   mulberry32 as mulberry32Core,
-  resolveSmoothVoicing,
   sanitizeTrackNotes,
+  solveSectionVoicingsViterbi,
 } from './musicCore';
 import {
   resolveEnsembleSyncPlan,
@@ -1647,29 +1647,22 @@ export function generateKeyboardSkeletonTrack(
     if (vMin <= vMax) vocalRange = { min: vMin, max: vMax };
   }
 
-  // Resolve smooth voice-leading per chord window
-  const voicingsByWindow: number[][] = [];
-  let prevVoicing: number[] | null = null;
-  for (const w of chordWindows) {
-    const pcs = getParsedChordPitchClasses(w.parsed);
-    if (take === 'C') {
-      // Extend with tasteful tension (maj7 / m7 / 9th)
-      const rootPc = w.parsed.rootPitchClass;
-      const isMinor = pcs.includes((rootPc + 3) % 12);
-      const tensionPc = isMinor ? (rootPc + 10) % 12 : (rootPc + 11) % 12;
-      if (!pcs.includes(tensionPc)) pcs.push(tensionPc);
-    }
-    const voiced = resolveSmoothVoicing({
-      pitchClasses: pcs.slice(0, take === 'C' ? 4 : 3),
-      prevVoicing,
-      minMidi: plan.keyboardRange.min,
-      maxMidi: plan.keyboardRange.max,
-      vocalRange,
-      preferDrop2: take === 'C',
-    });
-    voicingsByWindow.push(voiced);
-    prevVoicing = voiced;
-  }
+  // Stage 3: Section-wide Viterbi DP voicing optimization (with bass-integrated LIL & tension thinning)
+  const voicingsByWindow = solveSectionVoicingsViterbi({
+    section,
+    key: song.key,
+    scale: song.scale,
+    chordWindows,
+    chordEvents: input.chordEvents,
+    bassNotes: input.bassNotes,
+    vocalNotes,
+    vocalMinMidiByBar: input.vocalMinMidiByBar,
+    genreId: plan.genreId,
+    part: 'keyboard',
+    take,
+    minMidi: plan.keyboardRange.min,
+    maxMidi: plan.keyboardRange.max,
+  });
 
   const baseVel = clampCore(
     Math.round(86 * plan.keyboardVelocityScale),
@@ -1857,7 +1850,12 @@ export function generateKeyboardSkeletonTrack(
     }
   }
 
-  const notes = sanitizeTrackNotes(rawNotes, 5, sectionEnd);
+  const headroomFiltered = applyChorusGuitarHeadroom(
+    rawNotes,
+    section.type,
+    plan.genreId
+  );
+  const notes = sanitizeTrackNotes(headroomFiltered, 5, sectionEnd);
   return { notes, controlChanges, skeleton, take, plan };
 }
 

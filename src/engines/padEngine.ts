@@ -20,11 +20,14 @@ import {
   type ParsedChord,
 } from '../lib/chordUtils';
 import {
+  applyChorusGuitarHeadroom,
   buildChordWindows,
   clamp as clampCore,
-  getParsedChordPitchClasses,
-  resolveSmoothVoicing,
+  GUITAR_CHORUS_GENRES,
+  GUITAR_HEADROOM_MAX_MIDI,
+  GUITAR_HEADROOM_MIN_MIDI,
   sanitizeTrackNotes,
+  solveSectionVoicingsViterbi,
 } from './musicCore';
 import {
   resolveEnsembleSyncPlan,
@@ -1756,35 +1759,63 @@ export function generatePadSkeletonTrack(input: EngineInput): PadTrackResult {
       ? new Set<number>([droneTonic, droneFifth])
       : new Set<number>();
 
-  // Resolve chord voicings per window
-  const gluedInput: Array<{ startTick: number; endTick: number; pitches: number[] }> = [];
-  let prevVoicing: number[] | null = null;
-  for (const w of chordWindows) {
-    const pcs = getParsedChordPitchClasses(w.parsed);
-    const rootPc = w.parsed.rootPitchClass;
-    if (take === 'B') {
-      // add9 / sus2 transparent 4-voice
-      const add9Pc = (rootPc + 2) % 12;
-      if (!pcs.includes(add9Pc)) pcs.push(add9Pc);
-    }
+  // Stage 3: Section-wide Viterbi DP voicing optimization for PAD
+  const viterbiVoicings = solveSectionVoicingsViterbi({
+    section,
+    key: song.key,
+    scale: song.scale,
+    chordWindows,
+    chordEvents: input.chordEvents,
+    bassNotes: input.bassNotes,
+    vocalNotes: input.vocalNotes,
+    vocalMinMidiByBar: input.vocalMinMidiByBar,
+    genreId: plan.genreId,
+    part: 'pad',
+    take,
+    minMidi: plan.padRange.min,
+    maxMidi: plan.padRange.max,
+  });
 
-    const baseVoicing = resolveSmoothVoicing({
-      pitchClasses: pcs.slice(0, take === 'A' ? 3 : 4),
-      prevVoicing,
-      minMidi: plan.padRange.min,
-      maxMidi: plan.padRange.max,
-      preferDrop2: true,
-    });
-    prevVoicing = baseVoicing;
+  const isGuitarChorus =
+    section.type === 'Chorus' && GUITAR_CHORUS_GENRES.has(plan.genreId);
+
+  const gluedInput: Array<{ startTick: number; endTick: number; pitches: number[] }> = [];
+  for (let idx = 0; idx < chordWindows.length; idx++) {
+    const w = chordWindows[idx];
+    const rootPc = w.parsed.rootPitchClass;
+    const baseVoicing = viterbiVoicings[idx] ?? [60, 67];
 
     let finalPitches = [...baseVoicing];
-    if (take === 'C') {
-      // Cinematic thick layer: low root pedal + high octave doubling
+    if (take === 'C' && !isGuitarChorus) {
+      // Cinematic thick layer: low root pedal + high octave doubling (skipped in guitar Chorus to preserve 48..60 headroom)
       const lowRoot = clampCore(48 + rootPc, 48, 59);
       const topDoubled = clampCore(baseVoicing[baseVoicing.length - 1] + 12, 60, 84);
       finalPitches = Array.from(new Set([lowRoot, ...finalPitches, topDoubled])).sort(
         (a, b) => a - b
       );
+    } else if (isGuitarChorus) {
+      // Cap PAD to 2..3 upper voices and <= 2 notes in 48..60 ( accounting for droneTonic if PEDAL_DRONE )
+      const reservedInBand =
+        skeleton === 'PEDAL_DRONE' &&
+        droneTonic >= GUITAR_HEADROOM_MIN_MIDI &&
+        droneTonic <= GUITAR_HEADROOM_MAX_MIDI
+          ? 1
+          : 0;
+      const maxAllowedInBand = Math.max(0, 2 - reservedInBand);
+      let bandCount = 0;
+      finalPitches = finalPitches.filter((p) => {
+        if (p >= GUITAR_HEADROOM_MIN_MIDI && p <= GUITAR_HEADROOM_MAX_MIDI) {
+          if (bandCount >= maxAllowedInBand) return false;
+          bandCount++;
+        }
+        return true;
+      });
+      if (finalPitches.length > 3) {
+        finalPitches = finalPitches.slice(finalPitches.length - 3);
+      }
+      if (finalPitches.length === 0 && skeleton !== 'PEDAL_DRONE') {
+        finalPitches = [Math.max(62, baseVoicing[baseVoicing.length - 1] + 12)];
+      }
     }
 
     if (skeleton === 'PEDAL_DRONE') {
@@ -1825,7 +1856,11 @@ export function generatePadSkeletonTrack(input: EngineInput): PadTrackResult {
     }
   }
 
-  const notes = sanitizeTrackNotes(allNotes, 5, sectionEnd);
+  const headroomNotes =
+    skeleton === 'PEDAL_DRONE'
+      ? allNotes
+      : applyChorusGuitarHeadroom(allNotes, section.type, plan.genreId);
+  const notes = sanitizeTrackNotes(headroomNotes, 5, sectionEnd);
   const controlChanges: MidiControlChangeEvent[] = [];
 
   if (skeleton === 'PEDAL_DRONE') {

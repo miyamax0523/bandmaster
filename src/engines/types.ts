@@ -3,6 +3,7 @@ import type {
   BassSkeletonId,
   BeatPatternId,
   ChapterInternalForm,
+  ChordEvent,
   EightBarScheme,
   EnergyLevel,
   KeyboardDensityLevel,
@@ -14,6 +15,7 @@ import type {
   SectionType,
   SongConfig,
   TakeStyle,
+  VocalVoiceProfile,
 } from '../types/song';
 import type { MasterGenreId } from '../lib/masterGenres';
 
@@ -89,4 +91,8 @@ export interface EngineInput {
   padSkeleton?: PadSkeletonId | 'auto';
   padTake?: AccompanimentTake | 'auto';
   emitModoBassCC?: boolean;
+  chordEvents?: readonly ChordEvent[];
+  vocalVoiceProfile?: VocalVoiceProfile;
+  vocalMinMidiByBar?: readonly (number | null)[];
+  isFinalChorusSection?: boolean;
 }

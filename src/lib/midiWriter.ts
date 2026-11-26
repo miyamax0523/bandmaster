@@ -1,3 +1,5 @@
+import type { KeyName, ScaleType } from '../types/song';
+
 export const MAX_VLQ_VALUE = 0x0fffffff;
 
 export interface MidiTrackEvent {
@@ -141,6 +143,73 @@ export function createTimeSignatureEvent(
       clocksPerClick & 0xff,
       thirtySecondsPerQuarter & 0xff,
     ]),
+  };
+}
+
+const MAJOR_KEY_SHARPS_FLATS: Readonly<Record<string, number>> = {
+  C: 0,
+  G: 1,
+  D: 2,
+  A: 3,
+  E: 4,
+  B: 5,
+  'F#': 6,
+  Gb: -6,
+  'C#': 7,
+  Db: -5,
+  F: -1,
+  Bb: -2,
+  'A#': -2,
+  Eb: -3,
+  'D#': -3,
+  Ab: -4,
+  'G#': -4,
+};
+
+const MINOR_KEY_SHARPS_FLATS: Readonly<Record<string, number>> = {
+  A: 0,
+  E: 1,
+  B: 2,
+  'F#': 3,
+  'C#': 4,
+  'G#': 5,
+  Ab: -7,
+  'D#': 6,
+  Eb: -6,
+  'A#': 7,
+  Bb: -5,
+  D: -1,
+  G: -2,
+  C: -3,
+  F: -4,
+};
+
+export function keyToSharpsFlats(
+  key: KeyName | string,
+  scale: ScaleType | string = 'Major'
+): { sf: number; mi: 0 | 1 } {
+  const isMinor = scale === 'Minor';
+  const rawSf = isMinor
+    ? (MINOR_KEY_SHARPS_FLATS[key] ?? 0)
+    : (MAJOR_KEY_SHARPS_FLATS[key] ?? 0);
+  const sf = Math.max(-7, Math.min(7, Math.round(rawSf)));
+  return { sf, mi: isMinor ? 1 : 0 };
+}
+
+/**
+ * Emits SMF Key Signature Meta Event: FF 59 02 sf mi
+ * sf: -7..+7 (negative = flats, positive = sharps), mi: 0 = Major, 1 = Minor
+ */
+export function createKeySignatureEvent(
+  tick: number,
+  sf: number,
+  mi: 0 | 1 = 0
+): MidiTrackEvent {
+  const clampedSf = Math.max(-7, Math.min(7, Math.round(sf)));
+  return {
+    tick: Math.max(0, Math.round(tick)),
+    order: 2.5,
+    data: new Uint8Array([0xff, 0x59, 0x02, clampedSf & 0xff, mi & 0x01]),
   };
 }
 

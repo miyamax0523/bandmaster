@@ -1,15 +1,24 @@
-import { useState, type ChangeEvent } from 'react';
+import { useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react';
+import {
+  midiToSpnLabel,
+  parseCustomChordProgression,
+  suggestChords,
+  VOCAL_VOICE_PROFILES,
+} from '../engines/musicCore';
 import { isCellOutdated, isDrumLockedUnsynced } from '../lib/bandState';
-import { extractDrumLoopFromMidi } from '../lib/midiParser';
+import { noteNameToSemitone } from '../lib/chordUtils';
+import { extractDrumLoopFromMidi, extractRiffNotesFromMidi } from '../lib/midiParser';
 import { isAutoTacet, isSectionPartEnabled } from '../lib/noteSelector';
 import { PATTERN_PRESET_GROUPS } from '../lib/patternPresets';
 import { useHorizontalSwipe } from '../lib/touchSwipe';
 import {
   getDefaultDrumFillEnabled,
   type AccompanimentTake,
+  type BassLockMode,
   type BassSkeletonId,
   type BeatPatternId,
   type ChapterInternalForm,
+  type ChordLockMode,
   type ChordSlot,
   type CopiedPartPhrase,
   type DensityLevel,
@@ -20,10 +29,12 @@ import {
   type KeyboardDensityLevel,
   type KeyboardSkeletonId,
   type KickTake,
+  type MidiNote,
   type PadSkeletonId,
   type SongConfig,
   type TakeStyle,
   type VocalHarmonyMode,
+  type VocalVoicePresetId,
 } from '../types/song';
 import type { BandState } from '../types/track';
 import { ChordTimelineEditor } from './ChordTimelineEditor';
@@ -103,6 +114,27 @@ interface BandmasterConsoleProps {
     instrument: 'bass' | 'keyboard' | 'pad',
     take: AccompanimentTake | 'auto'
   ) => void;
+  onChangeVocalVoiceProfile?: (patch: {
+    vocalVoiceProfileId?: VocalVoicePresetId;
+    vocalCustomMinMidi?: number;
+    vocalCustomMaxMidi?: number;
+  }) => void;
+  onLockSectionChordsToCustom?: (sectionId: string) => void;
+  onChangeSectionChordLock?: (
+    sectionId: string,
+    patch: { chordLockMode?: ChordLockMode; customChordsText?: string }
+  ) => readonly string[] | void;
+  onChangeSectionBassMidiOverride?: (
+    sectionId: string,
+    options: {
+      bassLockMode: BassLockMode;
+      rawNotes?: readonly MidiNote[] | null;
+      sourceLabel?: string;
+      shiftOctaveDown?: boolean;
+    }
+  ) => void;
+  onInferSectionChordsFromBass?: (sectionId: string) => void;
+  onOpenRiffModal?: (sectionId: string) => void;
   onCopyTimelineToAllSections: (sourceSectionId: string) => void;
   onToggleSectionPart: (sectionId: string, inst: InstrumentType) => void;
   onOpenVocalModal: (sectionId: string) => void;
@@ -367,6 +399,12 @@ export function BandmasterConsole({
   onSetSectionDrumKickTake,
   onSetSectionAccompanimentSkeleton,
   onSetSectionAccompanimentTake,
+  onChangeVocalVoiceProfile,
+  onLockSectionChordsToCustom,
+  onChangeSectionChordLock,
+  onChangeSectionBassMidiOverride,
+  onInferSectionChordsFromBass,
+  onOpenRiffModal,
   onCopyTimelineToAllSections,
   onToggleSectionPart,
   onOpenVocalModal,
@@ -378,6 +416,10 @@ export function BandmasterConsole({
   onToggleLock,
 }: BandmasterConsoleProps) {
   const [midiError, setMidiError] = useState<string | null>(null);
+  const [bassMidiError, setBassMidiError] = useState<string | null>(null);
+  const [cursorPos, setCursorPos] = useState<number>(0);
+  const [selectedSuggestIdx, setSelectedSuggestIdx] = useState<number>(0);
+  const customInputRef = useRef<HTMLInputElement | null>(null);
   const currentIdx = Math.max(
     0,
     song.sections.findIndex((s) => s.id === selectedSectionId)
@@ -422,6 +464,101 @@ export function BandmasterConsole({
 
   return (
     <div className="tab-content">
+      <div
+        className="toolbar-row"
+        role="region"
+        aria-label="グローバル楽曲＆ボイス設定"
+      >
+        <span className="badge">
+          🎵 {song.title} · {song.key} {song.scale} · {song.bpm} BPM
+        </span>
+        <label
+          className="density-row"
+          style={{ margin: 0, gap: '0.4rem' }}
+          title="VoiSona基準 (C4=60) ボイスプリセット（変更時はコード進行を保持して歌メロ＆鍵盤クランプのみ再計算）"
+        >
+          <span className="density-label">🎤 ボイス音域 (VoiSona C4=60)</span>
+          <select
+            className="console-preset-select"
+            aria-label="ボーカルボイスプリセット"
+            value={song.vocalVoiceProfileId ?? 'chisa_jp'}
+            onChange={(e) =>
+              onChangeVocalVoiceProfile?.({
+                vocalVoiceProfileId: e.target.value as VocalVoicePresetId,
+              })
+            }
+          >
+            <option value="chisa_jp">{VOCAL_VOICE_PROFILES.chisa_jp.label}</option>
+            <option value="female_high">
+              {VOCAL_VOICE_PROFILES.female_high.label}
+            </option>
+            <option value="male_rock">{VOCAL_VOICE_PROFILES.male_rock.label}</option>
+            <option value="custom">カスタム</option>
+          </select>
+        </label>
+
+        {(song.vocalVoiceProfileId ?? 'chisa_jp') === 'custom' && (
+          <div
+            className="density-row"
+            style={{ margin: 0, gap: '0.4rem' }}
+            title="VoiSona基準 (C4=60) カスタム音域（最低1オクターブ＝12半音幅を保証）"
+          >
+            <span className="density-label">Min</span>
+            <select
+              className="console-preset-select"
+              aria-label="カスタムボーカル最低音"
+              value={song.vocalCustomMinMidi ?? 55}
+              onChange={(e) => {
+                const nextMin = Number(e.target.value);
+                const currMax = song.vocalCustomMaxMidi ?? 74;
+                onChangeVocalVoiceProfile?.({
+                  vocalCustomMinMidi: nextMin,
+                  vocalCustomMaxMidi: Math.max(nextMin + 12, currMax),
+                });
+              }}
+            >
+              {Array.from({ length: 37 }, (_, i) => 40 + i).map((m) => (
+                <option key={m} value={m}>
+                  {midiToSpnLabel(m)} ({m})
+                </option>
+              ))}
+            </select>
+            <span className="density-label">Max</span>
+            <select
+              className="console-preset-select"
+              aria-label="カスタムボーカル最高音"
+              value={Math.max(
+                (song.vocalCustomMinMidi ?? 55) + 12,
+                song.vocalCustomMaxMidi ?? 74
+              )}
+              onChange={(e) => {
+                const currMin = song.vocalCustomMinMidi ?? 55;
+                onChangeVocalVoiceProfile?.({
+                  vocalCustomMaxMidi: Math.max(
+                    currMin + 12,
+                    Number(e.target.value)
+                  ),
+                });
+              }}
+            >
+              {Array.from(
+                {
+                  length: Math.max(
+                    1,
+                    88 - ((song.vocalCustomMinMidi ?? 55) + 12) + 1
+                  ),
+                },
+                (_, i) => (song.vocalCustomMinMidi ?? 55) + 12 + i
+              ).map((m) => (
+                <option key={m} value={m}>
+                  {midiToSpnLabel(m)} ({m})
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+      </div>
+
       <div className="toolbar-row">
         <button
           type="button"
@@ -468,6 +605,230 @@ export function BandmasterConsole({
             </button>
           );
         })}
+      </div>
+
+      <div
+        className="info-box"
+        role="region"
+        aria-label="カスタムコード進行・ギターリフ固定モード"
+        style={{ marginBottom: '0.75rem' }}
+      >
+        {(() => {
+          const chordLockMode: ChordLockMode = section.chordLockMode ?? 'auto';
+          const customText = section.customChordsText ?? '';
+          const genreHint =
+            section.patternPresets?.keyboard ??
+            section.patternPresets?.vocal ??
+            song.members.keyboard.patternPreset ??
+            'royal_jpop';
+          const keyRootPc = noteNameToSemitone(song.key);
+
+          // Extract token around cursor for live chord suggestion
+          const safeCursor = Math.min(cursorPos, customText.length);
+          let tokenStart = safeCursor;
+          while (
+            tokenStart > 0 &&
+            customText[tokenStart - 1] !== ' ' &&
+            customText[tokenStart - 1] !== '|'
+          ) {
+            tokenStart--;
+          }
+          let tokenEnd = safeCursor;
+          while (
+            tokenEnd < customText.length &&
+            customText[tokenEnd] !== ' ' &&
+            customText[tokenEnd] !== '|'
+          ) {
+            tokenEnd++;
+          }
+          const activeToken = customText.slice(tokenStart, tokenEnd).trim();
+          const suggestions =
+            chordLockMode === 'custom'
+              ? suggestChords(activeToken, keyRootPc, song.scale, genreHint)
+              : [];
+          const activeSuggestIdx =
+            suggestions.length > 0
+              ? Math.max(0, Math.min(suggestions.length - 1, selectedSuggestIdx))
+              : 0;
+          const liveParse =
+            chordLockMode === 'custom'
+              ? parseCustomChordProgression(
+                  customText,
+                  section.bars,
+                  keyRootPc,
+                  song.scale,
+                  genreHint
+                )
+              : null;
+
+          const applySuggestion = (chordStr: string) => {
+            const before = customText.slice(0, tokenStart);
+            const after = customText.slice(tokenEnd);
+            const spacer = after.length === 0 || after.startsWith(' ') || after.startsWith('|') ? '' : ' ';
+            const nextText = `${before}${chordStr}${spacer}${after}`;
+            onChangeSectionChordLock?.(section.id, {
+              chordLockMode: 'custom',
+              customChordsText: nextText,
+            });
+            const nextCaret = before.length + chordStr.length;
+            setCursorPos(nextCaret);
+            setSelectedSuggestIdx(0);
+            requestAnimationFrame(() => {
+              const el = customInputRef.current;
+              if (el) {
+                el.focus();
+                el.setSelectionRange(nextCaret, nextCaret);
+              }
+            });
+          };
+
+          const handleCustomKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+            if (suggestions.length === 0) return;
+            if (e.key === 'ArrowDown') {
+              e.preventDefault();
+              setSelectedSuggestIdx((prev) => (prev + 1) % suggestions.length);
+            } else if (e.key === 'ArrowUp') {
+              e.preventDefault();
+              setSelectedSuggestIdx(
+                (prev) => (prev - 1 + suggestions.length) % suggestions.length
+              );
+            } else if (e.key === 'Tab' || e.key === 'Enter') {
+              if (activeToken.length > 0 || e.key === 'Tab') {
+                e.preventDefault();
+                applySuggestion(suggestions[activeSuggestIdx].chord);
+              }
+            }
+          };
+
+          return (
+            <>
+              <div
+                className="toolbar-row"
+                style={{ justifyContent: 'space-between', marginBottom: chordLockMode === 'custom' ? '0.5rem' : 0 }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', flexWrap: 'wrap' }}>
+                  <strong>🎸 コード進行モード:</strong>
+                  <button
+                    type="button"
+                    className={`chip-btn ${chordLockMode === 'auto' ? 'chip-active' : ''}`}
+                    aria-pressed={chordLockMode === 'auto'}
+                    onClick={() =>
+                      onChangeSectionChordLock?.(section.id, { chordLockMode: 'auto' })
+                    }
+                  >
+                    自動生成
+                  </button>
+                  <button
+                    type="button"
+                    className={`chip-btn ${chordLockMode === 'custom' ? 'chip-active' : ''}`}
+                    aria-pressed={chordLockMode === 'custom'}
+                    onClick={() => onLockSectionChordsToCustom?.(section.id)}
+                  >
+                    🔒 固定 (カスタム)
+                  </button>
+                </div>
+                {chordLockMode === 'auto' && (
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => onLockSectionChordsToCustom?.(section.id)}
+                    title="現在のコード進行をカスタムテキスト欄へコピーして固定編集を開始"
+                  >
+                    📋 この進行を編集・固定
+                  </button>
+                )}
+              </div>
+
+              {chordLockMode === 'custom' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
+                  <input
+                    ref={customInputRef}
+                    type="text"
+                    className="console-preset-select"
+                    style={{ width: '100%', fontFamily: 'monospace' }}
+                    aria-label="カスタムコード進行入力"
+                    placeholder="例: E5 | F5 | G5 F5 | E5（| で小節区切り、スペースで拍分割、% でリピート）"
+                    value={customText}
+                    onChange={(e) => {
+                      setCursorPos(e.target.selectionStart ?? e.target.value.length);
+                      setSelectedSuggestIdx(0);
+                      onChangeSectionChordLock?.(section.id, {
+                        chordLockMode: 'custom',
+                        customChordsText: e.target.value,
+                      });
+                    }}
+                    onClick={(e) =>
+                      setCursorPos(
+                        (e.target as HTMLInputElement).selectionStart ?? customText.length
+                      )
+                    }
+                    onKeyUp={(e) =>
+                      setCursorPos(
+                        (e.target as HTMLInputElement).selectionStart ?? customText.length
+                      )
+                    }
+                    onKeyDown={handleCustomKeyDown}
+                  />
+
+                  {suggestions.length > 0 && (
+                    <div
+                      style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem', alignItems: 'center' }}
+                      role="listbox"
+                      aria-label="ダイアトニック・コード候補サジェスト"
+                    >
+                      <span className="density-label" style={{ fontSize: '0.75rem' }}>
+                        候補 ({song.key} {song.scale} / ↑↓・Tab・Enter):
+                      </span>
+                      {suggestions.map((sug, idx) => (
+                        <button
+                          key={`${sug.chord}-${idx}`}
+                          type="button"
+                          role="option"
+                          aria-selected={idx === activeSuggestIdx}
+                          className={`chip-btn ${idx === activeSuggestIdx ? 'chip-active' : ''}`}
+                          style={{ fontSize: '0.76rem', padding: '0.18rem 0.48rem' }}
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            applySuggestion(sug.chord);
+                          }}
+                        >
+                          <strong>{sug.chord}</strong>{' '}
+                          <span style={{ opacity: 0.78 }}>({sug.roleLabel})</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {liveParse && !liveParse.valid && (
+                    <p className="error-text" role="alert" style={{ margin: 0 }}>
+                      ⚠ {liveParse.errors[0]}（直前の有効な進行を保持中）
+                    </p>
+                  )}
+
+                  {liveParse && liveParse.valid && (
+                    <div
+                      style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem', alignItems: 'center' }}
+                      aria-label="パース済みコード進行プレビュー"
+                    >
+                      <span className="density-label" style={{ fontSize: '0.75rem' }}>
+                        確定進行 ({section.bars}小節):
+                      </span>
+                      {liveParse.chordEvents.map((ev, idx) => (
+                        <span
+                          key={`${ev.startTick}-${idx}`}
+                          className="badge badge-info"
+                          style={{ fontSize: '0.74rem' }}
+                        >
+                          {ev.chordSymbol}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
+          );
+        })()}
       </div>
 
       <ChordTimelineEditor
@@ -869,6 +1230,95 @@ export function BandmasterConsole({
 
               {key === 'bass' && (
                 <div className="density-controls">
+                  <div className="source-line">
+                    ソース:{' '}
+                    {section.bassLockMode === 'midi_override' &&
+                    section.overrideBassNotes &&
+                    section.overrideBassNotes.length > 0
+                      ? `🔒 固定ベースMIDI (${section.overrideBassSourceLabel ?? 'Basic Pitch / MIDI'} · ${section.overrideBassNotes.length}音)`
+                      : section.unisonRiff
+                        ? `🎸 ユニゾンリフ (${section.unisonRiff.sourceName})`
+                        : '内蔵ベース生成エンジン'}
+                  </div>
+                  <div className="drum-midi-actions" style={{ flexWrap: 'wrap', gap: '0.35rem' }}>
+                    {onOpenRiffModal && (
+                      <button
+                        type="button"
+                        className="btn btn-secondary drum-midi-btn"
+                        onClick={() => onOpenRiffModal(section.id)}
+                      >
+                        🎸 Basic Pitch / リフ解析
+                      </button>
+                    )}
+                    <label className="btn btn-secondary drum-midi-btn">
+                      🎼 ベースMIDI直読込
+                      <input
+                        type="file"
+                        accept=".mid,.midi,audio/midi"
+                        hidden
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          e.target.value = '';
+                          if (!file) return;
+                          try {
+                            setBassMidiError(null);
+                            const bytes = new Uint8Array(await file.arrayBuffer());
+                            const extracted = extractRiffNotesFromMidi(bytes);
+                            onChangeSectionBassMidiOverride?.(section.id, {
+                              bassLockMode: 'midi_override',
+                              rawNotes: extracted.notes,
+                              sourceLabel: file.name,
+                              shiftOctaveDown: section.overrideBassShiftOctave ?? true,
+                            });
+                          } catch (err) {
+                            setBassMidiError(
+                              err instanceof Error ? err.message : 'ベースMIDI読込失敗'
+                            );
+                          }
+                        }}
+                      />
+                    </label>
+                    {section.bassLockMode === 'midi_override' && (
+                      <>
+                        <button
+                          type="button"
+                          className={`chip-btn bass-pro-btn ${
+                            (section.overrideBassShiftOctave ?? true) ? 'chip-active' : ''
+                          }`}
+                          onClick={() =>
+                            onChangeSectionBassMidiOverride?.(section.id, {
+                              bassLockMode: 'midi_override',
+                              shiftOctaveDown: !(section.overrideBassShiftOctave ?? true),
+                            })
+                          }
+                          title="ギター音域(E2〜)をベース音域(E1〜G3)へ1オクターブ下方シフト"
+                        >
+                          ⬇ -1Oct: {(section.overrideBassShiftOctave ?? true) ? 'ON' : 'OFF'}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-accent drum-midi-btn"
+                          onClick={() => onInferSectionChordsFromBass?.(section.id)}
+                          title="固定ベースMIDIの各小節ルート音からパワーコード進行を自動推定してカスタム固定へ反映"
+                        >
+                          ⚡ ベースからコード推定
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-danger drum-midi-btn"
+                          onClick={() =>
+                            onChangeSectionBassMidiOverride?.(section.id, {
+                              bassLockMode: 'auto',
+                              rawNotes: null,
+                            })
+                          }
+                        >
+                          ✕ 固定解除
+                        </button>
+                      </>
+                    )}
+                  </div>
+                  {bassMidiError && <p className="error-text">{bassMidiError}</p>}
                   <div className="density-row">
                     <span className="density-label">ベース骨格</span>
                     <select

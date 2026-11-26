@@ -65,6 +65,11 @@ export function App() {
     setSectionDrumKickTake,
     setSectionAccompanimentSkeleton,
     setSectionAccompanimentTake,
+    changeVocalVoiceProfile,
+    lockSectionChordsToCustom,
+    changeSectionChordLock,
+    changeSectionBassMidiOverride,
+    inferSectionChordsFromBass,
     copyTimelineToAllSections,
     pastePartPhrase,
     loadSnapshotData,
@@ -297,6 +302,12 @@ export function App() {
               onSetSectionDrumKickTake={setSectionDrumKickTake}
               onSetSectionAccompanimentSkeleton={setSectionAccompanimentSkeleton}
               onSetSectionAccompanimentTake={setSectionAccompanimentTake}
+              onChangeVocalVoiceProfile={changeVocalVoiceProfile}
+              onLockSectionChordsToCustom={lockSectionChordsToCustom}
+              onChangeSectionChordLock={changeSectionChordLock}
+              onChangeSectionBassMidiOverride={changeSectionBassMidiOverride}
+              onInferSectionChordsFromBass={inferSectionChordsFromBass}
+              onOpenRiffModal={(id) => setRiffModalSectionId(id)}
               onCopyTimelineToAllSections={copyTimelineToAllSections}
               onToggleSectionPart={toggleSectionPart}
               onOpenVocalModal={(id) => setVocalModalSectionId(id)}
@@ -332,6 +343,15 @@ export function App() {
           onStopPreviewPlayback={audio.stop}
           onSave={(riff) => {
             changeSectionRiff(riffModalSection.id, riff);
+            setRiffModalSectionId(null);
+          }}
+          onSaveBassOverride={(notes, sourceLabel, shiftOctaveDown) => {
+            changeSectionBassMidiOverride(riffModalSection.id, {
+              bassLockMode: 'midi_override',
+              rawNotes: notes,
+              sourceLabel,
+              shiftOctaveDown,
+            });
             setRiffModalSectionId(null);
           }}
           onClose={() => setRiffModalSectionId(null)}

@@ -14,6 +14,12 @@ export interface ParsedControlChange {
   channel: number;
 }
 
+export interface ParsedKeySignature {
+  tick: number;
+  sf: number;
+  mi: number;
+}
+
 export interface ParsedMidiTrack {
   index: number;
   name?: string;
@@ -21,6 +27,7 @@ export interface ParsedMidiTrack {
   hasChannel9: boolean;
   pitchBends: ParsedPitchBend[];
   controlChanges: ParsedControlChange[];
+  keySignatures: ParsedKeySignature[];
 }
 
 export interface ParsedMidiFile {
@@ -28,6 +35,7 @@ export interface ParsedMidiFile {
   ntrks: number;
   srcPPQ: number;
   bpm?: number;
+  keySignatures: ParsedKeySignature[];
   tracks: ParsedMidiTrack[];
 }
 
@@ -164,6 +172,7 @@ export function parseMidiFile(bytes: Uint8Array): ParsedMidiFile {
     ntrks,
     srcPPQ,
     bpm: detectedBpm,
+    keySignatures: tracks.flatMap((t) => t.keySignatures),
     tracks,
   };
 }
@@ -185,6 +194,7 @@ function parseTrackChunk(
   const notes: MidiNote[] = [];
   const pitchBends: ParsedPitchBend[] = [];
   const controlChanges: ParsedControlChange[] = [];
+  const keySignatures: ParsedKeySignature[] = [];
   // FIFO stack per channel:pitch to pair overlapping identical pitches cleanly
   const activeNotes = new Map<string, ActiveNoteEntry[]>();
 
@@ -252,6 +262,15 @@ function parseTrackChunk(
         if (mpqn > 0) {
           bpm = Math.round(60_000_000 / mpqn);
         }
+      } else if (metaType === 0x59 && metaLen === 2) {
+        const rawSf = bytes[offset];
+        const sf = rawSf > 127 ? rawSf - 256 : rawSf;
+        const mi = bytes[offset + 1];
+        keySignatures.push({
+          tick: normalizeTick(absTick, srcPPQ),
+          sf,
+          mi,
+        });
       } else if (metaType === 0x2f) {
         offset += metaLen;
         break;
@@ -351,6 +370,7 @@ function parseTrackChunk(
       hasChannel9,
       pitchBends,
       controlChanges,
+      keySignatures,
     },
     bpm,
   };
