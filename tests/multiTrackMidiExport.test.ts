@@ -204,4 +204,66 @@ describe('multiTrackMidiExport', () => {
       expect(gap === 0 || gap >= 180).toBe(true);
     }
   });
+
+  it('filters exported tracks by includedParts while preserving Conductor (Track 0) and exact byte parity when all parts selected', () => {
+    const song = createDefaultSongConfig('royal_jpop');
+    song.split808KickTrack = false;
+    song.exportOnlyActiveTracks = false;
+    song.sections = [
+      {
+        id: 'sec-part-filter',
+        type: 'Chorus',
+        name: 'Chorus',
+        bars: 4,
+        energy: 'High',
+        kickMode: 'acoustic',
+        chords: createUniformChordTimeline(['C', 'G', 'Am', 'F'], 4),
+      },
+    ];
+    const state = generateAllSections(song, undefined, 2026, true);
+
+    // 1. Drums + Bass only -> Conductor (Track 0 with KeySig) + Drums + Bass = 3 tracks only
+    const rhythmSet = new Set<'drums' | 'bass'>(['drums', 'bass']);
+    const rhythmRes = exportMultiTrackMidi(song, state, {
+      includedParts: rhythmSet,
+    });
+    const parsedRhythm = parseMidiFile(rhythmRes.bytes);
+    expect(rhythmRes.ntrks).toBe(3);
+    expect(parsedRhythm.ntrks).toBe(3);
+    expect(rhythmRes.trackNames).toEqual(['Conductor', 'Drums', 'Bass']);
+    expect(parsedRhythm.tracks.map((t) => t.name)).toEqual([
+      'Conductor',
+      'Drums',
+      'Bass',
+    ]);
+    expect(parsedRhythm.tracks[0].keySignatures.length).toBe(1);
+    expect(parsedRhythm.tracks[0].keySignatures[0].tick).toBe(0);
+
+    // 2. All parts explicitly selected -> byte-for-byte identical to default export
+    const defaultRes = exportMultiTrackMidi(song, state);
+    const allSelectedRes = exportMultiTrackMidi(song, state, {
+      includedParts: {
+        drums: true,
+        bass: true,
+        vocal: true,
+        keyboard: true,
+        pad: true,
+      },
+    });
+    expect(allSelectedRes.bytes).toEqual(defaultRes.bytes);
+    expect(allSelectedRes.trackNames).toEqual(defaultRes.trackNames);
+
+    // 3. Zero parts selected -> guarded (canExportMidi=false, exportMultiTrackMidi throws)
+    const emptyParts = {
+      drums: false,
+      bass: false,
+      vocal: false,
+      keyboard: false,
+      pad: false,
+    };
+    expect(canExportMidi(song, state, { includedParts: emptyParts })).toBe(false);
+    expect(() =>
+      exportMultiTrackMidi(song, state, { includedParts: emptyParts })
+    ).toThrow();
+  });
 });
