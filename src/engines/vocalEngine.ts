@@ -13,7 +13,10 @@ import {
   type NoteFunctionTag,
   type NoteRole,
   type ScaleType,
+  type VocalEndingMode,
   type VocalHarmonyMode,
+  type VocalStyleId,
+  type VocalTakeId,
   type VocalVoiceProfile,
 } from '../types/song';
 import { getActiveChordAtTick } from '../lib/chordTimeline';
@@ -60,6 +63,9 @@ export {
   type PhraseRole,
   type RhythmCell,
   type SyllableSlot,
+  type VocalEndingMode,
+  type VocalStyleId,
+  type VocalTakeId,
 };
 
 export const TPQN = 480 as const;
@@ -2432,8 +2438,12 @@ export function generateVocalNotes(input: EngineInput): MidiNote[] {
     'auto'
   ).trim();
 
+  const isExplicitMatrixStyle =
+    input.vocalStyle !== undefined || section.vocalStyle !== undefined;
   const isLegacyPureRap =
-    preset.startsWith('rap_') && preset !== 'rap_linkin_hybrid';
+    !isExplicitMatrixStyle &&
+    preset.startsWith('rap_') &&
+    preset !== 'rap_linkin_hybrid';
   if (isLegacyPureRap) {
     const keySemitone = noteNameToSemitone(song.key);
     const scalePcs = new Set(getScalePitchClasses(song.key, song.scale));
@@ -2445,17 +2455,37 @@ export function generateVocalNotes(input: EngineInput): MidiNote[] {
     }));
   }
 
-  // Execute Phase 2 Harmonic & Voice-Profile Aware Dialectical Vocal Pipeline
+  // Execute Phase 2/3 Harmonic & 3x3 Matrix + 4-Way Ending Vocal Pipeline
   return generateHarmonicVocalResult(input).midiNotes;
 }
 
 // ===========================================================================
-// Phase 2: Chord-Aware & Voice-Profile Aware Harmonic Vocal Engine
+// Phase 2 & 3x3 Matrix + 4-Way Phrase Ending Harmonic Vocal Engine
 // ===========================================================================
+
+export function resolveEffectiveVocalEnding(
+  ending: VocalEndingMode | undefined,
+  sectionRole: NormalizedSectionRole,
+  genreId: MasterGenre
+): Exclude<VocalEndingMode, 'auto'> {
+  if (ending && ending !== 'auto') {
+    return ending;
+  }
+  if (sectionRole === 'pre_chorus') {
+    return 'dominant';
+  }
+  if (sectionRole === 'chorus') {
+    return genreId === 'chill_ballad' ? 'tonic' : 'ascend';
+  }
+  return 'tonic';
+}
 
 export interface HarmonicVocalGenerationResult {
   readonly genreId: MasterGenre;
   readonly voiceProfile: VocalVoiceProfile;
+  readonly vocalStyle: VocalStyleId;
+  readonly vocalTake: VocalTakeId;
+  readonly effectiveEnding: Exclude<VocalEndingMode, 'auto'>;
   readonly chordEvents: readonly ChordEvent[];
   readonly scheme: EightBarScheme;
   readonly thesisForm: ChapterInternalForm;
@@ -2463,6 +2493,267 @@ export interface HarmonicVocalGenerationResult {
   readonly notes: GeneratedVocalNote[];
   readonly midiNotes: MidiNote[];
   readonly vocalMinMidiByBar: Array<number | null>;
+}
+
+const MATRIX_2BAR_TEMPLATES: Readonly<
+  Record<VocalStyleId, Readonly<Record<VocalTakeId, readonly (readonly DialecticalCellSlot[])[]>>>
+> = {
+  straight: {
+    A: [
+      [
+        { relTick: 0, gridDuration: 240, gateRatio: 0.85, role: 'anchor', tag: 'core', velocityScale: 0.98 },
+        { relTick: 240, gridDuration: 240, gateRatio: 0.85, role: 'step', tag: 'core', velocityScale: 0.92 },
+        { relTick: 480, gridDuration: 480, gateRatio: 0.88, role: 'anchor', tag: 'core', velocityScale: 1.0 },
+        { relTick: 960, gridDuration: 240, gateRatio: 0.85, role: 'step', tag: 'arc', velocityScale: 0.94 },
+        { relTick: 1200, gridDuration: 480, gateRatio: 0.88, role: 'hook_stab', tag: 'arc', velocityScale: 1.04, isPeakSlot: true },
+        { relTick: 1920, gridDuration: 480, gateRatio: 0.88, role: 'step', tag: 'arc', velocityScale: 0.96 },
+        { relTick: 2400, gridDuration: 720, gateRatio: 0.92, role: 'top_fall', tag: 'cadence', velocityScale: 1.05 },
+      ],
+      [
+        { relTick: 240, gridDuration: 240, gateRatio: 0.85, role: 'pickup', tag: 'core', velocityScale: 0.9 },
+        { relTick: 480, gridDuration: 480, gateRatio: 0.88, role: 'anchor', tag: 'core', velocityScale: 0.98 },
+        { relTick: 960, gridDuration: 480, gateRatio: 0.88, role: 'hook_stab', tag: 'arc', velocityScale: 1.02, isPeakSlot: true },
+        { relTick: 1440, gridDuration: 240, gateRatio: 0.85, role: 'step', tag: 'passing', velocityScale: 0.92 },
+        { relTick: 1920, gridDuration: 240, gateRatio: 0.85, role: 'step', tag: 'arc', velocityScale: 0.94 },
+        { relTick: 2160, gridDuration: 240, gateRatio: 0.85, role: 'step', tag: 'arc', velocityScale: 0.96 },
+        { relTick: 2400, gridDuration: 720, gateRatio: 0.92, role: 'phrase_land', tag: 'cadence', velocityScale: 1.05 },
+      ],
+    ],
+    B: [
+      [
+        { relTick: 0, gridDuration: 240, gateRatio: 0.8, role: 'anchor', tag: 'core', velocityScale: 1.0 },
+        { relTick: 240, gridDuration: 120, gateRatio: 0.78, role: 'rush', tag: 'arc', velocityScale: 0.92 },
+        { relTick: 360, gridDuration: 360, gateRatio: 0.85, role: 'sync_tie', tag: 'arc', velocityScale: 1.04, isPeakSlot: true },
+        { relTick: 720, gridDuration: 240, gateRatio: 0.8, role: 'step', tag: 'arc', velocityScale: 0.94 },
+        { relTick: 960, gridDuration: 240, gateRatio: 0.8, role: 'hook_stab', tag: 'arc', velocityScale: 1.02 },
+        { relTick: 1200, gridDuration: 240, gateRatio: 0.8, role: 'rush', tag: 'arc', velocityScale: 0.96 },
+        { relTick: 1680, gridDuration: 480, gateRatio: 0.88, role: 'sync_tie', tag: 'arc', velocityScale: 1.08, isPeakSlot: true },
+        { relTick: 2160, gridDuration: 240, gateRatio: 0.82, role: 'step', tag: 'arc', velocityScale: 0.96 },
+        { relTick: 2400, gridDuration: 600, gateRatio: 0.9, role: 'top_fall', tag: 'cadence', velocityScale: 1.08 },
+      ],
+      [
+        { relTick: 240, gridDuration: 120, gateRatio: 0.78, role: 'pickup', tag: 'core', velocityScale: 0.92 },
+        { relTick: 360, gridDuration: 360, gateRatio: 0.85, role: 'sync_tie', tag: 'core', velocityScale: 1.02, isPeakSlot: true },
+        { relTick: 720, gridDuration: 120, gateRatio: 0.78, role: 'rush', tag: 'arc', velocityScale: 0.94 },
+        { relTick: 840, gridDuration: 360, gateRatio: 0.85, role: 'sync_tie', tag: 'arc', velocityScale: 1.04 },
+        { relTick: 1200, gridDuration: 240, gateRatio: 0.8, role: 'step', tag: 'arc', velocityScale: 0.96 },
+        { relTick: 1680, gridDuration: 480, gateRatio: 0.88, role: 'hook_stab', tag: 'arc', velocityScale: 1.06, isPeakSlot: true },
+        { relTick: 2160, gridDuration: 360, gateRatio: 0.85, role: 'sync_tie', tag: 'arc', velocityScale: 1.0 },
+        { relTick: 2520, gridDuration: 600, gateRatio: 0.9, role: 'top_fall', tag: 'cadence', velocityScale: 1.08 },
+      ],
+    ],
+    C: [
+      [
+        { relTick: 0, gridDuration: 720, gateRatio: 0.94, role: 'anchor', tag: 'core', velocityScale: 0.98 },
+        { relTick: 1200, gridDuration: 600, gateRatio: 0.92, role: 'sync_tie', tag: 'arc', velocityScale: 1.02, isPeakSlot: true },
+        { relTick: 2400, gridDuration: 960, gateRatio: 0.94, role: 'phrase_land', tag: 'cadence', velocityScale: 1.05 },
+      ],
+      [
+        { relTick: 480, gridDuration: 960, gateRatio: 0.94, role: 'anchor', tag: 'core', velocityScale: 1.0 },
+        { relTick: 1920, gridDuration: 480, gateRatio: 0.92, role: 'step', tag: 'arc', velocityScale: 0.94 },
+        { relTick: 2640, gridDuration: 960, gateRatio: 0.94, role: 'top_fall', tag: 'cadence', velocityScale: 1.05, isPeakSlot: true },
+      ],
+    ],
+  },
+  bounce: {
+    A: [
+      [
+        { relTick: 0, gridDuration: 300, gateRatio: 0.82, role: 'anchor', tag: 'core', velocityScale: 0.98 },
+        { relTick: 300, gridDuration: 180, gateRatio: 0.8, role: 'step', tag: 'core', velocityScale: 0.9 },
+        { relTick: 480, gridDuration: 300, gateRatio: 0.82, role: 'anchor', tag: 'core', velocityScale: 0.96 },
+        { relTick: 780, gridDuration: 180, gateRatio: 0.8, role: 'step', tag: 'arc', velocityScale: 0.92 },
+        { relTick: 960, gridDuration: 480, gateRatio: 0.88, role: 'hook_stab', tag: 'arc', velocityScale: 1.04, isPeakSlot: true },
+        { relTick: 1920, gridDuration: 360, gateRatio: 0.84, role: 'step', tag: 'arc', velocityScale: 0.96 },
+        { relTick: 2280, gridDuration: 120, gateRatio: 0.8, role: 'pickup', tag: 'arc', velocityScale: 0.92 },
+        { relTick: 2400, gridDuration: 720, gateRatio: 0.92, role: 'top_fall', tag: 'cadence', velocityScale: 1.05 },
+      ],
+      [
+        { relTick: 0, gridDuration: 360, gateRatio: 0.84, role: 'anchor', tag: 'core', velocityScale: 0.98 },
+        { relTick: 360, gridDuration: 120, gateRatio: 0.8, role: 'pickup', tag: 'core', velocityScale: 0.9 },
+        { relTick: 480, gridDuration: 300, gateRatio: 0.82, role: 'anchor', tag: 'core', velocityScale: 0.98 },
+        { relTick: 780, gridDuration: 180, gateRatio: 0.8, role: 'step', tag: 'arc', velocityScale: 0.92 },
+        { relTick: 960, gridDuration: 480, gateRatio: 0.88, role: 'hook_stab', tag: 'arc', velocityScale: 1.04, isPeakSlot: true },
+        { relTick: 1920, gridDuration: 300, gateRatio: 0.84, role: 'step', tag: 'arc', velocityScale: 0.95 },
+        { relTick: 2220, gridDuration: 180, gateRatio: 0.82, role: 'step', tag: 'arc', velocityScale: 0.94 },
+        { relTick: 2400, gridDuration: 720, gateRatio: 0.92, role: 'phrase_land', tag: 'cadence', velocityScale: 1.05 },
+      ],
+    ],
+    B: [
+      [
+        { relTick: 180, gridDuration: 300, gateRatio: 0.8, role: 'pickup', tag: 'core', velocityScale: 0.94 },
+        { relTick: 480, gridDuration: 300, gateRatio: 0.82, role: 'anchor', tag: 'core', velocityScale: 1.0 },
+        { relTick: 780, gridDuration: 180, gateRatio: 0.78, role: 'rush', tag: 'arc', velocityScale: 0.94 },
+        { relTick: 960, gridDuration: 360, gateRatio: 0.84, role: 'hook_stab', tag: 'arc', velocityScale: 1.06, isPeakSlot: true },
+        { relTick: 1320, gridDuration: 120, gateRatio: 0.78, role: 'rush', tag: 'arc', velocityScale: 0.92 },
+        { relTick: 1680, gridDuration: 480, gateRatio: 0.88, role: 'sync_tie', tag: 'arc', velocityScale: 1.08, isPeakSlot: true },
+        { relTick: 2160, gridDuration: 300, gateRatio: 0.82, role: 'step', tag: 'arc', velocityScale: 0.98 },
+        { relTick: 2460, gridDuration: 180, gateRatio: 0.8, role: 'step', tag: 'arc', velocityScale: 0.95 },
+        { relTick: 2640, gridDuration: 600, gateRatio: 0.9, role: 'top_fall', tag: 'cadence', velocityScale: 1.08 },
+      ],
+    ],
+    C: [
+      [
+        { relTick: 300, gridDuration: 660, gateRatio: 0.92, role: 'pickup', tag: 'core', velocityScale: 0.96 },
+        { relTick: 1440, gridDuration: 480, gateRatio: 0.9, role: 'sync_tie', tag: 'arc', velocityScale: 1.02, isPeakSlot: true },
+        { relTick: 2280, gridDuration: 120, gateRatio: 0.82, role: 'pickup', tag: 'arc', velocityScale: 0.92 },
+        { relTick: 2400, gridDuration: 960, gateRatio: 0.94, role: 'phrase_land', tag: 'cadence', velocityScale: 1.05 },
+      ],
+      [
+        { relTick: 0, gridDuration: 360, gateRatio: 0.9, role: 'anchor', tag: 'core', velocityScale: 0.96 },
+        { relTick: 360, gridDuration: 600, gateRatio: 0.92, role: 'sync_tie', tag: 'arc', velocityScale: 1.02, isPeakSlot: true },
+        { relTick: 1920, gridDuration: 300, gateRatio: 0.9, role: 'step', tag: 'arc', velocityScale: 0.94 },
+        { relTick: 2220, gridDuration: 960, gateRatio: 0.94, role: 'top_fall', tag: 'cadence', velocityScale: 1.05 },
+      ],
+    ],
+  },
+  rap: {
+    A: [
+      [
+        { relTick: 0, gridDuration: 120, gateRatio: 0.72, role: 'hook_stab', tag: 'core', velocityScale: 1.04 },
+        { relTick: 120, gridDuration: 120, gateRatio: 0.72, role: 'rush', tag: 'core', velocityScale: 0.92 },
+        { relTick: 240, gridDuration: 240, gateRatio: 0.75, role: 'anchor', tag: 'core', velocityScale: 0.98 },
+        { relTick: 480, gridDuration: 120, gateRatio: 0.72, role: 'hook_stab', tag: 'arc', velocityScale: 1.04 },
+        { relTick: 600, gridDuration: 120, gateRatio: 0.72, role: 'rush', tag: 'arc', velocityScale: 0.92 },
+        { relTick: 960, gridDuration: 240, gateRatio: 0.75, role: 'anchor', tag: 'arc', velocityScale: 1.0 },
+        { relTick: 1200, gridDuration: 120, gateRatio: 0.72, role: 'rush', tag: 'arc', velocityScale: 0.94 },
+        { relTick: 1320, gridDuration: 120, gateRatio: 0.72, role: 'rush', tag: 'arc', velocityScale: 0.96 },
+        { relTick: 1920, gridDuration: 120, gateRatio: 0.72, role: 'hook_stab', tag: 'core', velocityScale: 1.04 },
+        { relTick: 2040, gridDuration: 120, gateRatio: 0.72, role: 'rush', tag: 'core', velocityScale: 0.92 },
+        { relTick: 2160, gridDuration: 240, gateRatio: 0.75, role: 'anchor', tag: 'arc', velocityScale: 1.0 },
+        { relTick: 2640, gridDuration: 360, gateRatio: 0.8, role: 'hard_cut', tag: 'cadence', velocityScale: 1.06, isPeakSlot: true },
+      ],
+    ],
+    B: [
+      [
+        { relTick: 0, gridDuration: 180, gateRatio: 0.75, role: 'hook_stab', tag: 'core', velocityScale: 1.04 },
+        { relTick: 180, gridDuration: 180, gateRatio: 0.75, role: 'rush', tag: 'core', velocityScale: 0.94 },
+        { relTick: 360, gridDuration: 120, gateRatio: 0.72, role: 'rush', tag: 'core', velocityScale: 0.96 },
+        { relTick: 480, gridDuration: 180, gateRatio: 0.75, role: 'hook_stab', tag: 'arc', velocityScale: 1.05 },
+        { relTick: 660, gridDuration: 180, gateRatio: 0.75, role: 'rush', tag: 'arc', velocityScale: 0.95 },
+        { relTick: 840, gridDuration: 120, gateRatio: 0.72, role: 'pickup', tag: 'arc', velocityScale: 0.98 },
+        { relTick: 1200, gridDuration: 180, gateRatio: 0.75, role: 'rush', tag: 'arc', velocityScale: 0.96 },
+        { relTick: 1380, gridDuration: 180, gateRatio: 0.75, role: 'rush', tag: 'arc', velocityScale: 0.94 },
+        { relTick: 1560, gridDuration: 120, gateRatio: 0.72, role: 'pickup', tag: 'arc', velocityScale: 1.0 },
+        { relTick: 1920, gridDuration: 180, gateRatio: 0.75, role: 'hook_stab', tag: 'core', velocityScale: 1.05 },
+        { relTick: 2100, gridDuration: 180, gateRatio: 0.75, role: 'rush', tag: 'arc', velocityScale: 0.96 },
+        { relTick: 2280, gridDuration: 120, gateRatio: 0.72, role: 'rush', tag: 'arc', velocityScale: 0.94 },
+        { relTick: 2640, gridDuration: 360, gateRatio: 0.82, role: 'hard_cut', tag: 'cadence', velocityScale: 1.08, isPeakSlot: true },
+      ],
+    ],
+    C: [
+      [
+        { relTick: 0, gridDuration: 240, gateRatio: 0.72, role: 'hook_stab', tag: 'core', velocityScale: 1.06 },
+        { relTick: 360, gridDuration: 120, gateRatio: 0.7, role: 'pickup', tag: 'core', velocityScale: 0.96 },
+        { relTick: 480, gridDuration: 480, gateRatio: 0.82, role: 'hard_cut', tag: 'arc', velocityScale: 1.08 },
+        { relTick: 1920, gridDuration: 240, gateRatio: 0.72, role: 'hook_stab', tag: 'core', velocityScale: 1.05 },
+        { relTick: 2280, gridDuration: 120, gateRatio: 0.7, role: 'pickup', tag: 'arc', velocityScale: 0.96 },
+        { relTick: 2400, gridDuration: 600, gateRatio: 0.84, role: 'hard_cut', tag: 'cadence', velocityScale: 1.1, isPeakSlot: true },
+      ],
+    ],
+  },
+};
+
+function buildMatrixChapterSlots(options: {
+  vocalStyle: VocalStyleId;
+  vocalTake: VocalTakeId;
+  effectiveEnding: Exclude<VocalEndingMode, 'auto'>;
+  chapterLenTicks: number;
+  isFinalChapter: boolean;
+  activePreset: string;
+  rng: () => number;
+}): DialecticalCellSlot[] {
+  const {
+    vocalStyle,
+    vocalTake,
+    effectiveEnding,
+    chapterLenTicks,
+    isFinalChapter,
+    activePreset,
+    rng,
+  } = options;
+
+  if (activePreset === 'jrock_anticipation' && chapterLenTicks > BAR_TICKS) {
+    return ANTICIPATION_TEMPLATE_2BAR.filter((s) => s.relTick < chapterLenTicks).map(
+      (s) => ({ ...s })
+    );
+  }
+
+  const bank = MATRIX_2BAR_TEMPLATES[vocalStyle][vocalTake];
+  const tpl = bank[Math.floor(rng() * bank.length)] ?? bank[0];
+  let slots: DialecticalCellSlot[] = tpl
+    .filter((s) => s.relTick < chapterLenTicks)
+    .map((s) => {
+      const maxD = Math.max(60, Math.floor((chapterLenTicks - s.relTick) / 60) * 60);
+      const qDur = Math.max(60, Math.min(maxD, Math.round(s.gridDuration / 60) * 60));
+      return { ...s, gridDuration: qDur };
+    });
+
+  if (slots.length === 0) {
+    slots = [
+      {
+        relTick: 0,
+        gridDuration: Math.min(480, Math.floor(chapterLenTicks / 60) * 60),
+        gateRatio: 0.9,
+        role: 'anchor',
+        tag: 'cadence',
+        velocityScale: 1.0,
+      },
+    ];
+  }
+
+  // On the very final note of the section with ascend (or long non-rap ending),
+  // ensure a sustained 480..960-tick climax/landing hold when room exists.
+  if (
+    isFinalChapter &&
+    effectiveEnding === 'ascend' &&
+    activePreset !== 'jrock_anticipation' &&
+    slots.length >= 1
+  ) {
+    const lastIdx = slots.length - 1;
+    const last = slots[lastIdx];
+    const desiredMin = Math.min(720, Math.floor(chapterLenTicks / 60) * 60);
+    const maxAvailFromLast = Math.floor((chapterLenTicks - last.relTick) / 60) * 60;
+    if (maxAvailFromLast < 480 && last.relTick >= 480) {
+      // Shift start slightly earlier (still >= prev end + 60) or grow duration up to 720t
+      const prevEnd =
+        lastIdx > 0
+          ? slots[lastIdx - 1].relTick + slots[lastIdx - 1].gridDuration
+          : 0;
+      const candidateStart = Math.max(
+        prevEnd,
+        Math.floor((chapterLenTicks - desiredMin) / 60) * 60
+      );
+      const snappedStart = Math.floor(candidateStart / 60) * 60;
+      const dur = Math.min(
+        960,
+        Math.max(480, Math.floor((chapterLenTicks - snappedStart) / 60) * 60)
+      );
+      slots[lastIdx] = {
+        ...last,
+        relTick: snappedStart,
+        gridDuration: dur,
+        gateRatio: 0.95,
+        role: 'phrase_land',
+        tag: 'cadence',
+        isPeakSlot: true,
+      };
+    } else if (maxAvailFromLast >= 480) {
+      const targetDur = Math.min(
+        960,
+        Math.max(480, Math.min(maxAvailFromLast, 720))
+      );
+      slots[lastIdx] = {
+        ...last,
+        gridDuration: Math.floor(targetDur / 60) * 60,
+        gateRatio: 0.95,
+        role: 'phrase_land',
+        tag: 'cadence',
+        isPeakSlot: true,
+      };
+    }
+  }
+
+  return slots;
 }
 
 /**
@@ -2585,6 +2876,16 @@ export function generateHarmonicVocalResult(
   const sectionRole = normalizeSectionRole(section.type, section.energy, section.name);
 
   const voice = input.vocalVoiceProfile ?? resolveVocalVoiceProfile(song);
+  const vocalStyle: VocalStyleId =
+    input.vocalStyle ?? section.vocalStyle ?? 'straight';
+  const vocalTake: VocalTakeId =
+    input.vocalTake ?? section.vocalTake ?? style;
+  const effectiveEnding = resolveEffectiveVocalEnding(
+    input.vocalEnding ?? section.vocalEnding ?? 'auto',
+    sectionRole,
+    genreId
+  );
+
   const chordEvents: readonly ChordEvent[] =
     input.chordEvents && input.chordEvents.length > 0
       ? input.chordEvents
@@ -2593,7 +2894,7 @@ export function generateHarmonicVocalResult(
   // Stage-isolated deterministic RNG (independent of keyboard/pad settings)
   const vocalSubSeed = deriveSubSeed(
     seed,
-    `vocal:sec${input.sectionIndex}:${style}:${voice.id}:${voice.minMidi}-${voice.maxMidi}`
+    `vocal:sec${input.sectionIndex}:${style}:${vocalStyle}:${vocalTake}:${effectiveEnding}:${voice.id}:${voice.minMidi}-${voice.maxMidi}`
   );
   const rng = mulberry32(vocalSubSeed);
 
@@ -2795,7 +3096,14 @@ export function generateHarmonicVocalResult(
     ...rfProfile.fallConfig,
     dropSemitones: profile.fallSemitones,
   };
-  const temperature = style === 'A' ? 0.55 : style === 'B' ? 0.75 : 0.95;
+  const temperature =
+    vocalTake === 'B' ? 0.92 : vocalTake === 'C' ? 0.6 : 0.45;
+  const useLegacyDensityForm =
+    input.vocalStyle === undefined &&
+    section.vocalStyle === undefined &&
+    input.vocalTake === undefined &&
+    section.vocalTake === undefined &&
+    (vocalDensity <= 1.5 || vocalDensity >= 4.5);
 
   // Track reference Thesis step contour & climax peak quota
   let referenceThesisDeltas: number[] | null = null;
@@ -2820,6 +3128,7 @@ export function generateHarmonicVocalResult(
     const ch = chapters[cIdx];
     const chEndTick = Math.min(sectionEndTick, ch.startTick + CHAPTER_TICKS);
     const chLen = chEndTick - ch.startTick;
+    const isFinalChapter = cIdx === chapters.length - 1;
 
     // Attenuate syncopated pickup when BPM > 120
     const attenuatedProfile: GenreDialecticalProfile =
@@ -2832,24 +3141,38 @@ export function generateHarmonicVocalResult(
           }
         : profile;
 
-    const slots = buildChapterSlotsForForm({
-      chapter: ch,
-      chapterLenTicks: chLen,
-      profile: attenuatedProfile,
-      rfProfile,
-      vocalDensity,
-      activePreset,
-      formOverride,
-      thesisZone1Template,
-      thesisContinuousTemplate,
-      rng,
-    });
+    const slots = useLegacyDensityForm
+      ? buildChapterSlotsForForm({
+          chapter: ch,
+          chapterLenTicks: chLen,
+          profile: attenuatedProfile,
+          rfProfile,
+          vocalDensity,
+          activePreset,
+          formOverride,
+          thesisZone1Template,
+          thesisContinuousTemplate,
+          rng,
+        })
+      : buildMatrixChapterSlots({
+          vocalStyle,
+          vocalTake,
+          effectiveEnding,
+          chapterLenTicks: chLen,
+          isFinalChapter,
+          activePreset,
+          rng,
+        });
 
     const isChorusSecondHalfClimax =
-      sectionRole === 'chorus' &&
+      (sectionRole === 'chorus' || effectiveEnding === 'ascend') &&
       (ch.role === 'synthesis' || cIdx >= Math.floor(chapters.length / 2));
 
-    const chapterCenter =
+    const endingWindowStartTick = Math.max(
+      0,
+      sectionEndTick - (section.bars <= 2 ? 960 : BAR_TICKS * 2)
+    );
+    const chapterCenterBase =
       sectionCenter +
       (ch.role === 'synthesis' ? 2.5 : ch.role === 'antithesis' ? -2.0 : 0);
 
@@ -2868,7 +3191,7 @@ export function generateHarmonicVocalResult(
           : chEndTick;
       const maxSpan = Math.max(60, nextSlotStart - absStart);
       let gridDur = Math.max(
-        120,
+        60,
         Math.min(s.gridDuration, maxSpan)
       );
       // Quantize gridDur cleanly to 60-tick units
@@ -2899,7 +3222,7 @@ export function generateHarmonicVocalResult(
           if (prevGen && prevGen.gateDuration >= 600) {
             const trimmedDur = Math.max(
               240,
-              Math.min(prevGen.gateDuration, absStart - 240 - prevGen.startTick)
+              Math.floor((Math.min(prevGen.gateDuration, absStart - 240 - prevGen.startTick)) / 60) * 60
             );
             if (trimmedDur >= 240 && absStart - (prevGen.startTick + trimmedDur) >= 240) {
               generatedNotes[generatedNotes.length - 1] = {
@@ -2923,15 +3246,67 @@ export function generateHarmonicVocalResult(
           ? chordEvents[nextChordIdx]
           : undefined;
 
-      // Determine ceiling for this slot (reserving top 1..2 semitones for Chorus 2nd-half climax, max 2 hits)
-      const allowClimaxTop =
-        isChorusSecondHalfClimax &&
-        climaxHighCount < 2 &&
-        Boolean(s.isPeakSlot || ch.role === 'synthesis');
-      const slotMaxMidi = allowClimaxTop ? voice.maxMidi : nonClimaxMaxMidi;
-      const slotMinMidi = voice.minMidi;
+      const remainingInFinalChapter = isFinalChapter
+        ? slots.length - 1 - sIdx
+        : 99;
+      const isVeryFinalNote = isFinalChapter && remainingInFinalChapter === 0;
+      const isInAscendZone =
+        effectiveEnding === 'ascend' &&
+        (absStart >= endingWindowStartTick ||
+          (isFinalChapter && remainingInFinalChapter <= 3));
 
-      // Build candidate pitches strictly inside [voice.minMidi, slotMaxMidi]
+      // Compute dynamic tessitura center (ramps toward voice.maxMidi - 2 in ascend ending)
+      let slotCenter = chapterCenterBase;
+      if (isInAscendZone) {
+        const spanTicks = Math.max(1, sectionEndTick - endingWindowStartTick);
+        const progress = Math.max(
+          0,
+          Math.min(1, (absStart - endingWindowStartTick) / spanTicks)
+        );
+        const maxSafeAscend =
+          prevVocalAvgPitch !== undefined && !Number.isNaN(prevVocalAvgPitch)
+            ? Math.min(voice.maxMidi - 2, prevVocalAvgPitch + 7.5)
+            : voice.maxMidi - 2;
+        const ascendTopTarget = Math.max(chapterCenterBase + 1, maxSafeAscend);
+        slotCenter =
+          chapterCenterBase + (ascendTopTarget - chapterCenterBase) * progress;
+      } else if (
+        effectiveEnding === 'dominant' &&
+        absStart >= endingWindowStartTick
+      ) {
+        slotCenter = Math.min(
+          voice.maxMidi - 2,
+          voice.optimalTessituraCenter + 2
+        );
+      } else if (
+        effectiveEnding === 'tonic' &&
+        absStart >= endingWindowStartTick
+      ) {
+        slotCenter = Math.max(
+          voice.minMidi + 2,
+          Math.min(chapterCenterBase, voice.optimalTessituraCenter) - 1
+        );
+      }
+
+      // Determine ceiling/floor for this slot
+      const allowClimaxTop =
+        (isChorusSecondHalfClimax &&
+          climaxHighCount < 2 &&
+          Boolean(s.isPeakSlot || ch.role === 'synthesis')) ||
+        isInAscendZone ||
+        vocalTake === 'B';
+
+      let slotMaxMidi = allowClimaxTop ? voice.maxMidi : nonClimaxMaxMidi;
+      let slotMinMidi = voice.minMidi;
+
+      if (vocalStyle === 'rap' && !isInAscendZone) {
+        // Restrict rap to narrow +/- 4 semitones around tessitura center
+        const rapCenter = Math.round(voice.optimalTessituraCenter + (sectionRole === 'chorus' ? 1 : -1));
+        slotMinMidi = Math.max(voice.minMidi, rapCenter - 4);
+        slotMaxMidi = Math.min(voice.maxMidi, rapCenter + 4);
+      }
+
+      // Build candidate pitches strictly inside [slotMinMidi, slotMaxMidi]
       const ctSet = new Set(effChord.chordTonePcs);
       const gtSet = new Set(effChord.guideTonePcs);
       const atSet = new Set(effChord.availableTensionPcs);
@@ -2939,6 +3314,7 @@ export function generateHarmonicVocalResult(
       const hookSet = new Set(effChord.hookPcs);
       const chordScaleSet = new Set(effChord.scalePcs);
       const nextCtSet = nextChord ? new Set(nextChord.chordTonePcs) : null;
+      const propulsiveDegrees = new Set([2, 5, 7, 9, 10, 11]); // 2, 4, 5, 6, b7, 7 relative to localKeyRootPc
 
       const isStrongOrLong =
         gridDur >= 480 || STRONG_BEAT_REL_TICKS.has(s.relTick) || s.tag === 'cadence';
@@ -2998,9 +3374,57 @@ export function generateHarmonicVocalResult(
           hScore = -8.0;
         }
 
-        // Cadence tonic gravity at final note of section
-        if (ch.isStrongCadence && sIdx === slots.length - 1 && pc === keySemitone) {
-          hScore += 2.2;
+        // Take C: reward lush tensions (9th, maj7, 13th) and guide tones on sustained notes
+        if (vocalTake === 'C') {
+          if (atSet.has(pc)) {
+            hScore += gridDur >= 480 ? 3.8 : 2.2;
+          } else if (gtSet.has(pc)) {
+            hScore += 3.0;
+          }
+        }
+
+        // Phrase Ending (4-way) harmonic & register rules
+        if (isVeryFinalNote) {
+          if (effectiveEnding === 'dominant') {
+            // Dominant/floating retention: strongly penalize localKeyRootPc, reward 5/7/2/4/6 chord/tension tones
+            if (pc === keySemitone) {
+              hScore -= 28.0;
+            } else {
+              const relDeg = ((pc - keySemitone) % 12 + 12) % 12;
+              if ((ctSet.has(pc) || gtSet.has(pc) || atSet.has(pc)) && !avSet.has(pc)) {
+                hScore += 7.5;
+              }
+              if (propulsiveDegrees.has(relDeg)) {
+                hScore += 3.2;
+              }
+            }
+          } else if (effectiveEnding === 'tonic') {
+            if (pc === keySemitone) {
+              hScore += 7.8;
+            } else if (
+              pc === (keySemitone + 3) % 12 ||
+              pc === (keySemitone + 4) % 12
+            ) {
+              hScore += 3.8;
+            } else if (pc === (keySemitone + 7) % 12) {
+              hScore += 3.2;
+            }
+          } else if (effectiveEnding === 'ascend') {
+            // Climax top target [maxMidi - 4, maxMidi] on chord tone or beautiful tension (maj7/9th)
+            const ascendFloor =
+              prevVocalAvgPitch !== undefined && !Number.isNaN(prevVocalAvgPitch)
+                ? Math.min(Math.max(voice.minMidi, voice.maxMidi - 4), Math.round(prevVocalAvgPitch + 8))
+                : Math.max(voice.minMidi, voice.maxMidi - 4);
+            if (p >= ascendFloor) {
+              if (ctSet.has(pc) || gtSet.has(pc) || atSet.has(pc)) {
+                hScore += 8.8;
+              } else {
+                hScore += 4.2;
+              }
+            } else {
+              hScore -= 14.0;
+            }
+          }
         }
 
         // 2. K(p, effChord, nextChord): Non-diatonic color-tone hook & smooth resolution
@@ -3033,26 +3457,75 @@ export function generateHarmonicVocalResult(
           if (resolvesClose) kScore += 1.0;
         }
 
-        // 3. Prox(p, prevP): Melodic proximity & anti-monotone
+        // 3. Prox(p, prevP): Style & Take aware interval preference
         let proxScore = 0;
         if (prevNotePitch !== undefined) {
           const dist = Math.abs(p - prevNotePitch);
-          if (dist === 0) {
-            proxScore = samePitchRun >= 3 ? -2.2 : 0.9;
-          } else if (dist <= 2) {
-            proxScore = 2.5;
-          } else if (dist <= 4) {
-            proxScore = 1.3;
-          } else if (dist === 5 || dist === 7) {
-            proxScore = s.isPeakSlot ? 1.1 : -0.5;
-          } else if (dist === 6) {
-            proxScore = -6.0; // Avoid melodic tritone leap
+          if (vocalStyle === 'rap') {
+            if (dist === 0) {
+              proxScore = samePitchRun >= 5 ? -1.2 : 3.2;
+            } else if (dist <= 2) {
+              proxScore = 2.0;
+            } else if (dist <= 4) {
+              proxScore = -1.5;
+            } else {
+              proxScore = -8.0;
+            }
+          } else if (vocalTake === 'B') {
+            // Take B (跳躍・ドライブ): lower stepwise bias, strong 5th-to-octave leap bonus!
+            if (dist === 0) {
+              proxScore = -1.5;
+            } else if (dist <= 2) {
+              proxScore = 0.5;
+            } else if (dist <= 4) {
+              proxScore = 1.8;
+            } else if (dist === 5) {
+              proxScore = 2.4;
+            } else if (dist === 6) {
+              proxScore = -5.0;
+            } else if (dist >= 7 && dist <= 12) {
+              proxScore = 4.6;
+            } else {
+              proxScore = -5.0 - (dist - 12) * 1.4;
+            }
           } else {
-            proxScore = -4.5 - (dist - 7) * 1.3;
+            // Take A (王道) / Take C (タメ)
+            const stepBonus = vocalTake === 'A' ? 3.2 : 2.3;
+            if (dist === 0) {
+              proxScore = samePitchRun >= 3 ? -2.2 : 0.9;
+            } else if (dist <= 2) {
+              proxScore = stepBonus;
+            } else if (dist <= 4) {
+              proxScore = 1.4;
+            } else if (dist === 5 || dist === 7) {
+              proxScore = s.isPeakSlot ? 1.5 : -0.4;
+            } else if (dist === 6) {
+              proxScore = -6.0;
+            } else {
+              proxScore = -4.5 - (dist - 7) * 1.3;
+            }
           }
 
-          // Guard chapter-end upward leap
-          if (sIdx === slots.length - 1) {
+          // Ending contour enforcement for last 3..4 notes
+          if (effectiveEnding === 'ascend' && isFinalChapter && remainingInFinalChapter <= 3) {
+            const delta = p - prevNotePitch;
+            if (delta >= 1 && delta <= 4) {
+              proxScore += 5.5;
+            } else if (delta >= 5 && delta <= 7) {
+              proxScore += 3.5;
+            } else if (delta === 0) {
+              proxScore -= 1.8;
+            } else if (delta < 0) {
+              proxScore -= 8.0;
+            }
+          } else if (sIdx === slots.length - 1 && effectiveEnding === 'tonic') {
+            const delta = p - prevNotePitch;
+            if (delta <= 0 && delta >= -4) {
+              proxScore += 2.5;
+            } else if (delta > 0) {
+              proxScore -= 5.0;
+            }
+          } else if (sIdx === slots.length - 1 && !isInAscendZone && vocalTake !== 'B') {
             const maxEndUp = ch.isRunwayToSynthesis ? 2 : 0;
             if (p - prevNotePitch > maxEndUp) {
               proxScore -= 6.0;
@@ -3062,7 +3535,12 @@ export function generateHarmonicVocalResult(
 
         // 4. Rev(p, prevP, prevDelta): Post-skip (>= 5st) gap-fill reversal
         let revScore = 0;
-        if (prevNotePitch !== undefined && Math.abs(prevDelta) >= 5) {
+        if (
+          prevNotePitch !== undefined &&
+          Math.abs(prevDelta) >= 5 &&
+          vocalTake !== 'B' &&
+          !isInAscendZone
+        ) {
           const currStep = p - prevNotePitch;
           if (currStep * prevDelta < 0 && Math.abs(currStep) >= 1 && Math.abs(currStep) <= 3) {
             revScore = 3.4;
@@ -3073,37 +3551,51 @@ export function generateHarmonicVocalResult(
 
         // 5. Cont(p): Dialectical Thesis contour preservation across changing chords
         let contScore = 0;
-        if (prevNotePitch !== undefined && targetStepDelta !== undefined) {
-          const currDelta = p - prevNotePitch;
-          if (Math.sign(currDelta) === Math.sign(targetStepDelta)) {
-            contScore += 2.3;
+        if (!isInAscendZone && vocalTake !== 'B') {
+          if (prevNotePitch !== undefined && targetStepDelta !== undefined) {
+            const currDelta = p - prevNotePitch;
+            if (Math.sign(currDelta) === Math.sign(targetStepDelta)) {
+              contScore += 2.3;
+            }
+            if (Math.abs(currDelta - targetStepDelta) <= 2) {
+              contScore += 1.7;
+            }
+          } else if (s.isPeakSlot) {
+            contScore += -0.35 * Math.abs(p - ch.topPitch);
           }
-          if (Math.abs(currDelta - targetStepDelta) <= 2) {
-            contScore += 1.7;
-          }
-        } else if (s.isPeakSlot) {
-          // Encourage reaching chapter top target on peak slot
-          contScore += -0.35 * Math.abs(p - ch.topPitch);
         }
 
         // 6. G(p): Pentatonic singability gravity
         const gScore = pentatonicPcs.has(pc) ? 0.85 : 0;
 
-        // 7. Tess(p): Voice profile optimal tessitura pull
-        const tessDiff = p - chapterCenter;
-        const tessScore = -0.15 * tessDiff * tessDiff;
+        // 7. Tess(p): Dynamic tessitura pull (relaxed slightly during Take B leaps)
+        const tessDiff = p - slotCenter;
+        const tessWeight = vocalTake === 'B' ? 0.06 : 0.15;
+        const tessScore = -tessWeight * tessDiff * tessDiff;
 
         const totalScore =
           hScore + kScore + proxScore + revScore + contScore + gScore + tessScore;
         scoredCandidates.push({ pitch: p, score: totalScore });
       }
 
+      // Guard dominant ending against accidentally picking localKeyRootPc if non-tonic exists
+      let finalPool = scoredCandidates;
+      if (isVeryFinalNote && effectiveEnding === 'dominant') {
+        const nonTonic = scoredCandidates.filter((c) => c.pitch % 12 !== keySemitone);
+        if (nonTonic.length > 0) finalPool = nonTonic;
+      }
+
       const chosenPitch =
-        scoredCandidates.length > 0
-          ? sampleTopKSoftmax(scoredCandidates, 3, temperature, rng)
+        finalPool.length > 0
+          ? sampleTopKSoftmax(
+              finalPool,
+              isVeryFinalNote && effectiveEnding === 'ascend' ? 1 : 3,
+              temperature,
+              rng
+            )
           : fitNoteIntoVoiceRange(
-              Math.round(chapterCenter),
-              voice.minMidi,
+              Math.round(slotCenter),
+              slotMinMidi,
               slotMaxMidi,
               parentScalePcs
             );
@@ -3130,17 +3622,15 @@ export function generateHarmonicVocalResult(
         zone1Pitches.push(chosenPitch);
       }
 
-      const maxGateWithGap =
-        sIdx + 1 < slots.length || chEndTick < sectionEndTick
-          ? Math.max(120, maxSpan - VOISONA_MIN_GAP_TICKS)
-          : maxSpan;
-      const gateDur = Math.max(
-        120,
-        Math.min(gridDur, maxGateWithGap, Math.round(gridDur * s.gateRatio))
-      );
+      // Strict 60-tick quantization for gateDuration as well (100% VoiSona ready)
+      const maxSpanQ = Math.max(60, Math.floor(maxSpan / 60) * 60);
+      const desiredQ = Math.round((gridDur * s.gateRatio) / 60) * 60;
+      const minGateQ = gridDur >= 180 && maxSpanQ >= 120 ? 120 : 60;
+      const gateDur = Math.max(minGateQ, Math.min(gridDur, maxSpanQ, desiredQ));
 
       const trailingPureRest = nextSlotStart - (absStart + gridDur);
       const isFallCandidate =
+        !(isVeryFinalNote && effectiveEnding === 'ascend') &&
         (s.role === 'top_fall' || Boolean(ch.role === 'synthesis' && s.isPeakSlot)) &&
         gridDur >= fallCfg.minGridDurationTicks &&
         trailingPureRest >= fallCfg.minTrailingRestTicks;
@@ -3171,6 +3661,9 @@ export function generateHarmonicVocalResult(
   return {
     genreId,
     voiceProfile: voice,
+    vocalStyle,
+    vocalTake,
+    effectiveEnding,
     chordEvents,
     scheme,
     thesisForm,

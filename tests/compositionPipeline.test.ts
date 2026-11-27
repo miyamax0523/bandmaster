@@ -14,7 +14,9 @@ import {
 } from '../src/engines/musicCore';
 import { generatePadSkeletonTrack } from '../src/engines/padEngine';
 import {
+  generateHarmonicVocalResult,
   resolveEffectiveChord,
+  resolveEffectiveVocalEnding,
   validateVoisonaVocalNotes,
 } from '../src/engines/vocalEngine';
 import {
@@ -24,6 +26,7 @@ import {
   setSectionAccompanimentSkeleton,
   setSectionBassMidiOverride,
   setSectionChordLock,
+  setSectionVocalConfig,
   setSongVocalVoiceProfile,
 } from '../src/lib/bandState';
 import {
@@ -630,5 +633,206 @@ describe('BANDMASTER 4-Stage Composition Pipeline (Harmony -> Vocal -> Voicing -
     expect(inferred.inferredText).toBe('E5 | F5 | G5 | E5');
     expect(inferred.song.sections[0].chordLockMode).toBe('custom');
     expect(inferred.song.sections[0].customChordsText).toBe('E5 | F5 | G5 | E5');
+  });
+
+  it('8. Vocal Ending 4-Way Control (auto / ascend / tonic / dominant): ascend reaches upper climax sustained hold, dominant avoids localKeyRootPc', () => {
+    expect(resolveEffectiveVocalEnding('auto', 'pre_chorus', 'royal_jpop')).toBe('dominant');
+    expect(resolveEffectiveVocalEnding('auto', 'chorus', 'emo_jrock')).toBe('ascend');
+    expect(resolveEffectiveVocalEnding('auto', 'chorus', 'chill_ballad')).toBe('tonic');
+    expect(resolveEffectiveVocalEnding('auto', 'verse', 'royal_jpop')).toBe('tonic');
+
+    // 1. Ascend vs Tonic on Chorus (Chisa range 55..74)
+    const chorusSong = buildSongFromQuickSetup(
+      {
+        keyRoot: 'C',
+        scaleType: 'Major',
+        bpm: 140,
+        genre: 'emo_jrock',
+        songLength: 'short_loop',
+        structureTemplate: 'short_chorus_loop',
+        chordPreset: 'royal_4536',
+        vocalVoiceProfileId: 'chisa_jp',
+      },
+      901
+    );
+    const chorusSec = chorusSong.sections[0];
+    const params = resolveInstrumentParams(chorusSong, chorusSec, 'vocal', 'A');
+
+    let ascendEndSum = 0;
+    let tonicEndSum = 0;
+    const seeds = [101, 202, 303, 404, 505];
+    for (const s of seeds) {
+      const asc = generateHarmonicVocalResult({
+        song: chorusSong,
+        section: { ...chorusSec, vocalStyle: 'straight', vocalTake: 'A', vocalEnding: 'ascend' },
+        sectionIndex: 0,
+        style: 'A',
+        seed: s,
+        params,
+        masterGenreId: 'emo_jrock',
+        vocalStyle: 'straight',
+        vocalTake: 'A',
+        vocalEnding: 'ascend',
+      });
+      const ton = generateHarmonicVocalResult({
+        song: chorusSong,
+        section: { ...chorusSec, vocalStyle: 'straight', vocalTake: 'A', vocalEnding: 'tonic' },
+        sectionIndex: 0,
+        style: 'A',
+        seed: s,
+        params,
+        masterGenreId: 'emo_jrock',
+        vocalStyle: 'straight',
+        vocalTake: 'A',
+        vocalEnding: 'tonic',
+      });
+
+      const ascLast = asc.midiNotes[asc.midiNotes.length - 1];
+      const tonLast = ton.midiNotes[ton.midiNotes.length - 1];
+      expect(ascLast.pitch).toBeGreaterThanOrEqual(70); // voice.maxMidi - 4 (74 - 4)
+      expect(ascLast.pitch).toBeLessThanOrEqual(74);
+      expect(ascLast.durationTicks).toBeGreaterThanOrEqual(480);
+      expect(ascLast.pitch).toBeGreaterThan(tonLast.pitch);
+      ascendEndSum += ascLast.pitch;
+      tonicEndSum += tonLast.pitch;
+    }
+    expect(ascendEndSum / seeds.length).toBeGreaterThan(tonicEndSum / seeds.length + 3);
+
+    // 2. Dominant ending on Pre-Chorus avoids localKeyRootPc (0 = C)
+    const preChorusSec = {
+      ...chorusSec,
+      id: 'sec-pre-dom',
+      type: 'Pre-Chorus' as const,
+      name: 'Bメロ',
+      bars: 4,
+      chords: createUniformChordTimeline(['Fmaj7', 'G7', 'Em7', 'G7'], 4),
+      vocalStyle: 'straight' as const,
+      vocalTake: 'A' as const,
+      vocalEnding: 'dominant' as const,
+    };
+    for (const s of seeds) {
+      const domRes = generateHarmonicVocalResult({
+        song: chorusSong,
+        section: preChorusSec,
+        sectionIndex: 0,
+        style: 'A',
+        seed: s,
+        params,
+        masterGenreId: 'emo_jrock',
+        vocalStyle: 'straight',
+        vocalTake: 'A',
+        vocalEnding: 'dominant',
+      });
+      const domLast = domRes.midiNotes[domRes.midiNotes.length - 1];
+      expect(domLast.pitch % 12).not.toBe(0); // Avoids C tonic resolution
+      expect([7, 11, 2, 5]).toContain(domLast.pitch % 12); // Lands on G7 chord/tension tones (G, B, D, F)
+    }
+  });
+
+  it('9. Vocal 3x3 Matrix (straight/bounce/rap x Take A/B/C): differentiates rhythm grid, note duration, leaps & range while keeping 60-tick quantization & voice bounds', () => {
+    const song = buildSongFromQuickSetup(
+      {
+        keyRoot: 'C',
+        scaleType: 'Major',
+        bpm: 132,
+        genre: 'royal_jpop',
+        songLength: 'short_loop',
+        structureTemplate: 'short_ab',
+        chordPreset: 'auto_by_genre',
+        vocalVoiceProfileId: 'chisa_jp',
+      },
+      707
+    );
+    const sec = song.sections[1]; // 8-bar Chorus
+    const params = resolveInstrumentParams(song, sec, 'vocal', 'A');
+    const styles = ['straight', 'bounce', 'rap'] as const;
+    const takes = ['A', 'B', 'C'] as const;
+
+    const stats: Record<
+      string,
+      { avgDur: number; count: number; leapCount: number; ambitus: number; offsetsMod480: Set<number> }
+    > = {};
+
+    for (const vStyle of styles) {
+      for (const vTake of takes) {
+        const res = generateHarmonicVocalResult({
+          song,
+          section: { ...sec, vocalStyle: vStyle, vocalTake: vTake, vocalEnding: 'tonic' },
+          sectionIndex: 1,
+          style: vTake,
+          seed: 4444,
+          params,
+          masterGenreId: 'royal_jpop',
+          vocalStyle: vStyle,
+          vocalTake: vTake,
+          vocalEnding: 'tonic',
+        });
+
+        expect(res.midiNotes.length).toBeGreaterThan(0);
+        const validation = validateVoisonaVocalNotes(res.midiNotes);
+        expect(validation.valid).toBe(true);
+
+        let durSum = 0;
+        let leapCount = 0;
+        let minP = 127;
+        let maxP = 0;
+        const offsetsMod480 = new Set<number>();
+
+        for (let i = 0; i < res.midiNotes.length; i++) {
+          const n = res.midiNotes[i];
+          expect(n.pitch).toBeGreaterThanOrEqual(55);
+          expect(n.pitch).toBeLessThanOrEqual(74);
+          expect(n.startTick % 60).toBe(0);
+          expect(n.durationTicks % 60).toBe(0);
+          durSum += n.durationTicks;
+          minP = Math.min(minP, n.pitch);
+          maxP = Math.max(maxP, n.pitch);
+          offsetsMod480.add(n.startTick % 480);
+          if (i > 0 && Math.abs(n.pitch - res.midiNotes[i - 1].pitch) >= 5) {
+            leapCount++;
+          }
+        }
+
+        stats[`${vStyle}:${vTake}`] = {
+          avgDur: durSum / res.midiNotes.length,
+          count: res.midiNotes.length,
+          leapCount,
+          ambitus: maxP - minP,
+          offsetsMod480,
+        };
+      }
+    }
+
+    // Take C sustains longer notes with fewer note attacks than Take A across styles
+    expect(stats['straight:C'].avgDur).toBeGreaterThan(stats['straight:A'].avgDur * 1.4);
+    expect(stats['straight:C'].count).toBeLessThan(stats['straight:A'].count);
+    expect(stats['bounce:C'].avgDur).toBeGreaterThan(stats['bounce:A'].avgDur * 1.4);
+    expect(stats['rap:C'].avgDur).toBeGreaterThan(stats['rap:A'].avgDur);
+
+    // Take B produces more leaps (>= 5 semitones) than Take A in singing styles
+    expect(stats['straight:B'].leapCount).toBeGreaterThan(stats['straight:A'].leapCount);
+
+    // Bounce uses 300 / 360 pseudo-shuffle subdivisions
+    expect(
+      stats['bounce:A'].offsetsMod480.has(300) ||
+        stats['bounce:A'].offsetsMod480.has(360)
+    ).toBe(true);
+
+    // Rap stays within tight ambitus (<= 9 semitones) and rap:B uses 180t pseudo-triplets
+    expect(stats['rap:A'].ambitus).toBeLessThanOrEqual(9);
+    expect(stats['rap:B'].offsetsMod480.has(180)).toBe(true);
+
+    // Verify setSectionVocalConfig updates UI state cleanly without altering Stage 1 chords
+    const initState = generateAllSections(song, undefined, 1234, true);
+    const updated = setSectionVocalConfig(song, initState, sec.id, {
+      vocalStyle: 'bounce',
+      vocalTake: 'B',
+      vocalEnding: 'ascend',
+    });
+    expect(updated.song.sections[1].vocalStyle).toBe('bounce');
+    expect(updated.song.sections[1].vocalTake).toBe('B');
+    expect(updated.song.sections[1].vocalEnding).toBe('ascend');
+    expect(updated.song.sections[1].chords).toEqual(song.sections[1].chords);
+    expect(updated.bandState.cellsBySection[sec.id].vocal.selectedTake).toBe('B');
   });
 });

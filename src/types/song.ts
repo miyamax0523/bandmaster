@@ -87,6 +87,10 @@ export type VocalVoicePresetId =
   | 'male_rock'
   | 'custom';
 
+export type VocalStyleId = 'straight' | 'bounce' | 'rap';
+export type VocalTakeId = 'A' | 'B' | 'C';
+export type VocalEndingMode = 'auto' | 'ascend' | 'tonic' | 'dominant';
+
 export interface VocalVoiceProfile {
   readonly id: VocalVoicePresetId;
   readonly label: string;
@@ -356,6 +360,9 @@ export interface Section {
   keyboardDensity?: KeyboardDensityLevel; // 1..7 (default 4)
   vocalDensity?: number; // 1.0..5.0 (default 3)
   vocalHarmony?: VocalHarmonyMode; // default 'off'
+  vocalStyle?: VocalStyleId; // default 'straight' (numetal_mixture A/B default 'rap')
+  vocalTake?: VocalTakeId; // default 'A'
+  vocalEnding?: VocalEndingMode; // default 'auto'
   vocalDialecticalScheme?: EightBarScheme | 'auto'; // default 'auto'
   vocalChapterForm?: ChapterInternalForm | 'auto'; // default 'auto'
   bassChromaticEnabled?: boolean; // default false

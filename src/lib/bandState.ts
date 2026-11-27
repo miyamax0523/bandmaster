@@ -43,8 +43,11 @@ import {
   type SongConfig,
   type TakeStyle,
   type UnisonRiffData,
+  type VocalEndingMode,
   type VocalHarmonyMode,
   type VocalMelodyData,
+  type VocalStyleId,
+  type VocalTakeId,
   type VocalVoicePresetId,
 } from '../types/song';
 import type {
@@ -143,6 +146,9 @@ export function cloneSection(sec: Section): Section {
       sec.drumFillEnabled ?? getDefaultDrumFillEnabled(sec.type, sec.bars),
     drumBreakEnabled: sec.drumBreakEnabled ?? false,
     vocalHarmony: sec.vocalHarmony ?? 'off',
+    vocalStyle: sec.vocalStyle ?? 'straight',
+    vocalTake: sec.vocalTake ?? 'A',
+    vocalEnding: sec.vocalEnding ?? 'auto',
     vocalDialecticalScheme: sec.vocalDialecticalScheme ?? 'auto',
     vocalChapterForm: sec.vocalChapterForm ?? 'auto',
     bassChromaticEnabled: sec.bassChromaticEnabled ?? false,
@@ -381,6 +387,11 @@ export function generateCellTakesWithCC(
         instrument === 'vocal'
           ? (section.vocalChapterForm ?? 'auto')
           : undefined,
+      vocalStyle:
+        instrument === 'vocal' ? (section.vocalStyle ?? 'straight') : undefined,
+      vocalTake: instrument === 'vocal' ? style : undefined,
+      vocalEnding:
+        instrument === 'vocal' ? (section.vocalEnding ?? 'auto') : undefined,
       bassSkeleton:
         instrument === 'bass' ? (section.bassSkeleton ?? 'auto') : undefined,
       bassTake:
@@ -2874,4 +2885,74 @@ export function inferCustomChordsFromOverrideBass(
     bandState: res.bandState,
     inferredText,
   };
+}
+
+/**
+ * Updates the streamlined 3-control section vocal config (vocalStyle, vocalTake, vocalEnding).
+ * Preserves Stage 1 chords and drums/bass untouched; recalculates vocal & Stage 3 keyboard/pad clamping when style/ending changes.
+ */
+export function setSectionVocalConfig(
+  song: SongConfig,
+  bandState: BandState,
+  sectionId: string,
+  patch: {
+    vocalStyle?: VocalStyleId;
+    vocalTake?: VocalTakeId;
+    vocalEnding?: VocalEndingMode;
+  }
+): { song: SongConfig; bandState: BandState } {
+  const nextSong = cloneSongConfig(song);
+  const secIdx = nextSong.sections.findIndex((s) => s.id === sectionId);
+  if (secIdx === -1) return { song, bandState };
+
+  const sec = nextSong.sections[secIdx];
+  const needsVocalRegen =
+    (patch.vocalStyle !== undefined && patch.vocalStyle !== (sec.vocalStyle ?? 'straight')) ||
+    (patch.vocalEnding !== undefined && patch.vocalEnding !== (sec.vocalEnding ?? 'auto'));
+
+  if (patch.vocalStyle !== undefined) {
+    sec.vocalStyle = patch.vocalStyle;
+  }
+  if (patch.vocalTake !== undefined) {
+    sec.vocalTake = patch.vocalTake;
+  }
+  if (patch.vocalEnding !== undefined) {
+    sec.vocalEnding = patch.vocalEnding;
+  }
+
+  const nextState = cloneBandState(bandState);
+  const existingSec = nextState.cellsBySection[sectionId];
+
+  if (existingSec && patch.vocalTake !== undefined && existingSec.vocal) {
+    existingSec.vocal.selectedTake = patch.vocalTake;
+  }
+
+  if (existingSec && (needsVocalRegen || patch.vocalTake !== undefined)) {
+    const prevVocalAvgPitch =
+      secIdx > 0
+        ? getAverageVocalPitch(
+            nextState.cellsBySection[nextSong.sections[secIdx - 1].id]
+          )
+        : undefined;
+    const instruments: InstrumentType[] = needsVocalRegen
+      ? ['vocal', 'keyboard', 'pad']
+      : ['keyboard', 'pad'];
+    nextState.cellsBySection[sectionId] = generateSectionCells(
+      nextSong,
+      sec,
+      secIdx,
+      existingSec,
+      6910 + secIdx * 37,
+      {
+        newSeeds: false,
+        instruments,
+        prevVocalAvgPitch,
+      }
+    );
+    if (patch.vocalTake !== undefined && nextState.cellsBySection[sectionId]?.vocal) {
+      nextState.cellsBySection[sectionId].vocal.selectedTake = patch.vocalTake;
+    }
+  }
+
+  return { song: nextSong, bandState: nextState };
 }

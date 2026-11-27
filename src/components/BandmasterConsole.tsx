@@ -33,7 +33,10 @@ import {
   type PadSkeletonId,
   type SongConfig,
   type TakeStyle,
+  type VocalEndingMode,
   type VocalHarmonyMode,
+  type VocalStyleId,
+  type VocalTakeId,
   type VocalVoicePresetId,
 } from '../types/song';
 import type { BandState } from '../types/track';
@@ -61,21 +64,29 @@ interface BandmasterConsoleProps {
     sectionId: string,
     keyboardDensity: KeyboardDensityLevel
   ) => void;
-  onChangeSectionVocalDensity: (
+  onChangeSectionVocalDensity?: (
     sectionId: string,
     vocalDensity: number
   ) => void;
-  onChangeSectionVocalHarmony: (
+  onChangeSectionVocalHarmony?: (
     sectionId: string,
     mode: VocalHarmonyMode
   ) => void;
-  onChangeSectionVocalDialecticalScheme: (
+  onChangeSectionVocalDialecticalScheme?: (
     sectionId: string,
     scheme: EightBarScheme | 'auto'
   ) => void;
-  onChangeSectionVocalChapterForm: (
+  onChangeSectionVocalChapterForm?: (
     sectionId: string,
     form: ChapterInternalForm | 'auto'
+  ) => void;
+  onChangeSectionVocalConfig?: (
+    sectionId: string,
+    patch: {
+      vocalStyle?: VocalStyleId;
+      vocalTake?: VocalTakeId;
+      vocalEnding?: VocalEndingMode;
+    }
   ) => void;
   copiedPhrase: CopiedPartPhrase | null;
   onCopyPartPhrase: (phrase: CopiedPartPhrase) => void;
@@ -338,31 +349,23 @@ const ACCOMPANIMENT_TAKE_OPTIONS: Array<{
   { value: 'C', label: 'Take C（推進・装飾）' },
 ];
 
-const VOCAL_HARMONY_OPTIONS: Array<{ value: VocalHarmonyMode; label: string }> = [
-  { value: 'off', label: 'OFF' },
-  { value: 'upper_3rd', label: '3度上' },
-  { value: 'lower_3rd', label: '3度下' },
-  { value: 'upper_5th', label: '5度上' },
-  { value: 'octave_up', label: 'Oct上' },
-  { value: 'octave_down', label: 'Oct下' },
+const VOCAL_STYLE_OPTIONS: Array<{ value: VocalStyleId; label: string }> = [
+  { value: 'straight', label: '歌・ストレート' },
+  { value: 'bounce', label: '歌・ハネ' },
+  { value: 'rap', label: 'ラップ' },
 ];
 
-const VOCAL_DIALECTICAL_SCHEME_OPTIONS: Array<{
-  value: EightBarScheme | 'auto';
-  label: string;
-}> = [
-  { value: 'auto', label: '自動' },
-  { value: 'T-A-T-A', label: 'T-A-T-A（反復・安定）' },
-  { value: 'T-A-T-S', label: 'T-A-T-S（反動クライマックス）' },
+const VOCAL_TAKE_OPTIONS: Array<{ value: VocalTakeId; label: string }> = [
+  { value: 'A', label: 'A: 王道・キャッチー' },
+  { value: 'B', label: 'B: 跳躍・ドライブ' },
+  { value: 'C', label: 'C: タメ・ロングトーン' },
 ];
 
-const VOCAL_CHAPTER_FORM_OPTIONS: Array<{
-  value: ChapterInternalForm | 'auto';
-  label: string;
-}> = [
-  { value: 'auto', label: '自動' },
-  { value: 'two_bar_continuous', label: '2小節貫通型' },
-  { value: 'one_bar_repeat_with_passing', label: '1小節反復＋経過ライン' },
+const VOCAL_ENDING_OPTIONS: Array<{ value: VocalEndingMode; label: string }> = [
+  { value: 'auto', label: 'おまかせ' },
+  { value: 'ascend', label: '駆け上がり' },
+  { value: 'tonic', label: 'トニック着地' },
+  { value: 'dominant', label: 'ドミナント留保' },
 ];
 
 export function BandmasterConsole({
@@ -379,10 +382,7 @@ export function BandmasterConsole({
   onClearSectionDrumLoop,
   onChangeSectionDrumDensity,
   onChangeSectionKeyboardDensity,
-  onChangeSectionVocalDensity,
-  onChangeSectionVocalHarmony,
-  onChangeSectionVocalDialecticalScheme,
-  onChangeSectionVocalChapterForm,
+  onChangeSectionVocalConfig,
   copiedPhrase,
   onCopyPartPhrase,
   onPastePartPhrase,
@@ -1034,36 +1034,43 @@ export function BandmasterConsole({
                 )}
               </div>
 
-              <div className="console-preset-row">
-                <label className="console-preset-label">
-                  <span>パターン</span>
-                  <select
-                    className="console-preset-select"
-                    value={sectionPreset}
-                    disabled={!effectivelyEnabled || cell.locked}
-                    onChange={(e) =>
-                      onChangeSectionPatternPreset(section.id, key, e.target.value)
-                    }
-                  >
-                    {PATTERN_PRESET_GROUPS[key].map((grp) => (
-                      <optgroup key={grp.category} label={grp.category}>
-                        {grp.options.map((opt) => (
-                          <option key={opt.value} value={opt.value}>
-                            {opt.label}
-                          </option>
-                        ))}
-                      </optgroup>
-                    ))}
-                  </select>
-                </label>
-              </div>
+              {key !== 'vocal' && (
+                <div className="console-preset-row">
+                  <label className="console-preset-label">
+                    <span>パターン</span>
+                    <select
+                      className="console-preset-select"
+                      value={sectionPreset}
+                      disabled={!effectivelyEnabled || cell.locked}
+                      onChange={(e) =>
+                        onChangeSectionPatternPreset(section.id, key, e.target.value)
+                      }
+                    >
+                      {PATTERN_PRESET_GROUPS[key].map((grp) => (
+                        <optgroup key={grp.category} label={grp.category}>
+                          {grp.options.map((opt) => (
+                            <option key={opt.value} value={opt.value}>
+                              {opt.label}
+                            </option>
+                          ))}
+                        </optgroup>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              )}
 
               <TakeSelector
                 selectedTake={cell.selectedTake}
                 locked={cell.locked}
                 autoTacet={autoTacet}
                 disabled={!effectivelyEnabled}
-                onSelect={(take) => onSelectTake(section.id, key, take)}
+                onSelect={(take) => {
+                  onSelectTake(section.id, key, take);
+                  if (key === 'vocal' && take !== 'OFF') {
+                    onChangeSectionVocalConfig?.(section.id, { vocalTake: take });
+                  }
+                }}
               />
 
               {key === 'drums' && (
@@ -1539,51 +1546,19 @@ export function BandmasterConsole({
               {key === 'vocal' && (
                 <div className="density-controls">
                   <div className="density-row">
-                    <span className="density-label">
-                      手数: {(section.vocalDensity ?? 3).toFixed(1)} (
-                      {(section.vocalDensity ?? 3) <= 1.8
-                        ? '余白多め'
-                        : (section.vocalDensity ?? 3) <= 2.6
-                          ? '控えめ'
-                          : (section.vocalDensity ?? 3) <= 3.5
-                            ? '標準'
-                            : (section.vocalDensity ?? 3) <= 4.3
-                              ? '密集'
-                              : '連射'}
-                      )
-                    </span>
-                    <input
-                      type="range"
-                      className="bpm-range"
-                      min={1.0}
-                      max={5.0}
-                      step={0.1}
-                      value={section.vocalDensity ?? 3}
-                      aria-label="Vocal 手数スライダー"
-                      disabled={cell.locked || !effectivelyEnabled}
-                      onChange={(e) =>
-                        onChangeSectionVocalDensity(
-                          section.id,
-                          parseFloat(e.target.value)
-                        )
-                      }
-                    />
-                  </div>
-                  <div className="density-row">
-                    <span className="density-label">構成スキーム</span>
+                    <span className="density-label">スタイル</span>
                     <select
                       className="console-preset-select"
-                      aria-label="Vocal 構成スキーム"
-                      value={section.vocalDialecticalScheme ?? 'auto'}
+                      aria-label="Vocal スタイル"
+                      value={section.vocalStyle ?? 'straight'}
                       disabled={cell.locked || !effectivelyEnabled}
                       onChange={(e) =>
-                        onChangeSectionVocalDialecticalScheme(
-                          section.id,
-                          e.target.value as EightBarScheme | 'auto'
-                        )
+                        onChangeSectionVocalConfig?.(section.id, {
+                          vocalStyle: e.target.value as VocalStyleId,
+                        })
                       }
                     >
-                      {VOCAL_DIALECTICAL_SCHEME_OPTIONS.map((opt) => (
+                      {VOCAL_STYLE_OPTIONS.map((opt) => (
                         <option key={opt.value} value={opt.value}>
                           {opt.label}
                         </option>
@@ -1591,20 +1566,23 @@ export function BandmasterConsole({
                     </select>
                   </div>
                   <div className="density-row">
-                    <span className="density-label">章内構造</span>
+                    <span className="density-label">Take</span>
                     <select
                       className="console-preset-select"
-                      aria-label="Vocal 章内構造"
-                      value={section.vocalChapterForm ?? 'auto'}
+                      aria-label="Vocal Take"
+                      value={
+                        cell.selectedTake !== 'OFF'
+                          ? cell.selectedTake
+                          : (section.vocalTake ?? 'A')
+                      }
                       disabled={cell.locked || !effectivelyEnabled}
                       onChange={(e) =>
-                        onChangeSectionVocalChapterForm(
-                          section.id,
-                          e.target.value as ChapterInternalForm | 'auto'
-                        )
+                        onChangeSectionVocalConfig?.(section.id, {
+                          vocalTake: e.target.value as VocalTakeId,
+                        })
                       }
                     >
-                      {VOCAL_CHAPTER_FORM_OPTIONS.map((opt) => (
+                      {VOCAL_TAKE_OPTIONS.map((opt) => (
                         <option key={opt.value} value={opt.value}>
                           {opt.label}
                         </option>
@@ -1612,29 +1590,24 @@ export function BandmasterConsole({
                     </select>
                   </div>
                   <div className="density-row">
-                    <span className="density-label">ハモリ</span>
-                    <div
-                      className="density-segments density-segments--6"
-                      role="group"
-                      aria-label="Vocal ハモリ"
+                    <span className="density-label">締め方</span>
+                    <select
+                      className="console-preset-select"
+                      aria-label="Vocal 締め方"
+                      value={section.vocalEnding ?? 'auto'}
+                      disabled={cell.locked || !effectivelyEnabled}
+                      onChange={(e) =>
+                        onChangeSectionVocalConfig?.(section.id, {
+                          vocalEnding: e.target.value as VocalEndingMode,
+                        })
+                      }
                     >
-                      {VOCAL_HARMONY_OPTIONS.map((opt) => {
-                        const active = (section.vocalHarmony ?? 'off') === opt.value;
-                        return (
-                          <button
-                            key={opt.value}
-                            type="button"
-                            className={`density-btn harmony-btn ${active ? 'active' : ''}`}
-                            disabled={!effectivelyEnabled}
-                            onClick={() =>
-                              onChangeSectionVocalHarmony(section.id, opt.value)
-                            }
-                          >
-                            {opt.label}
-                          </button>
-                        );
-                      })}
-                    </div>
+                      {VOCAL_ENDING_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                 </div>
               )}

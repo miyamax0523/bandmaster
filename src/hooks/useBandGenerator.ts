@@ -20,6 +20,7 @@ import {
   setSectionAccompanimentTake as applySectionAccompanimentTake,
   setSectionBassMidiOverride as applySectionBassMidiOverride,
   setSectionChordLock as applySectionChordLock,
+  setSectionVocalConfig as applySectionVocalConfig,
   setSongVocalVoiceProfile as applySongVocalVoiceProfile,
   setSectionBassChromatic,
   setSectionBassFillEnabled,
@@ -82,8 +83,11 @@ import {
   type SongConfig,
   type TakeStyle,
   type UnisonRiffData,
+  type VocalEndingMode,
   type VocalHarmonyMode,
   type VocalMelodyData,
+  type VocalStyleId,
+  type VocalTakeId,
   type VocalVoicePresetId,
 } from '../types/song';
 import type { BandState } from '../types/track';
@@ -814,6 +818,21 @@ export function useBandGenerator() {
     [song, bandState, commitChange]
   );
 
+  const changeSectionVocalConfig = useCallback(
+    (
+      sectionId: string,
+      patch: {
+        vocalStyle?: VocalStyleId;
+        vocalTake?: VocalTakeId;
+        vocalEnding?: VocalEndingMode;
+      }
+    ) => {
+      const res = applySectionVocalConfig(song, bandState, sectionId, patch);
+      commitChange(res.song, res.bandState, true, true);
+    },
+    [song, bandState, commitChange]
+  );
+
   const copyTimelineToAllSections = useCallback(
     (sourceSectionId: string) => {
       const src = song.sections.find((s) => s.id === sourceSectionId);
@@ -890,6 +909,7 @@ export function useBandGenerator() {
     changeSectionChordLock,
     changeSectionBassMidiOverride,
     inferSectionChordsFromBass,
+    changeSectionVocalConfig,
     copyTimelineToAllSections,
     pastePartPhrase,
     loadSnapshotData,

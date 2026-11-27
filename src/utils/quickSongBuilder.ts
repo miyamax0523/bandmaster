@@ -541,6 +541,13 @@ export function buildSongFromQuickSetup(
       keyboardDensity: energy === 'High' ? 5 : 4,
       vocalDensity,
       vocalHarmony: spec.role === 'chorus' ? 'upper_3rd' : 'off',
+      vocalStyle:
+        normalizedGenre === 'numetal_mixture' &&
+        (spec.role === 'verse' || spec.role === 'pre_chorus')
+          ? 'rap'
+          : 'straight',
+      vocalTake: 'A',
+      vocalEnding: 'auto',
       bassChromaticEnabled:
         normalizedGenre === 'alt_shoegaze' || normalizedGenre === 'numetal_mixture',
       bassFillEnabled: spec.role === 'pre_chorus' || spec.role === 'chorus',

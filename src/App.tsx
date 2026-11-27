@@ -70,6 +70,7 @@ export function App() {
     changeSectionChordLock,
     changeSectionBassMidiOverride,
     inferSectionChordsFromBass,
+    changeSectionVocalConfig,
     copyTimelineToAllSections,
     pastePartPhrase,
     loadSnapshotData,
@@ -307,6 +308,7 @@ export function App() {
               onChangeSectionChordLock={changeSectionChordLock}
               onChangeSectionBassMidiOverride={changeSectionBassMidiOverride}
               onInferSectionChordsFromBass={inferSectionChordsFromBass}
+              onChangeSectionVocalConfig={changeSectionVocalConfig}
               onOpenRiffModal={(id) => setRiffModalSectionId(id)}
               onCopyTimelineToAllSections={copyTimelineToAllSections}
               onToggleSectionPart={toggleSectionPart}
