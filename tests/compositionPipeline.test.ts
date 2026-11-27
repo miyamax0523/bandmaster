@@ -40,6 +40,7 @@ import { resolveInstrumentParams } from '../src/lib/keywordParser';
 import type { MasterGenreId } from '../src/lib/masterGenres';
 import { parseMidiFile } from '../src/lib/midiParser';
 import { exportMultiTrackMidi } from '../src/lib/multiTrackMidiExport';
+import { selectSongTracks } from '../src/lib/noteSelector';
 import { TICKS_PER_BAR, type MidiNote } from '../src/types/song';
 import { buildSongFromQuickSetup } from '../src/utils/quickSongBuilder';
 
@@ -855,5 +856,218 @@ describe('BANDMASTER 4-Stage Composition Pipeline (Harmony -> Vocal -> Voicing -
     expect(updated.song.sections[1].vocalEnding).toBe('ascend');
     expect(updated.song.sections[1].chords).toEqual(song.sections[1].chords);
     expect(updated.bandState.cellsBySection[sec.id].vocal.selectedTake).toBe('B');
+  });
+
+  it('10. Intra-section beat/bar-crossing ties & non-destructive conditional section anacrusis (-240t)', () => {
+    // 1. Multi-bar section generates single unbroken beat-crossing & intra-section bar-crossing ties (60t grid, 0 overlap, final bar <= sectionEnd)
+    const tieSong = buildSongFromQuickSetup(
+      {
+        keyRoot: 'C',
+        scaleType: 'Major',
+        bpm: 128,
+        genre: 'royal_jpop',
+        songLength: 'short_loop',
+        structureTemplate: 'short_ab',
+        chordPreset: 'royal_4536',
+        vocalVoiceProfileId: 'chisa_jp',
+      },
+      909
+    );
+    const chorusSec = {
+      ...tieSong.sections[1],
+      bars: 4,
+      chords: createUniformChordTimeline(['Fmaj7', 'G7', 'Em7', 'Am7'], 4),
+    };
+    const chordEvents = generateGenreHarmonySection({
+      genreId: 'royal_jpop',
+      sectionType: 'Chorus',
+      key: 'C',
+      scale: 'Major',
+      bars: 4,
+      bpm: 128,
+      masterSeed: 909,
+      sectionIndex: 1,
+    }).chordEvents;
+
+    let sawBeatCrossingTie = false;
+    let sawBarCrossingTie = false;
+
+    for (const vStyle of ['straight', 'bounce'] as const) {
+      for (const vTake of ['A', 'B'] as const) {
+        const res = generateHarmonicVocalResult({
+          song: tieSong,
+          section: { ...chorusSec, vocalStyle: vStyle, vocalEnding: 'tonic' },
+          sectionIndex: 1,
+          style: vTake,
+          seed: 777 + (vStyle === 'bounce' ? 10 : 0) + (vTake === 'B' ? 1 : 0),
+          params: resolveInstrumentParams(tieSong, chorusSec, 'vocal', vTake),
+          masterGenreId: 'royal_jpop',
+          chordEvents,
+          vocalStyle: vStyle,
+          vocalEnding: 'tonic',
+        });
+
+        expect(validateVoisonaVocalNotes(res.midiNotes).valid).toBe(true);
+        const secEnd = chorusSec.bars * TICKS_PER_BAR;
+        expect(res.midiNotes.every((n) => n.startTick >= 0 && n.startTick + n.durationTicks <= secEnd)).toBe(true);
+
+        for (const n of res.midiNotes) {
+          expect(n.startTick % 60).toBe(0);
+          expect(n.durationTicks % 60).toBe(0);
+          const startBeat = Math.floor(n.startTick / 480);
+          const endBeat = Math.floor((n.startTick + n.durationTicks - 1) / 480);
+          const startBar = Math.floor(n.startTick / TICKS_PER_BAR);
+          const endBar = Math.floor((n.startTick + n.durationTicks - 1) / TICKS_PER_BAR);
+          if (endBeat > startBeat && n.startTick % 480 !== 0) {
+            sawBeatCrossingTie = true;
+          }
+          if (endBar > startBar && n.startTick % TICKS_PER_BAR !== 0) {
+            sawBarCrossingTie = true;
+            // Verify bar-crossing tie note pitch targets the upcoming bar's effective chord
+            const effChord = resolveEffectiveChord(n.startTick, n.durationTicks, chordEvents);
+            expect(effChord.startTick).toBeGreaterThanOrEqual(endBar * TICKS_PER_BAR);
+          }
+        }
+      }
+    }
+    expect(sawBeatCrossingTie).toBe(true);
+    expect(sawBarCrossingTie).toBe(true);
+
+    // 2. Conditional anacrusis (-240t) is adopted when previous section leaves >= 480t trailing silence
+    const songWithGap = buildSongFromQuickSetup(
+      {
+        keyRoot: 'C',
+        scaleType: 'Major',
+        bpm: 132,
+        genre: 'royal_jpop',
+        songLength: 'short_loop',
+        structureTemplate: 'short_ab',
+        chordPreset: 'royal_4536',
+        vocalVoiceProfileId: 'chisa_jp',
+      },
+      1234
+    );
+    songWithGap.sections[0] = { ...songWithGap.sections[0], bars: 2 };
+    songWithGap.sections[1] = {
+      ...songWithGap.sections[1],
+      bars: 4,
+      vocalStyle: 'straight',
+      vocalEnding: 'tonic',
+    };
+    const stateGap = generateAllSections(songWithGap, undefined, 1234, true);
+    const s0Id = songWithGap.sections[0].id;
+    const s1Id = songWithGap.sections[1].id;
+    const s1Start = songWithGap.sections[0].bars * TICKS_PER_BAR;
+
+    // 2a. Previous section has 720 ticks trailing space (>= 480) -> Chorus -240t anacrusis adopted
+    stateGap.cellsBySection[s0Id].vocal.takes.A = [
+      { pitch: 64, velocity: 96, startTick: s1Start - 1200, durationTicks: 480 }, // ends at s1Start - 720
+    ];
+    stateGap.cellsBySection[s1Id].vocal.selectedTake = 'B';
+    stateGap.cellsBySection[s1Id].vocal.takes.B = [
+      {
+        pitch: 67,
+        velocity: 102,
+        startTick: 0,
+        durationTicks: 480,
+        gridDurationTicks: 480,
+        role: 'sync_tie',
+        anacrusisLeadTicks: 240,
+      },
+      { pitch: 69, velocity: 98, startTick: 480, durationTicks: 480 },
+    ];
+    const gapTracks = selectSongTracks(songWithGap, stateGap);
+    expect(gapTracks.vocal[0]).toMatchObject({
+      startTick: s1Start - 1200,
+      durationTicks: 480,
+    });
+    expect(gapTracks.vocal[1]).toMatchObject({
+      pitch: 67,
+      startTick: s1Start - 240,
+      durationTicks: 720,
+    });
+    expect(gapTracks.vocal[1].startTick + gapTracks.vocal[1].durationTicks).toBe(s1Start + 480);
+    expect(validateVoisonaVocalNotes(gapTracks.vocal).valid).toBe(true);
+
+    const voisonaSmf = exportMultiTrackMidi(songWithGap, stateGap, {
+      exportTarget: 'voisona_clean_smf',
+    });
+    const parsedVoisona = parseMidiFile(voisonaSmf.bytes);
+    const vTrack = parsedVoisona.tracks.find((t) => t.name === 'Vocal')!;
+    expect(vTrack.notes[1].startTick).toBe(s1Start - 240);
+    expect(validateVoisonaVocalNotes(vTrack.notes).valid).toBe(true);
+
+    // 2b. Check vocalEngine itself deterministically produces anacrusis candidates on Chorus & never on rap
+    let foundEngineAnacrusis = false;
+    for (let s = 1; s <= 25; s++) {
+      const r = generateHarmonicVocalResult({
+        song: songWithGap,
+        section: { ...songWithGap.sections[1], vocalStyle: 'straight', vocalEnding: 'tonic' },
+        sectionIndex: 1,
+        style: 'B',
+        seed: s,
+        params: resolveInstrumentParams(songWithGap, songWithGap.sections[1], 'vocal', 'B'),
+        masterGenreId: 'royal_jpop',
+        vocalStyle: 'straight',
+        vocalEnding: 'tonic',
+      });
+      if (r.midiNotes[0]?.anacrusisLeadTicks === 240) {
+        foundEngineAnacrusis = true;
+        break;
+      }
+    }
+    expect(foundEngineAnacrusis).toBe(true);
+
+    for (let s = 1; s <= 15; s++) {
+      const rapRes = generateHarmonicVocalResult({
+        song: songWithGap,
+        section: { ...songWithGap.sections[1], vocalStyle: 'rap', vocalEnding: 'tonic' },
+        sectionIndex: 1,
+        style: 'B',
+        seed: s,
+        params: resolveInstrumentParams(songWithGap, songWithGap.sections[1], 'vocal', 'B'),
+        masterGenreId: 'royal_jpop',
+        vocalStyle: 'rap',
+        vocalEnding: 'tonic',
+      });
+      expect(rapRes.midiNotes[0]?.anacrusisLeadTicks).toBeUndefined();
+      expect(rapRes.midiNotes[0]?.startTick).toBeGreaterThanOrEqual(0);
+    }
+
+    // 3. Guardrail: When previous section is filled up to the end (< 480t gap), previous notes are NEVER truncated!
+    const prevLastNote: MidiNote = {
+      pitch: 64,
+      velocity: 100,
+      startTick: s1Start - 240,
+      durationTicks: 240, // ends right at s1Start (0t gap)
+    };
+    stateGap.cellsBySection[s0Id].vocal.takes.A = [prevLastNote];
+    stateGap.cellsBySection[s1Id].vocal.takes.B = [
+      {
+        pitch: 67,
+        velocity: 104,
+        startTick: -240,
+        durationTicks: 720,
+        gridDurationTicks: 720,
+      },
+      { pitch: 69, velocity: 98, startTick: 480, durationTicks: 480 },
+    ];
+    const fullTracks = selectSongTracks(songWithGap, stateGap);
+    expect(fullTracks.vocal[0].startTick).toBe(s1Start - 240);
+    expect(fullTracks.vocal[0].durationTicks).toBe(240); // Never trimmed!
+    expect(fullTracks.vocal[1].startTick).toBe(s1Start); // Falls back cleanly to section start (0 local)
+    expect(fullTracks.vocal[1].durationTicks).toBe(480);
+    expect(fullTracks.vocal[0].startTick + fullTracks.vocal[0].durationTicks).toBeLessThanOrEqual(
+      fullTracks.vocal[1].startTick
+    );
+    expect(validateVoisonaVocalNotes(fullTracks.vocal).valid).toBe(true);
+
+    // 3b. First section (sectionIndex === 0) also never adopts negative startTick
+    stateGap.cellsBySection[s0Id].vocal.takes.A = [
+      { pitch: 64, velocity: 100, startTick: -240, durationTicks: 720 },
+    ];
+    const firstSecFallback = selectSongTracks(songWithGap, stateGap);
+    expect(firstSecFallback.vocal[0].startTick).toBe(0);
+    expect(firstSecFallback.vocal[0].durationTicks).toBe(480);
   });
 });

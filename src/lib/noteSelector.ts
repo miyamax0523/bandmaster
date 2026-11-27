@@ -105,6 +105,86 @@ export function getTotalSongTicks(song: SongConfig): number {
 }
 
 /**
+ * Resolves a section's optional anacrusis pickup (-240 ticks / anacrusisLeadTicks)
+ * non-destructively against the preceding section's final vocal note.
+ * NEVER truncates or alters notes in prior sections:
+ * - Adopts the pickup only when sectionIndex >= 1 and >= 480 ticks of trailing silence precede sectionStartTick.
+ * - Otherwise falls back cleanly to startTick >= 0 while preserving 60-tick quantization and zero overlap.
+ */
+export function resolveSectionVocalAnacrusis(
+  vocalNotes: readonly MidiNote[],
+  sectionIndex: number,
+  sectionStartTick: number,
+  sectionEnd: number,
+  prevVocalLastEndTick: number | null
+): MidiNote[] {
+  if (vocalNotes.length === 0) return [];
+  const notes = vocalNotes
+    .map((n) => ({ ...n }))
+    .sort((a, b) => a.startTick - b.startTick || a.pitch - b.pitch);
+
+  const first = notes[0];
+  const literalLead = first.startTick < 0 ? Math.max(60, Math.round(-first.startTick)) : 0;
+  const metaLead =
+    first.startTick === 0 && (first.anacrusisLeadTicks ?? 0) > 0
+      ? Math.max(60, Math.round(first.anacrusisLeadTicks!))
+      : 0;
+  const leadTicks = literalLead > 0 ? literalLead : metaLead;
+
+  if (leadTicks <= 0) {
+    return notes;
+  }
+
+  delete first.anacrusisLeadTicks;
+
+  const canAdopt =
+    sectionIndex >= 1 &&
+    sectionStartTick >= leadTicks &&
+    (prevVocalLastEndTick === null || sectionStartTick - prevVocalLastEndTick >= 480);
+
+  const nextStart = notes.length > 1 ? notes[1].startTick : sectionEnd;
+
+  if (canAdopt) {
+    const newStart = -leadTicks;
+    const rawDur =
+      literalLead > 0 ? Math.round(first.durationTicks) : Math.round(first.durationTicks) + leadTicks;
+    const maxAvail = Math.max(60, Math.min(nextStart - newStart, sectionEnd - newStart));
+    first.startTick = newStart;
+    first.durationTicks = Math.max(60, Math.min(rawDur, maxAvail));
+    if (first.gridDurationTicks !== undefined) {
+      const rawGrid =
+        literalLead > 0
+          ? Math.round(first.gridDurationTicks)
+          : Math.round(first.gridDurationTicks) + leadTicks;
+      first.gridDurationTicks = Math.max(first.durationTicks, Math.min(rawGrid, maxAvail));
+    }
+    return notes;
+  }
+
+  // Fallback: shift/clamp strictly to section start >= 0 (never touch prior section notes)
+  if (literalLead > 0) {
+    const maxAvail = Math.max(60, Math.min(nextStart, sectionEnd));
+    const shiftedDur = Math.max(
+      60,
+      Math.floor(Math.max(60, first.durationTicks - leadTicks) / 60) * 60
+    );
+    first.startTick = 0;
+    first.durationTicks = Math.min(shiftedDur, maxAvail);
+    if (first.gridDurationTicks !== undefined) {
+      const shiftedGrid = Math.max(
+        60,
+        Math.floor(Math.max(60, first.gridDurationTicks - leadTicks) / 60) * 60
+      );
+      first.gridDurationTicks = Math.max(
+        first.durationTicks,
+        Math.min(shiftedGrid, maxAvail)
+      );
+    }
+  }
+  return notes;
+}
+
+/**
  * Single shared pipeline for both Web Audio Preview and Multi-Track MIDI Export.
  * Strictly follows §6-1 / §12-1 execution order:
  * 1. resolveSongTracks (enabled / OFF / Auto Tacet mask)
@@ -135,7 +215,8 @@ export function selectSongTracks(
 
   let sectionStartTick = 0;
 
-  for (const section of song.sections) {
+  for (let secIdx = 0; secIdx < song.sections.length; secIdx++) {
+    const section = song.sections[secIdx];
     const sectionEnd = section.bars * TICKS_PER_BAR;
     const cells = bandState.cellsBySection[section.id];
 
@@ -243,8 +324,15 @@ export function selectSongTracks(
       trackType: LogicalTrackType
     ) => {
       const ch = TRACK_CHANNELS[trackType];
+      const allowSectionPreEntry =
+        trackType === 'vocal' || trackType === 'vocalHarmony';
       for (const n of notes) {
-        const localStart = n.startTick < 0 ? 0 : Math.round(n.startTick);
+        let localStart = Math.round(n.startTick);
+        if (localStart < 0) {
+          localStart = allowSectionPreEntry
+            ? Math.max(-sectionStartTick, localStart)
+            : 0;
+        }
         if (localStart >= sectionEnd) continue;
 
         const clippedDur = Math.max(
@@ -285,6 +373,24 @@ export function selectSongTracks(
         output[trackType].push(resolved);
       }
     };
+
+    const prevVocalLastEndTick =
+      output.vocal.length > 0
+        ? output.vocal.reduce(
+            (maxEnd, n) => Math.max(maxEnd, n.startTick + n.durationTicks),
+            0
+          )
+        : null;
+
+    if (!hasCustomVocal) {
+      vocalNotes = resolveSectionVocalAnacrusis(
+        vocalNotes,
+        secIdx,
+        sectionStartTick,
+        sectionEnd,
+        prevVocalLastEndTick
+      );
+    }
 
     const vocalHarmonyNotes = generateVocalHarmonyNotes(
       vocalNotes,

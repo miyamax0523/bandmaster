@@ -258,6 +258,7 @@ export interface GeneratedVocalNote {
   readonly role: NoteRole;
   readonly hasFall: boolean;
   readonly fallConfig?: FallExpressionConfig;
+  readonly anacrusisLeadTicks?: number;
 }
 
 export type NormalizedSectionRole =
@@ -1291,6 +1292,9 @@ export function toMidiNotesFromGenerated(
     role: n.role,
     hasFall: n.hasFall,
     ...(n.hasFall && n.fallConfig ? { fallConfig: { ...n.fallConfig } } : {}),
+    ...(n.anacrusisLeadTicks !== undefined
+      ? { anacrusisLeadTicks: n.anacrusisLeadTicks }
+      : {}),
   }));
 }
 
@@ -1313,6 +1317,9 @@ export function toGeneratedVocalNotes(
       role: n.role ?? 'step',
       hasFall: Boolean(n.hasFall && n.fallConfig),
       fallConfig: n.hasFall && n.fallConfig ? { ...n.fallConfig } : undefined,
+      ...(n.anacrusisLeadTicks !== undefined
+        ? { anacrusisLeadTicks: n.anacrusisLeadTicks }
+        : {}),
     };
   });
 }
@@ -2503,43 +2510,53 @@ const MATRIX_2BAR_TEMPLATES: Readonly<
       [
         { relTick: 0, gridDuration: 240, gateRatio: 0.85, role: 'anchor', tag: 'core', velocityScale: 0.98 },
         { relTick: 240, gridDuration: 240, gateRatio: 0.85, role: 'step', tag: 'core', velocityScale: 0.92 },
-        { relTick: 480, gridDuration: 480, gateRatio: 0.88, role: 'anchor', tag: 'core', velocityScale: 1.0 },
-        { relTick: 960, gridDuration: 240, gateRatio: 0.85, role: 'step', tag: 'arc', velocityScale: 0.94 },
-        { relTick: 1200, gridDuration: 480, gateRatio: 0.88, role: 'hook_stab', tag: 'arc', velocityScale: 1.04, isPeakSlot: true },
-        { relTick: 1920, gridDuration: 480, gateRatio: 0.88, role: 'step', tag: 'arc', velocityScale: 0.96 },
+        { relTick: 480, gridDuration: 240, gateRatio: 0.85, role: 'anchor', tag: 'core', velocityScale: 0.96 },
+        // Beat-2-and tie crossing beat 3 boundary (720 + 480 = 1200)
+        { relTick: 720, gridDuration: 480, gateRatio: 1.0, role: 'sync_tie', tag: 'arc', velocityScale: 1.02 },
+        { relTick: 1200, gridDuration: 240, gateRatio: 0.85, role: 'step', tag: 'arc', velocityScale: 0.94 },
+        { relTick: 1440, gridDuration: 240, gateRatio: 0.85, role: 'step', tag: 'passing', velocityScale: 0.92 },
+        // Beat-4-and bar-crossing tie into Bar 2 beat 1 (1680 + 480 = 2160)
+        { relTick: 1680, gridDuration: 480, gateRatio: 1.0, role: 'sync_tie', tag: 'arc', velocityScale: 1.05, isPeakSlot: true },
+        { relTick: 2160, gridDuration: 240, gateRatio: 0.86, role: 'step', tag: 'arc', velocityScale: 0.96 },
         { relTick: 2400, gridDuration: 720, gateRatio: 0.92, role: 'top_fall', tag: 'cadence', velocityScale: 1.05 },
       ],
       [
         { relTick: 240, gridDuration: 240, gateRatio: 0.85, role: 'pickup', tag: 'core', velocityScale: 0.9 },
-        { relTick: 480, gridDuration: 480, gateRatio: 0.88, role: 'anchor', tag: 'core', velocityScale: 0.98 },
-        { relTick: 960, gridDuration: 480, gateRatio: 0.88, role: 'hook_stab', tag: 'arc', velocityScale: 1.02, isPeakSlot: true },
+        { relTick: 480, gridDuration: 240, gateRatio: 0.85, role: 'anchor', tag: 'core', velocityScale: 0.96 },
+        // Beat-2-and dotted-quarter tie crossing beat 3 & 4 (720 + 720 = 1440)
+        { relTick: 720, gridDuration: 720, gateRatio: 1.0, role: 'sync_tie', tag: 'arc', velocityScale: 1.04, isPeakSlot: true },
         { relTick: 1440, gridDuration: 240, gateRatio: 0.85, role: 'step', tag: 'passing', velocityScale: 0.92 },
-        { relTick: 1920, gridDuration: 240, gateRatio: 0.85, role: 'step', tag: 'arc', velocityScale: 0.94 },
-        { relTick: 2160, gridDuration: 240, gateRatio: 0.85, role: 'step', tag: 'arc', velocityScale: 0.96 },
-        { relTick: 2400, gridDuration: 720, gateRatio: 0.92, role: 'phrase_land', tag: 'cadence', velocityScale: 1.05 },
+        // Beat-4-and 720t bar-crossing tie into Bar 2 beat 2 (1680 + 720 = 2400)
+        { relTick: 1680, gridDuration: 720, gateRatio: 1.0, role: 'sync_tie', tag: 'arc', velocityScale: 1.04 },
+        { relTick: 2400, gridDuration: 240, gateRatio: 0.85, role: 'step', tag: 'arc', velocityScale: 0.96 },
+        { relTick: 2640, gridDuration: 240, gateRatio: 0.85, role: 'step', tag: 'arc', velocityScale: 0.96 },
+        { relTick: 2880, gridDuration: 480, gateRatio: 0.92, role: 'phrase_land', tag: 'cadence', velocityScale: 1.05 },
       ],
     ],
     B: [
       [
         { relTick: 0, gridDuration: 240, gateRatio: 0.8, role: 'anchor', tag: 'core', velocityScale: 1.0 },
-        { relTick: 240, gridDuration: 120, gateRatio: 0.78, role: 'rush', tag: 'arc', velocityScale: 0.92 },
-        { relTick: 360, gridDuration: 360, gateRatio: 0.85, role: 'sync_tie', tag: 'arc', velocityScale: 1.04, isPeakSlot: true },
-        { relTick: 720, gridDuration: 240, gateRatio: 0.8, role: 'step', tag: 'arc', velocityScale: 0.94 },
-        { relTick: 960, gridDuration: 240, gateRatio: 0.8, role: 'hook_stab', tag: 'arc', velocityScale: 1.02 },
+        { relTick: 240, gridDuration: 240, gateRatio: 0.8, role: 'rush', tag: 'arc', velocityScale: 0.94 },
+        { relTick: 480, gridDuration: 240, gateRatio: 0.82, role: 'anchor', tag: 'core', velocityScale: 0.98 },
+        // Beat-2-and tie (720 + 480 = 1200)
+        { relTick: 720, gridDuration: 480, gateRatio: 1.0, role: 'sync_tie', tag: 'arc', velocityScale: 1.04, isPeakSlot: true },
         { relTick: 1200, gridDuration: 240, gateRatio: 0.8, role: 'rush', tag: 'arc', velocityScale: 0.96 },
-        { relTick: 1680, gridDuration: 480, gateRatio: 0.88, role: 'sync_tie', tag: 'arc', velocityScale: 1.08, isPeakSlot: true },
+        { relTick: 1440, gridDuration: 240, gateRatio: 0.8, role: 'step', tag: 'arc', velocityScale: 0.94 },
+        // Beat-4-and bar-crossing tie into Bar 2 beat 1 (1680 + 480 = 2160)
+        { relTick: 1680, gridDuration: 480, gateRatio: 1.0, role: 'sync_tie', tag: 'arc', velocityScale: 1.08, isPeakSlot: true },
         { relTick: 2160, gridDuration: 240, gateRatio: 0.82, role: 'step', tag: 'arc', velocityScale: 0.96 },
         { relTick: 2400, gridDuration: 600, gateRatio: 0.9, role: 'top_fall', tag: 'cadence', velocityScale: 1.08 },
       ],
       [
         { relTick: 240, gridDuration: 120, gateRatio: 0.78, role: 'pickup', tag: 'core', velocityScale: 0.92 },
-        { relTick: 360, gridDuration: 360, gateRatio: 0.85, role: 'sync_tie', tag: 'core', velocityScale: 1.02, isPeakSlot: true },
-        { relTick: 720, gridDuration: 120, gateRatio: 0.78, role: 'rush', tag: 'arc', velocityScale: 0.94 },
-        { relTick: 840, gridDuration: 360, gateRatio: 0.85, role: 'sync_tie', tag: 'arc', velocityScale: 1.04 },
-        { relTick: 1200, gridDuration: 240, gateRatio: 0.8, role: 'step', tag: 'arc', velocityScale: 0.96 },
-        { relTick: 1680, gridDuration: 480, gateRatio: 0.88, role: 'hook_stab', tag: 'arc', velocityScale: 1.06, isPeakSlot: true },
-        { relTick: 2160, gridDuration: 360, gateRatio: 0.85, role: 'sync_tie', tag: 'arc', velocityScale: 1.0 },
-        { relTick: 2520, gridDuration: 600, gateRatio: 0.9, role: 'top_fall', tag: 'cadence', velocityScale: 1.08 },
+        { relTick: 360, gridDuration: 360, gateRatio: 0.85, role: 'sync_tie', tag: 'core', velocityScale: 1.02 },
+        // Beat-2-and 720t tie (720 + 720 = 1440)
+        { relTick: 720, gridDuration: 720, gateRatio: 1.0, role: 'sync_tie', tag: 'arc', velocityScale: 1.06, isPeakSlot: true },
+        { relTick: 1440, gridDuration: 240, gateRatio: 0.8, role: 'step', tag: 'arc', velocityScale: 0.96 },
+        // Beat-4-and 720t bar-crossing tie into Bar 2 beat 2 (1680 + 720 = 2400)
+        { relTick: 1680, gridDuration: 720, gateRatio: 1.0, role: 'sync_tie', tag: 'arc', velocityScale: 1.08, isPeakSlot: true },
+        { relTick: 2400, gridDuration: 240, gateRatio: 0.82, role: 'step', tag: 'arc', velocityScale: 0.98 },
+        { relTick: 2640, gridDuration: 480, gateRatio: 0.9, role: 'top_fall', tag: 'cadence', velocityScale: 1.08 },
       ],
     ],
     C: [
@@ -2560,21 +2577,27 @@ const MATRIX_2BAR_TEMPLATES: Readonly<
       [
         { relTick: 0, gridDuration: 300, gateRatio: 0.82, role: 'anchor', tag: 'core', velocityScale: 0.98 },
         { relTick: 300, gridDuration: 180, gateRatio: 0.8, role: 'step', tag: 'core', velocityScale: 0.9 },
-        { relTick: 480, gridDuration: 300, gateRatio: 0.82, role: 'anchor', tag: 'core', velocityScale: 0.96 },
-        { relTick: 780, gridDuration: 180, gateRatio: 0.8, role: 'step', tag: 'arc', velocityScale: 0.92 },
-        { relTick: 960, gridDuration: 480, gateRatio: 0.88, role: 'hook_stab', tag: 'arc', velocityScale: 1.04, isPeakSlot: true },
-        { relTick: 1920, gridDuration: 360, gateRatio: 0.84, role: 'step', tag: 'arc', velocityScale: 0.96 },
-        { relTick: 2280, gridDuration: 120, gateRatio: 0.8, role: 'pickup', tag: 'arc', velocityScale: 0.92 },
+        { relTick: 480, gridDuration: 240, gateRatio: 0.82, role: 'anchor', tag: 'core', velocityScale: 0.96 },
+        // Beat-2-and tie (720 + 480 = 1200)
+        { relTick: 720, gridDuration: 480, gateRatio: 1.0, role: 'sync_tie', tag: 'arc', velocityScale: 1.02 },
+        { relTick: 1200, gridDuration: 240, gateRatio: 0.82, role: 'step', tag: 'arc', velocityScale: 0.94 },
+        { relTick: 1440, gridDuration: 300, gateRatio: 0.82, role: 'step', tag: 'arc', velocityScale: 0.94 },
+        // Bounce 4-and bar-crossing tie (1740 + 420 = 2160)
+        { relTick: 1740, gridDuration: 420, gateRatio: 1.0, role: 'sync_tie', tag: 'arc', velocityScale: 1.05, isPeakSlot: true },
+        { relTick: 2160, gridDuration: 240, gateRatio: 0.84, role: 'step', tag: 'arc', velocityScale: 0.96 },
         { relTick: 2400, gridDuration: 720, gateRatio: 0.92, role: 'top_fall', tag: 'cadence', velocityScale: 1.05 },
       ],
       [
         { relTick: 0, gridDuration: 360, gateRatio: 0.84, role: 'anchor', tag: 'core', velocityScale: 0.98 },
         { relTick: 360, gridDuration: 120, gateRatio: 0.8, role: 'pickup', tag: 'core', velocityScale: 0.9 },
         { relTick: 480, gridDuration: 300, gateRatio: 0.82, role: 'anchor', tag: 'core', velocityScale: 0.98 },
-        { relTick: 780, gridDuration: 180, gateRatio: 0.8, role: 'step', tag: 'arc', velocityScale: 0.92 },
-        { relTick: 960, gridDuration: 480, gateRatio: 0.88, role: 'hook_stab', tag: 'arc', velocityScale: 1.04, isPeakSlot: true },
-        { relTick: 1920, gridDuration: 300, gateRatio: 0.84, role: 'step', tag: 'arc', velocityScale: 0.95 },
-        { relTick: 2220, gridDuration: 180, gateRatio: 0.82, role: 'step', tag: 'arc', velocityScale: 0.94 },
+        // Bounce 2-and tie (780 + 420 = 1200)
+        { relTick: 780, gridDuration: 420, gateRatio: 1.0, role: 'sync_tie', tag: 'arc', velocityScale: 1.04, isPeakSlot: true },
+        { relTick: 1200, gridDuration: 240, gateRatio: 0.82, role: 'step', tag: 'arc', velocityScale: 0.94 },
+        { relTick: 1440, gridDuration: 240, gateRatio: 0.82, role: 'step', tag: 'arc', velocityScale: 0.94 },
+        // Beat-4-and bar-crossing tie (1680 + 480 = 2160)
+        { relTick: 1680, gridDuration: 480, gateRatio: 1.0, role: 'sync_tie', tag: 'arc', velocityScale: 1.04 },
+        { relTick: 2160, gridDuration: 240, gateRatio: 0.82, role: 'step', tag: 'arc', velocityScale: 0.94 },
         { relTick: 2400, gridDuration: 720, gateRatio: 0.92, role: 'phrase_land', tag: 'cadence', velocityScale: 1.05 },
       ],
     ],
@@ -2582,12 +2605,25 @@ const MATRIX_2BAR_TEMPLATES: Readonly<
       [
         { relTick: 180, gridDuration: 300, gateRatio: 0.8, role: 'pickup', tag: 'core', velocityScale: 0.94 },
         { relTick: 480, gridDuration: 300, gateRatio: 0.82, role: 'anchor', tag: 'core', velocityScale: 1.0 },
-        { relTick: 780, gridDuration: 180, gateRatio: 0.78, role: 'rush', tag: 'arc', velocityScale: 0.94 },
-        { relTick: 960, gridDuration: 360, gateRatio: 0.84, role: 'hook_stab', tag: 'arc', velocityScale: 1.06, isPeakSlot: true },
-        { relTick: 1320, gridDuration: 120, gateRatio: 0.78, role: 'rush', tag: 'arc', velocityScale: 0.92 },
-        { relTick: 1680, gridDuration: 480, gateRatio: 0.88, role: 'sync_tie', tag: 'arc', velocityScale: 1.08, isPeakSlot: true },
+        // Bounce 2-and tie (780 + 420 = 1200)
+        { relTick: 780, gridDuration: 420, gateRatio: 1.0, role: 'sync_tie', tag: 'arc', velocityScale: 1.04, isPeakSlot: true },
+        { relTick: 1200, gridDuration: 240, gateRatio: 0.8, role: 'step', tag: 'arc', velocityScale: 0.94 },
+        { relTick: 1440, gridDuration: 300, gateRatio: 0.8, role: 'rush', tag: 'arc', velocityScale: 0.94 },
+        // Bounce 4-and bar-crossing tie (1740 + 420 = 2160)
+        { relTick: 1740, gridDuration: 420, gateRatio: 1.0, role: 'sync_tie', tag: 'arc', velocityScale: 1.08, isPeakSlot: true },
         { relTick: 2160, gridDuration: 300, gateRatio: 0.82, role: 'step', tag: 'arc', velocityScale: 0.98 },
         { relTick: 2460, gridDuration: 180, gateRatio: 0.8, role: 'step', tag: 'arc', velocityScale: 0.95 },
+        { relTick: 2640, gridDuration: 600, gateRatio: 0.9, role: 'top_fall', tag: 'cadence', velocityScale: 1.08 },
+      ],
+      [
+        { relTick: 0, gridDuration: 300, gateRatio: 0.82, role: 'anchor', tag: 'core', velocityScale: 0.98 },
+        { relTick: 300, gridDuration: 180, gateRatio: 0.8, role: 'step', tag: 'core', velocityScale: 0.92 },
+        // Beat-2-and tie (720 + 480 = 1200)
+        { relTick: 720, gridDuration: 480, gateRatio: 1.0, role: 'sync_tie', tag: 'arc', velocityScale: 1.04 },
+        { relTick: 1200, gridDuration: 240, gateRatio: 0.82, role: 'step', tag: 'arc', velocityScale: 0.96 },
+        // Bounce 4-and 660t bar-crossing tie into Bar 2 beat 2 (1740 + 660 = 2400)
+        { relTick: 1740, gridDuration: 660, gateRatio: 1.0, role: 'sync_tie', tag: 'arc', velocityScale: 1.08, isPeakSlot: true },
+        { relTick: 2400, gridDuration: 240, gateRatio: 0.82, role: 'step', tag: 'arc', velocityScale: 0.96 },
         { relTick: 2640, gridDuration: 600, gateRatio: 0.9, role: 'top_fall', tag: 'cadence', velocityScale: 1.08 },
       ],
     ],
@@ -2658,7 +2694,10 @@ function buildMatrixChapterSlots(options: {
   vocalTake: VocalTakeId;
   effectiveEnding: Exclude<VocalEndingMode, 'auto'>;
   chapterLenTicks: number;
+  sectionRemainingTicks: number;
   isFinalChapter: boolean;
+  allowChapterBoundaryTie: boolean;
+  hasAnacrusisOnChapter0: boolean;
   activePreset: string;
   rng: () => number;
 }): DialecticalCellSlot[] {
@@ -2667,7 +2706,10 @@ function buildMatrixChapterSlots(options: {
     vocalTake,
     effectiveEnding,
     chapterLenTicks,
+    sectionRemainingTicks,
     isFinalChapter,
+    allowChapterBoundaryTie,
+    hasAnacrusisOnChapter0,
     activePreset,
     rng,
   } = options;
@@ -2683,6 +2725,7 @@ function buildMatrixChapterSlots(options: {
   let slots: DialecticalCellSlot[] = tpl
     .filter((s) => s.relTick < chapterLenTicks)
     .map((s) => {
+      // Allow intra-section bar-crossing ties (e.g. bar 1 -> bar 2 inside this chapter) to keep full tied length
       const maxD = Math.max(60, Math.floor((chapterLenTicks - s.relTick) / 60) * 60);
       const qDur = Math.max(60, Math.min(maxD, Math.round(s.gridDuration / 60) * 60));
       return { ...s, gridDuration: qDur };
@@ -2699,6 +2742,66 @@ function buildMatrixChapterSlots(options: {
         velocityScale: 1.0,
       },
     ];
+  }
+
+  // Reserve a downbeat tied hold (480 or 720t) when section has an anacrusis candidate (-240t lead -> 720 or 960t tie)
+  if (hasAnacrusisOnChapter0 && chapterLenTicks >= 960) {
+    const canHold720 = slots.some((s) => s.relTick >= 720);
+    const holdDur = canHold720 && rng() < 0.45 ? 720 : 480;
+    const tailSlots = slots.filter((s) => s.relTick >= holdDur);
+    slots = [
+      {
+        relTick: 0,
+        gridDuration: holdDur,
+        gateRatio: 1.0,
+        role: 'sync_tie',
+        tag: 'core',
+        velocityScale: 1.04,
+      },
+      ...tailSlots,
+    ];
+  }
+
+  // Intra-section chapter-boundary tie (bar 2 -> bar 3, bar 4 -> bar 5, etc.), strictly inside section bounds
+  if (
+    allowChapterBoundaryTie &&
+    !isFinalChapter &&
+    chapterLenTicks >= BAR_TICKS &&
+    sectionRemainingTicks > chapterLenTicks &&
+    slots.length > 0
+  ) {
+    const tieProb = vocalTake === 'B' ? 0.45 : 0.25;
+    if (rng() < tieProb) {
+      const tieStartRel =
+        vocalStyle === 'bounce' && rng() < 0.5
+          ? chapterLenTicks - 180
+          : chapterLenTicks - 240;
+      const last = slots[slots.length - 1];
+      if (last.relTick + last.gridDuration <= tieStartRel) {
+        const rawDur =
+          tieStartRel === chapterLenTicks - 180
+            ? rng() < 0.5
+              ? 420
+              : 660
+            : rng() < 0.5
+              ? 480
+              : 720;
+        const maxSectionAvail =
+          Math.floor((sectionRemainingTicks - tieStartRel) / 60) * 60;
+        const tieDur = Math.min(rawDur, maxSectionAvail);
+        if (tieDur >= 360 && tieStartRel + tieDur > chapterLenTicks) {
+          slots.push({
+            relTick: tieStartRel,
+            gridDuration: tieDur,
+            gateRatio: 1.0,
+            role: 'sync_tie',
+            tag: 'arc',
+            velocityScale: 1.06,
+            isPeakSlot: true,
+          });
+        }
+      }
+    }
   }
 
   // On the very final note of the section with ascend (or long non-rap ending),
@@ -2781,12 +2884,21 @@ export function resolveEffectiveChord(
     }
   }
 
-  // Anticipation lookahead: if note starts within <= 240 ticks before next chord
-  // AND crosses or touches the upcoming chord boundary, target the upcoming chord.
+  // Anticipation lookahead:
+  // 1) 8th/16th anticipation (<= 240 ticks before next chord) crossing/touching chord boundary
+  // 2) Quarter-note tie (<= 480 ticks before next chord) where majority crosses into next chord
   if (activeIdx + 1 < chordEvents.length) {
     const nextChord = chordEvents[activeIdx + 1];
     const leadTicks = nextChord.startTick - safeTick;
     if (leadTicks > 0 && leadTicks <= 240 && safeEnd >= nextChord.startTick) {
+      return nextChord;
+    }
+    if (
+      leadTicks > 0 &&
+      leadTicks <= 480 &&
+      safeEnd > nextChord.startTick &&
+      safeEnd - nextChord.startTick >= leadTicks
+    ) {
       return nextChord;
     }
   }
@@ -3102,6 +3214,32 @@ export function generateHarmonicVocalResult(
     section.vocalStyle === undefined &&
     (vocalDensity <= 1.5 || vocalDensity >= 4.5);
 
+  // Isolated sub-seed RNG for optional section-head anacrusis (-240t lead resolved non-destructively in timeline stitcher)
+  const anacrusisRng = mulberry32(
+    deriveSubSeed(
+      seed,
+      `vocal:anacrusis:sec${input.sectionIndex}:${style}:${vocalStyle}:${effectiveEnding}`
+    )
+  );
+  const anacrusisProb =
+    vocalStyle === 'rap' ||
+    useLegacyDensityForm ||
+    section.bars < 2 ||
+    activePreset === 'jrock_anticipation'
+      ? 0
+      : sectionRole === 'chorus'
+        ? vocalTake === 'B'
+          ? 0.75
+          : vocalTake === 'A'
+            ? 0.55
+            : 0.35
+        : vocalTake === 'B'
+          ? 0.45
+          : vocalTake === 'A'
+            ? 0.25
+            : 0.15;
+  const sectionHasAnacrusis = anacrusisProb > 0 && anacrusisRng() < anacrusisProb;
+
   // Track reference Thesis step contour & climax peak quota
   let referenceThesisDeltas: number[] | null = null;
   let climaxHighCount = 0;
@@ -3138,7 +3276,7 @@ export function generateHarmonicVocalResult(
           }
         : profile;
 
-    const slots = useLegacyDensityForm
+    let slots = useLegacyDensityForm
       ? buildChapterSlotsForForm({
           chapter: ch,
           chapterLenTicks: chLen,
@@ -3156,10 +3294,42 @@ export function generateHarmonicVocalResult(
           vocalTake,
           effectiveEnding,
           chapterLenTicks: chLen,
+          sectionRemainingTicks: sectionEndTick - ch.startTick,
           isFinalChapter,
+          allowChapterBoundaryTie:
+            !isFinalChapter &&
+            vocalStyle !== 'rap' &&
+            (vocalTake === 'A' || vocalTake === 'B'),
+          hasAnacrusisOnChapter0: cIdx === 0 && sectionHasAnacrusis,
           activePreset,
           rng,
         });
+
+    // Shift/trim initial slots of non-first chapter when prior chapter tied across the chapter barline
+    if (cIdx > 0 && lastNoteOffTick > ch.startTick && slots.length > 0) {
+      const minAllowedRel = Math.ceil((lastNoteOffTick - ch.startTick) / 60) * 60;
+      const adjustedSlots: DialecticalCellSlot[] = [];
+      for (let i = 0; i < slots.length; i++) {
+        const s = slots[i];
+        const sEnd = s.relTick + s.gridDuration;
+        if (sEnd <= minAllowedRel) continue;
+        if (s.relTick < minAllowedRel) {
+          const nextStartRel = i + 1 < slots.length ? slots[i + 1].relTick : chLen;
+          const avail = Math.min(sEnd, nextStartRel) - minAllowedRel;
+          const qAvail = Math.floor(avail / 60) * 60;
+          if (qAvail >= 120) {
+            adjustedSlots.push({
+              ...s,
+              relTick: minAllowedRel,
+              gridDuration: qAvail,
+            });
+          }
+          continue;
+        }
+        adjustedSlots.push(s);
+      }
+      slots = adjustedSlots;
+    }
 
     const isChorusSecondHalfClimax =
       (sectionRole === 'chorus' || effectiveEnding === 'ascend') &&
@@ -3182,10 +3352,17 @@ export function generateHarmonicVocalResult(
       const absStart = ch.startTick + s.relTick;
       if (absStart >= sectionEndTick) continue;
 
+      const isTrailingChapterTie =
+        sIdx === slots.length - 1 &&
+        !isFinalChapter &&
+        s.role === 'sync_tie' &&
+        absStart + s.gridDuration > chEndTick;
       const nextSlotStart =
         sIdx + 1 < slots.length
           ? ch.startTick + slots[sIdx + 1].relTick
-          : chEndTick;
+          : isTrailingChapterTie
+            ? Math.min(sectionEndTick, absStart + s.gridDuration)
+            : chEndTick;
       const maxSpan = Math.max(60, nextSlotStart - absStart);
       let gridDur = Math.max(
         60,
@@ -3214,9 +3391,9 @@ export function generateHarmonicVocalResult(
             activePhraseStartTick = null;
             continue;
           }
-          // Otherwise trim previous note by >= 240 ticks if previous note was >= 600 ticks
+          // Otherwise trim previous note by >= 240 ticks if previous note was >= 600 ticks (preserve sync_tie)
           const prevGen = generatedNotes[generatedNotes.length - 1];
-          if (prevGen && prevGen.gateDuration >= 600) {
+          if (prevGen && prevGen.gateDuration >= 600 && prevGen.role !== 'sync_tie') {
             const trimmedDur = Math.max(
               240,
               Math.floor((Math.min(prevGen.gateDuration, absStart - 240 - prevGen.startTick)) / 60) * 60
@@ -3314,7 +3491,10 @@ export function generateHarmonicVocalResult(
       const propulsiveDegrees = new Set([2, 5, 7, 9, 10, 11]); // 2, 4, 5, 6, b7, 7 relative to localKeyRootPc
 
       const isStrongOrLong =
-        gridDur >= 480 || STRONG_BEAT_REL_TICKS.has(s.relTick) || s.tag === 'cadence';
+        gridDur >= 480 ||
+        STRONG_BEAT_REL_TICKS.has(s.relTick) ||
+        s.tag === 'cadence' ||
+        s.role === 'sync_tie';
 
       // Target contour delta from Thesis T1 (or Zone 1 repeat in Pattern 2)
       let targetStepDelta: number | undefined;
@@ -3642,6 +3822,9 @@ export function generateHarmonicVocalResult(
         role: s.role,
         hasFall,
         fallConfig: hasFall ? { ...fallCfg } : undefined,
+        ...(sectionHasAnacrusis && generatedNotes.length === 0 && absStart === 0
+          ? { anacrusisLeadTicks: 240 }
+          : {}),
       });
 
       lastNoteOffTick = absStart + gateDur;

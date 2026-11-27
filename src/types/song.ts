@@ -239,6 +239,7 @@ export interface MidiNote {
   tag?: NoteFunctionTag;
   hasFall?: boolean;
   fallConfig?: FallExpressionConfig;
+  anacrusisLeadTicks?: number;
 }
 
 export type MidiNoteEvent = MidiNote;
