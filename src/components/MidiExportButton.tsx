@@ -55,24 +55,20 @@ export function MidiExportButton({ song, bandState }: MidiExportButtonProps) {
   );
   const isVoisonaMode = exportTarget === 'voisona_clean_smf';
 
-  // VoiSona clean score mode remains directly usable regardless of multi-track checkboxes
-  const effectiveIncludedParts = useMemo(
-    () => (isVoisonaMode ? undefined : includedParts),
-    [isVoisonaMode, includedParts]
-  );
-
   const exportable = useMemo(
     () =>
+      selectedCount > 0 &&
       canExportMidi(song, bandState, {
-        includedParts: effectiveIncludedParts,
+        includedParts,
       }),
-    [song, bandState, effectiveIncludedParts]
+    [song, bandState, includedParts, selectedCount]
   );
 
-  const triggerDownload = (target: ExportTarget, parts?: Record<PartId, boolean>) => {
+  const triggerDownload = (target: ExportTarget) => {
+    if (!exportable) return;
     const { bytes } = exportMultiTrackMidi(song, bandState, {
       exportTarget: target,
-      includedParts: parts,
+      includedParts,
     });
     const copy = new Uint8Array(bytes.length);
     copy.set(bytes);
@@ -90,16 +86,11 @@ export function MidiExportButton({ song, bandState }: MidiExportButtonProps) {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
-  const handleDownload = () => {
-    if (!exportable) return;
-    triggerDownload(exportTarget, effectiveIncludedParts);
-  };
-
   const togglePart = (id: PartId) => {
     setIncludedParts((prev) => ({ ...prev, [id]: !prev[id] }));
   };
 
-  const applyPreset = (preset: 'all' | 'rhythm' | 'backing') => {
+  const applyPreset = (preset: 'all' | 'vocal_only' | 'rhythm' | 'backing') => {
     if (preset === 'all') {
       setIncludedParts({
         drums: true,
@@ -107,6 +98,14 @@ export function MidiExportButton({ song, bandState }: MidiExportButtonProps) {
         vocal: true,
         keyboard: true,
         pad: true,
+      });
+    } else if (preset === 'vocal_only') {
+      setIncludedParts({
+        drums: false,
+        bass: false,
+        vocal: true,
+        keyboard: false,
+        pad: false,
       });
     } else if (preset === 'rhythm') {
       setIncludedParts({
@@ -130,8 +129,82 @@ export function MidiExportButton({ song, bandState }: MidiExportButtonProps) {
   return (
     <div
       className="midi-export-group"
-      style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}
+      style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}
     >
+      {/* Common part selection checkboxes & quick presets shared by DAW & VoiSona export */}
+      <div
+        role="group"
+        aria-label="書き出しパート選択（DAW / VoiSona 共通）"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '0.45rem',
+          flexWrap: 'wrap',
+          fontSize: '0.82rem',
+        }}
+      >
+        {PART_CHECKBOX_ITEMS.map((part) => (
+          <label
+            key={part.id}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '0.22rem',
+              cursor: 'pointer',
+              userSelect: 'none',
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={includedParts[part.id]}
+              onChange={() => togglePart(part.id)}
+            />
+            <span>{part.label}</span>
+          </label>
+        ))}
+
+        <span style={{ opacity: 0.4 }}>|</span>
+
+        <button
+          type="button"
+          className="chip-btn"
+          style={{ fontSize: '0.74rem', padding: '0.15rem 0.45rem' }}
+          onClick={() => applyPreset('all')}
+        >
+          全選択
+        </button>
+        <button
+          type="button"
+          className="chip-btn"
+          style={{ fontSize: '0.74rem', padding: '0.15rem 0.45rem' }}
+          onClick={() => applyPreset('vocal_only')}
+        >
+          Vocalのみ（VoiSona基本）
+        </button>
+        <button
+          type="button"
+          className="chip-btn"
+          style={{ fontSize: '0.74rem', padding: '0.15rem 0.45rem' }}
+          onClick={() => applyPreset('rhythm')}
+        >
+          リズム隊 (Dr+Ba)
+        </button>
+        <button
+          type="button"
+          className="chip-btn"
+          style={{ fontSize: '0.74rem', padding: '0.15rem 0.45rem' }}
+          onClick={() => applyPreset('backing')}
+        >
+          伴奏のみ (Vocal除外)
+        </button>
+
+        {selectedCount === 0 && (
+          <span className="error-text" role="alert" style={{ margin: 0 }}>
+            書き出すパートを1つ以上選択してください
+          </span>
+        )}
+      </div>
+
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', flexWrap: 'wrap' }}>
         <select
           className="midi-export-select"
@@ -149,87 +222,20 @@ export function MidiExportButton({ song, bandState }: MidiExportButtonProps) {
           type="button"
           className="btn btn-export"
           disabled={!exportable}
-          onClick={handleDownload}
+          onClick={() => triggerDownload(exportTarget)}
           title={
-            !isVoisonaMode && selectedCount === 0
+            selectedCount === 0
               ? '書き出すパートを1つ以上選択してください'
               : exportable
                 ? isVoisonaMode
-                  ? 'VoiSona向けクリーン楽譜SMF（PBなし・微細隙間レガート結合・60t整列）を書き出し'
-                  : 'Cubase / シンセ向け表情付きSMF（選択パート＋Conductorトラック）を書き出し'
+                  ? '選択パートをVoiSona向けクリーン楽譜SMF（60 ticks整列・調号付き）で書き出し'
+                  : '選択パートをCubase / シンセ向け表情付きSMF（Conductor付き）で書き出し'
                 : '選択パートに有効な演奏ノートが0個のため書き出せません'
           }
         >
           ⬇ MIDI書き出し (.mid)
         </button>
       </div>
-
-      {!isVoisonaMode && (
-        <div
-          role="group"
-          aria-label="書き出しパート選択"
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '0.45rem',
-            flexWrap: 'wrap',
-            fontSize: '0.82rem',
-          }}
-        >
-          {PART_CHECKBOX_ITEMS.map((part) => (
-            <label
-              key={part.id}
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '0.22rem',
-                cursor: 'pointer',
-                userSelect: 'none',
-              }}
-            >
-              <input
-                type="checkbox"
-                checked={includedParts[part.id]}
-                onChange={() => togglePart(part.id)}
-              />
-              <span>{part.label}</span>
-            </label>
-          ))}
-
-          <span style={{ opacity: 0.4 }}>|</span>
-
-          <button
-            type="button"
-            className="chip-btn"
-            style={{ fontSize: '0.74rem', padding: '0.15rem 0.45rem' }}
-            onClick={() => applyPreset('all')}
-          >
-            全選択
-          </button>
-          <button
-            type="button"
-            className="chip-btn"
-            style={{ fontSize: '0.74rem', padding: '0.15rem 0.45rem' }}
-            onClick={() => applyPreset('rhythm')}
-          >
-            リズム隊 (Dr+Ba)
-          </button>
-          <button
-            type="button"
-            className="chip-btn"
-            style={{ fontSize: '0.74rem', padding: '0.15rem 0.45rem' }}
-            onClick={() => applyPreset('backing')}
-          >
-            伴奏のみ (Vocal除外)
-          </button>
-
-          {selectedCount === 0 && (
-            <span className="error-text" role="alert" style={{ margin: 0 }}>
-              書き出すパートを1つ以上選択してください
-            </span>
-          )}
-        </div>
-      )}
     </div>
   );
 }

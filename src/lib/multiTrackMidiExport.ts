@@ -107,6 +107,76 @@ export function hasAnyIncludedExportPart(
   return ALL_EXPORT_PARTS.some((p) => resolved[p]);
 }
 
+const VOISONA_GRID_TICKS = 60;
+
+/**
+ * Quantizes accompaniment guide notes to strict 60-tick (1/32 note) boundaries for VoiSona SMF
+ * while eliminating same-pitch overlaps cleanly on 60-tick multiples (zero overlap, % 60 === 0).
+ */
+function quantizeGuideNotesForVoisona(
+  notes: ReadonlyArray<{
+    pitch: number;
+    velocity: number;
+    startTick: number;
+    durationTicks: number;
+  }>
+): Array<{
+  pitch: number;
+  velocity: number;
+  startTick: number;
+  durationTicks: number;
+}> {
+  const snapped = notes
+    .map((n) => ({
+      pitch: Math.min(127, Math.max(0, Math.round(n.pitch))),
+      velocity: Math.min(127, Math.max(1, Math.round(n.velocity))),
+      startTick: Math.max(
+        0,
+        Math.round(n.startTick / VOISONA_GRID_TICKS) * VOISONA_GRID_TICKS
+      ),
+      durationTicks: Math.max(
+        VOISONA_GRID_TICKS,
+        Math.round(n.durationTicks / VOISONA_GRID_TICKS) * VOISONA_GRID_TICKS
+      ),
+    }))
+    .sort((a, b) => a.startTick - b.startTick || a.pitch - b.pitch);
+
+  const lastByPitch = new Map<
+    number,
+    { pitch: number; velocity: number; startTick: number; durationTicks: number }
+  >();
+  const out: Array<{
+    pitch: number;
+    velocity: number;
+    startTick: number;
+    durationTicks: number;
+  }> = [];
+
+  for (const n of snapped) {
+    const prev = lastByPitch.get(n.pitch);
+    if (prev) {
+      if (prev.startTick === n.startTick) {
+        if (n.velocity > prev.velocity) {
+          prev.velocity = n.velocity;
+          prev.durationTicks = Math.max(prev.durationTicks, n.durationTicks);
+        }
+        continue;
+      }
+      const maxDur = n.startTick - prev.startTick;
+      if (prev.durationTicks > maxDur) {
+        prev.durationTicks = Math.max(
+          VOISONA_GRID_TICKS,
+          Math.floor(maxDur / VOISONA_GRID_TICKS) * VOISONA_GRID_TICKS
+        );
+      }
+    }
+    const copy = { ...n };
+    out.push(copy);
+    lastByPitch.set(n.pitch, copy);
+  }
+  return out;
+}
+
 export interface MultiTrackMidiExportResult {
   bytes: Uint8Array;
   ntrks: number;
@@ -334,28 +404,42 @@ export function exportMultiTrackMidi(
 
   const specs: MidiExportTrackSpec[] = [];
 
+  const isVoisonaClean = exportTarget === 'voisona_clean_smf';
+  const formatGuideNotes = (
+    raw: Array<{
+      pitch: number;
+      velocity: number;
+      startTick: number;
+      durationTicks: number;
+    }>
+  ) => (isVoisonaClean ? quantizeGuideNotesForVoisona(raw) : raw);
+
   if (included.drums) {
     if (song.split808KickTrack) {
       specs.push({
         name: 'Drums',
         channel: TRACK_CHANNELS.drums,
-        notes: tracks.drums.map((n) => ({
-          pitch: n.pitch,
-          velocity: n.velocity,
-          startTick: n.startTick,
-          durationTicks: n.durationTicks,
-        })),
+        notes: formatGuideNotes(
+          tracks.drums.map((n) => ({
+            pitch: n.pitch,
+            velocity: n.velocity,
+            startTick: n.startTick,
+            durationTicks: n.durationTicks,
+          }))
+        ),
       });
       specs.push({
         name: '808 Kick',
         channel: TRACK_CHANNELS.kick808,
         program: 118, // Synth Drum
-        notes: tracks.kick808.map((n) => ({
-          pitch: n.pitch,
-          velocity: n.velocity,
-          startTick: n.startTick,
-          durationTicks: n.midiDurationTicks ?? n.durationTicks,
-        })),
+        notes: formatGuideNotes(
+          tracks.kick808.map((n) => ({
+            pitch: n.pitch,
+            velocity: n.velocity,
+            startTick: n.startTick,
+            durationTicks: n.midiDurationTicks ?? n.durationTicks,
+          }))
+        ),
       });
     } else {
       const mergedDrums: ResolvedNote[] = [
@@ -369,12 +453,14 @@ export function exportMultiTrackMidi(
       specs.push({
         name: 'Drums',
         channel: TRACK_CHANNELS.drums,
-        notes: mergedDrums.map((n) => ({
-          pitch: n.pitch,
-          velocity: n.velocity,
-          startTick: n.startTick,
-          durationTicks: n.durationTicks,
-        })),
+        notes: formatGuideNotes(
+          mergedDrums.map((n) => ({
+            pitch: n.pitch,
+            velocity: n.velocity,
+            startTick: n.startTick,
+            durationTicks: n.durationTicks,
+          }))
+        ),
       });
     }
   }
@@ -384,14 +470,16 @@ export function exportMultiTrackMidi(
       name: 'Bass',
       channel: TRACK_CHANNELS.bass,
       program: 33, // Electric Bass (finger)
-      controlChanges: tracks.controlChanges?.bass,
-      sanitizeOverlap: true,
-      notes: tracks.bass.map((n) => ({
-        pitch: n.pitch,
-        velocity: n.velocity,
-        startTick: n.startTick,
-        durationTicks: n.durationTicks,
-      })),
+      controlChanges: isVoisonaClean ? undefined : tracks.controlChanges?.bass,
+      sanitizeOverlap: !isVoisonaClean,
+      notes: formatGuideNotes(
+        tracks.bass.map((n) => ({
+          pitch: n.pitch,
+          velocity: n.velocity,
+          startTick: n.startTick,
+          durationTicks: n.durationTicks,
+        }))
+      ),
     });
   }
 
@@ -400,14 +488,16 @@ export function exportMultiTrackMidi(
       name: 'Keyboard',
       channel: TRACK_CHANNELS.keyboard,
       program: 0, // Acoustic Grand Piano
-      controlChanges: tracks.controlChanges?.keyboard,
-      sanitizeOverlap: true,
-      notes: tracks.keyboard.map((n) => ({
-        pitch: n.pitch,
-        velocity: n.velocity,
-        startTick: n.startTick,
-        durationTicks: n.durationTicks,
-      })),
+      controlChanges: isVoisonaClean ? undefined : tracks.controlChanges?.keyboard,
+      sanitizeOverlap: !isVoisonaClean,
+      notes: formatGuideNotes(
+        tracks.keyboard.map((n) => ({
+          pitch: n.pitch,
+          velocity: n.velocity,
+          startTick: n.startTick,
+          durationTicks: n.durationTicks,
+        }))
+      ),
     });
   }
 
@@ -416,14 +506,16 @@ export function exportMultiTrackMidi(
       name: 'PAD',
       channel: TRACK_CHANNELS.pad,
       program: 89, // Pad 2 (warm)
-      controlChanges: tracks.controlChanges?.pad,
-      sanitizeOverlap: true,
-      notes: tracks.pad.map((n) => ({
-        pitch: n.pitch,
-        velocity: n.velocity,
-        startTick: n.startTick,
-        durationTicks: n.durationTicks,
-      })),
+      controlChanges: isVoisonaClean ? undefined : tracks.controlChanges?.pad,
+      sanitizeOverlap: !isVoisonaClean,
+      notes: formatGuideNotes(
+        tracks.pad.map((n) => ({
+          pitch: n.pitch,
+          velocity: n.velocity,
+          startTick: n.startTick,
+          durationTicks: n.durationTicks,
+        }))
+      ),
     });
   }
 

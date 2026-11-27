@@ -266,4 +266,62 @@ describe('multiTrackMidiExport', () => {
       exportMultiTrackMidi(song, state, { includedParts: emptyParts })
     ).toThrow();
   });
+
+  it('filters VoiSona clean SMF by includedParts (Vocal only & Vocal+Keys) with strict 60-tick quantization and Track 0 Conductor', () => {
+    const song = createDefaultSongConfig('royal_jpop');
+    song.split808KickTrack = false;
+    song.exportOnlyActiveTracks = false;
+    song.sections = [
+      {
+        id: 'sec-voisona-filter',
+        type: 'Chorus',
+        name: 'Chorus',
+        bars: 4,
+        energy: 'High',
+        kickMode: 'acoustic',
+        chords: createUniformChordTimeline(['C', 'G', 'Am', 'F'], 4),
+      },
+    ];
+    const state = generateAllSections(song, undefined, 3030, true);
+
+    // 1. VoiSona Clean SMF: Vocal only -> Track 0 (Conductor) + Vocal = 2 tracks, all notes % 60 === 0 & monophonic
+    const vocalOnlyRes = exportMultiTrackMidi(song, state, {
+      exportTarget: 'voisona_clean_smf',
+      includedParts: { vocal: true },
+    });
+    const parsedVocalOnly = parseMidiFile(vocalOnlyRes.bytes);
+    expect(vocalOnlyRes.ntrks).toBe(2);
+    expect(parsedVocalOnly.ntrks).toBe(2);
+    expect(vocalOnlyRes.trackNames).toEqual(['Conductor', 'Vocal']);
+    expect(parsedVocalOnly.tracks[0].keySignatures.length).toBe(1);
+    const vOnlyNotes = parsedVocalOnly.tracks[1].notes;
+    expect(vOnlyNotes.length).toBeGreaterThan(0);
+    for (let i = 0; i < vOnlyNotes.length; i++) {
+      expect(vOnlyNotes[i].startTick % 60).toBe(0);
+      expect(vOnlyNotes[i].durationTicks % 60).toBe(0);
+      if (i + 1 < vOnlyNotes.length) {
+        expect(vOnlyNotes[i].startTick + vOnlyNotes[i].durationTicks).toBeLessThanOrEqual(
+          vOnlyNotes[i + 1].startTick
+        );
+      }
+    }
+
+    // 2. VoiSona Clean SMF: Vocal + Keys -> Track 0 (Conductor) + Keyboard + Vocal = 3 tracks, all notes % 60 === 0
+    const vocalKeysRes = exportMultiTrackMidi(song, state, {
+      exportTarget: 'voisona_clean_smf',
+      includedParts: { vocal: true, keyboard: true },
+    });
+    const parsedVocalKeys = parseMidiFile(vocalKeysRes.bytes);
+    expect(vocalKeysRes.ntrks).toBe(3);
+    expect(parsedVocalKeys.ntrks).toBe(3);
+    expect(vocalKeysRes.trackNames).toEqual(['Conductor', 'Keyboard', 'Vocal']);
+    const kbTrack = parsedVocalKeys.tracks.find((t) => t.name === 'Keyboard')!;
+    const vocTrack = parsedVocalKeys.tracks.find((t) => t.name === 'Vocal')!;
+    expect(kbTrack.notes.length).toBeGreaterThan(0);
+    expect(vocTrack.notes.length).toBeGreaterThan(0);
+    for (const n of [...kbTrack.notes, ...vocTrack.notes]) {
+      expect(n.startTick % 60).toBe(0);
+      expect(n.durationTicks % 60).toBe(0);
+    }
+  });
 });
