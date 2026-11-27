@@ -23,6 +23,7 @@ import {
   generateAllSections,
   inferCustomChordsFromOverrideBass,
   lockCurrentChordsToCustom,
+  selectInstrumentTake,
   setSectionAccompanimentSkeleton,
   setSectionBassMidiOverride,
   setSectionChordLock,
@@ -664,26 +665,24 @@ describe('BANDMASTER 4-Stage Composition Pipeline (Harmony -> Vocal -> Voicing -
     for (const s of seeds) {
       const asc = generateHarmonicVocalResult({
         song: chorusSong,
-        section: { ...chorusSec, vocalStyle: 'straight', vocalTake: 'A', vocalEnding: 'ascend' },
+        section: { ...chorusSec, vocalStyle: 'straight', vocalEnding: 'ascend' },
         sectionIndex: 0,
         style: 'A',
         seed: s,
         params,
         masterGenreId: 'emo_jrock',
         vocalStyle: 'straight',
-        vocalTake: 'A',
         vocalEnding: 'ascend',
       });
       const ton = generateHarmonicVocalResult({
         song: chorusSong,
-        section: { ...chorusSec, vocalStyle: 'straight', vocalTake: 'A', vocalEnding: 'tonic' },
+        section: { ...chorusSec, vocalStyle: 'straight', vocalEnding: 'tonic' },
         sectionIndex: 0,
         style: 'A',
         seed: s,
         params,
         masterGenreId: 'emo_jrock',
         vocalStyle: 'straight',
-        vocalTake: 'A',
         vocalEnding: 'tonic',
       });
 
@@ -707,7 +706,6 @@ describe('BANDMASTER 4-Stage Composition Pipeline (Harmony -> Vocal -> Voicing -
       bars: 4,
       chords: createUniformChordTimeline(['Fmaj7', 'G7', 'Em7', 'G7'], 4),
       vocalStyle: 'straight' as const,
-      vocalTake: 'A' as const,
       vocalEnding: 'dominant' as const,
     };
     for (const s of seeds) {
@@ -720,7 +718,6 @@ describe('BANDMASTER 4-Stage Composition Pipeline (Harmony -> Vocal -> Voicing -
         params,
         masterGenreId: 'emo_jrock',
         vocalStyle: 'straight',
-        vocalTake: 'A',
         vocalEnding: 'dominant',
       });
       const domLast = domRes.midiNotes[domRes.midiNotes.length - 1];
@@ -757,14 +754,13 @@ describe('BANDMASTER 4-Stage Composition Pipeline (Harmony -> Vocal -> Voicing -
       for (const vTake of takes) {
         const res = generateHarmonicVocalResult({
           song,
-          section: { ...sec, vocalStyle: vStyle, vocalTake: vTake, vocalEnding: 'tonic' },
+          section: { ...sec, vocalStyle: vStyle, vocalEnding: 'tonic' },
           sectionIndex: 1,
           style: vTake,
           seed: 4444,
           params,
           masterGenreId: 'royal_jpop',
           vocalStyle: vStyle,
-          vocalTake: vTake,
           vocalEnding: 'tonic',
         });
 
@@ -822,15 +818,40 @@ describe('BANDMASTER 4-Stage Composition Pipeline (Harmony -> Vocal -> Voicing -
     expect(stats['rap:A'].ambitus).toBeLessThanOrEqual(9);
     expect(stats['rap:B'].offsetsMod480.has(180)).toBe(true);
 
-    // Verify setSectionVocalConfig updates UI state cleanly without altering Stage 1 chords
+    // Verify unified part-level Take A/B/C buttons switch vocal character directly via selectInstrumentTake
+    song.sections[1] = {
+      ...sec,
+      vocalStyle: 'straight',
+      vocalEnding: 'tonic',
+    };
     const initState = generateAllSections(song, undefined, 1234, true);
-    const updated = setSectionVocalConfig(song, initState, sec.id, {
+    const stateA = selectInstrumentTake(song, initState, sec.id, 'vocal', 'A');
+    const stateB = selectInstrumentTake(song, stateA, sec.id, 'vocal', 'B');
+    const stateC = selectInstrumentTake(song, stateB, sec.id, 'vocal', 'C');
+
+    expect(stateA.cellsBySection[sec.id].vocal.selectedTake).toBe('A');
+    expect(stateB.cellsBySection[sec.id].vocal.selectedTake).toBe('B');
+    expect(stateC.cellsBySection[sec.id].vocal.selectedTake).toBe('C');
+
+    const notesA = stateA.cellsBySection[sec.id].vocal.takes.A;
+    const notesB = stateB.cellsBySection[sec.id].vocal.takes.B;
+    const notesC = stateC.cellsBySection[sec.id].vocal.takes.C;
+
+    const avgDurA = notesA.reduce((s, n) => s + n.durationTicks, 0) / notesA.length;
+    const avgDurC = notesC.reduce((s, n) => s + n.durationTicks, 0) / notesC.length;
+    const countLeaps = (notes: typeof notesA) =>
+      notes.slice(1).filter((n, idx) => Math.abs(n.pitch - notes[idx].pitch) >= 5).length;
+
+    expect(avgDurC).toBeGreaterThan(avgDurA * 1.4);
+    expect(notesC.length).toBeLessThan(notesA.length);
+    expect(countLeaps(notesB)).toBeGreaterThan(countLeaps(notesA));
+
+    // Verify setSectionVocalConfig updates vocalStyle/vocalEnding while preserving selectedTake and Stage 1 chords
+    const updated = setSectionVocalConfig(song, stateB, sec.id, {
       vocalStyle: 'bounce',
-      vocalTake: 'B',
       vocalEnding: 'ascend',
     });
     expect(updated.song.sections[1].vocalStyle).toBe('bounce');
-    expect(updated.song.sections[1].vocalTake).toBe('B');
     expect(updated.song.sections[1].vocalEnding).toBe('ascend');
     expect(updated.song.sections[1].chords).toEqual(song.sections[1].chords);
     expect(updated.bandState.cellsBySection[sec.id].vocal.selectedTake).toBe('B');

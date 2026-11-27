@@ -36,7 +36,6 @@ import {
   type VocalEndingMode,
   type VocalHarmonyMode,
   type VocalStyleId,
-  type VocalTakeId,
   type VocalVoicePresetId,
 } from '../types/song';
 import type { BandState } from '../types/track';
@@ -84,7 +83,6 @@ interface BandmasterConsoleProps {
     sectionId: string,
     patch: {
       vocalStyle?: VocalStyleId;
-      vocalTake?: VocalTakeId;
       vocalEnding?: VocalEndingMode;
     }
   ) => void;
@@ -355,11 +353,12 @@ const VOCAL_STYLE_OPTIONS: Array<{ value: VocalStyleId; label: string }> = [
   { value: 'rap', label: 'ラップ' },
 ];
 
-const VOCAL_TAKE_OPTIONS: Array<{ value: VocalTakeId; label: string }> = [
-  { value: 'A', label: 'A: 王道・キャッチー' },
-  { value: 'B', label: 'B: 跳躍・ドライブ' },
-  { value: 'C', label: 'C: タメ・ロングトーン' },
-];
+const VOCAL_TAKE_ROLE_LABELS: Record<TakeStyle | 'OFF', string> = {
+  A: '王道・キャッチー',
+  B: '跳躍・ドライブ',
+  C: 'タメ・ロングトーン',
+  OFF: 'ボーカルOFF',
+};
 
 const VOCAL_ENDING_OPTIONS: Array<{ value: VocalEndingMode; label: string }> = [
   { value: 'auto', label: 'おまかせ' },
@@ -1065,12 +1064,24 @@ export function BandmasterConsole({
                 locked={cell.locked}
                 autoTacet={autoTacet}
                 disabled={!effectivelyEnabled}
-                onSelect={(take) => {
-                  onSelectTake(section.id, key, take);
-                  if (key === 'vocal' && take !== 'OFF') {
-                    onChangeSectionVocalConfig?.(section.id, { vocalTake: take });
-                  }
-                }}
+                takeTitles={
+                  key === 'vocal'
+                    ? {
+                        A: 'Take A: 王道・キャッチー',
+                        B: 'Take B: 跳躍・ドライブ',
+                        C: 'Take C: タメ・ロングトーン',
+                        OFF: 'ボーカルOFF',
+                      }
+                    : undefined
+                }
+                hintText={
+                  key === 'vocal'
+                    ? cell.selectedTake === 'OFF'
+                      ? VOCAL_TAKE_ROLE_LABELS.OFF
+                      : `Take ${cell.selectedTake}：${VOCAL_TAKE_ROLE_LABELS[cell.selectedTake]}`
+                    : undefined
+                }
+                onSelect={(take) => onSelectTake(section.id, key, take)}
               />
 
               {key === 'drums' && (
@@ -1559,30 +1570,6 @@ export function BandmasterConsole({
                       }
                     >
                       {VOCAL_STYLE_OPTIONS.map((opt) => (
-                        <option key={opt.value} value={opt.value}>
-                          {opt.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="density-row">
-                    <span className="density-label">Take</span>
-                    <select
-                      className="console-preset-select"
-                      aria-label="Vocal Take"
-                      value={
-                        cell.selectedTake !== 'OFF'
-                          ? cell.selectedTake
-                          : (section.vocalTake ?? 'A')
-                      }
-                      disabled={cell.locked || !effectivelyEnabled}
-                      onChange={(e) =>
-                        onChangeSectionVocalConfig?.(section.id, {
-                          vocalTake: e.target.value as VocalTakeId,
-                        })
-                      }
-                    >
-                      {VOCAL_TAKE_OPTIONS.map((opt) => (
                         <option key={opt.value} value={opt.value}>
                           {opt.label}
                         </option>

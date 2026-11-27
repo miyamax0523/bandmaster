@@ -361,7 +361,6 @@ export interface Section {
   vocalDensity?: number; // 1.0..5.0 (default 3)
   vocalHarmony?: VocalHarmonyMode; // default 'off'
   vocalStyle?: VocalStyleId; // default 'straight' (numetal_mixture A/B default 'rap')
-  vocalTake?: VocalTakeId; // default 'A'
   vocalEnding?: VocalEndingMode; // default 'auto'
   vocalDialecticalScheme?: EightBarScheme | 'auto'; // default 'auto'
   vocalChapterForm?: ChapterInternalForm | 'auto'; // default 'auto'

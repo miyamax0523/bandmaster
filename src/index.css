@@ -1019,6 +1019,12 @@ input[type='range'] {
   border-color: var(--danger);
 }
 
+.take-selector-hint {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  line-height: 1.2;
+}
+
 .density-controls {
   display: flex;
   flex-direction: column;

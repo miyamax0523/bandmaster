@@ -5,6 +5,8 @@ interface TakeSelectorProps {
   locked: boolean;
   autoTacet: boolean;
   disabled: boolean;
+  takeTitles?: Partial<Record<TakeStyle | 'OFF', string>>;
+  hintText?: string;
   onSelect: (take: TakeStyle | 'OFF') => void;
 }
 
@@ -20,6 +22,8 @@ export function TakeSelector({
   locked,
   autoTacet,
   disabled,
+  takeTitles,
+  hintText,
   onSelect,
 }: TakeSelectorProps) {
   return (
@@ -34,6 +38,7 @@ export function TakeSelector({
               className={`take-btn ${isActive ? 'active' : ''} ${
                 opt.value === 'OFF' ? 'off-btn' : ''
               }`}
+              title={takeTitles?.[opt.value]}
               disabled={locked || disabled}
               onClick={() => onSelect(opt.value)}
             >
@@ -42,6 +47,7 @@ export function TakeSelector({
           );
         })}
       </div>
+      {hintText && <div className="take-selector-hint">{hintText}</div>}
       {autoTacet && !disabled && (
         <span className="badge badge-tacet">Auto Tacet</span>
       )}

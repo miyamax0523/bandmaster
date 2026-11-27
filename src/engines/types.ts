@@ -17,7 +17,6 @@ import type {
   TakeStyle,
   VocalEndingMode,
   VocalStyleId,
-  VocalTakeId,
   VocalVoiceProfile,
 } from '../types/song';
 import type { MasterGenreId } from '../lib/masterGenres';
@@ -99,6 +98,5 @@ export interface EngineInput {
   vocalMinMidiByBar?: readonly (number | null)[];
   isFinalChorusSection?: boolean;
   vocalStyle?: VocalStyleId;
-  vocalTake?: VocalTakeId;
   vocalEnding?: VocalEndingMode;
 }

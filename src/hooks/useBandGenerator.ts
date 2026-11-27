@@ -87,7 +87,6 @@ import {
   type VocalHarmonyMode,
   type VocalMelodyData,
   type VocalStyleId,
-  type VocalTakeId,
   type VocalVoicePresetId,
 } from '../types/song';
 import type { BandState } from '../types/track';
@@ -823,7 +822,6 @@ export function useBandGenerator() {
       sectionId: string,
       patch: {
         vocalStyle?: VocalStyleId;
-        vocalTake?: VocalTakeId;
         vocalEnding?: VocalEndingMode;
       }
     ) => {

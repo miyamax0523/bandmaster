@@ -47,7 +47,6 @@ import {
   type VocalHarmonyMode,
   type VocalMelodyData,
   type VocalStyleId,
-  type VocalTakeId,
   type VocalVoicePresetId,
 } from '../types/song';
 import type {
@@ -147,7 +146,6 @@ export function cloneSection(sec: Section): Section {
     drumBreakEnabled: sec.drumBreakEnabled ?? false,
     vocalHarmony: sec.vocalHarmony ?? 'off',
     vocalStyle: sec.vocalStyle ?? 'straight',
-    vocalTake: sec.vocalTake ?? 'A',
     vocalEnding: sec.vocalEnding ?? 'auto',
     vocalDialecticalScheme: sec.vocalDialecticalScheme ?? 'auto',
     vocalChapterForm: sec.vocalChapterForm ?? 'auto',
@@ -389,7 +387,6 @@ export function generateCellTakesWithCC(
           : undefined,
       vocalStyle:
         instrument === 'vocal' ? (section.vocalStyle ?? 'straight') : undefined,
-      vocalTake: instrument === 'vocal' ? style : undefined,
       vocalEnding:
         instrument === 'vocal' ? (section.vocalEnding ?? 'auto') : undefined,
       bassSkeleton:
@@ -737,6 +734,29 @@ export function selectInstrumentTake(
       nextState.cellsBySection[sectionId],
       Date.now(),
       { newSeeds: false, instruments: ['bass'] }
+    );
+  }
+
+  // Vocal Take A/B/C/OFF change -> ensure vocal character matches selected take & re-clamp Stage 3 keyboard/pad
+  if (instrument === 'vocal') {
+    const prevVocalAvgPitch =
+      secIdx > 0
+        ? getAverageVocalPitch(
+            nextState.cellsBySection[song.sections[secIdx - 1].id]
+          )
+        : undefined;
+    nextState.cellsBySection[sectionId] = generateSectionCells(
+      song,
+      section,
+      secIdx,
+      nextState.cellsBySection[sectionId],
+      6910 + secIdx * 37,
+      {
+        newSeeds: false,
+        instruments:
+          take === 'OFF' ? ['keyboard', 'pad'] : ['vocal', 'keyboard', 'pad'],
+        prevVocalAvgPitch,
+      }
     );
   }
 
@@ -2888,7 +2908,7 @@ export function inferCustomChordsFromOverrideBass(
 }
 
 /**
- * Updates the streamlined 3-control section vocal config (vocalStyle, vocalTake, vocalEnding).
+ * Updates the section vocal style and ending controls (vocalStyle, vocalEnding).
  * Preserves Stage 1 chords and drums/bass untouched; recalculates vocal & Stage 3 keyboard/pad clamping when style/ending changes.
  */
 export function setSectionVocalConfig(
@@ -2897,7 +2917,6 @@ export function setSectionVocalConfig(
   sectionId: string,
   patch: {
     vocalStyle?: VocalStyleId;
-    vocalTake?: VocalTakeId;
     vocalEnding?: VocalEndingMode;
   }
 ): { song: SongConfig; bandState: BandState } {
@@ -2913,9 +2932,6 @@ export function setSectionVocalConfig(
   if (patch.vocalStyle !== undefined) {
     sec.vocalStyle = patch.vocalStyle;
   }
-  if (patch.vocalTake !== undefined) {
-    sec.vocalTake = patch.vocalTake;
-  }
   if (patch.vocalEnding !== undefined) {
     sec.vocalEnding = patch.vocalEnding;
   }
@@ -2923,20 +2939,13 @@ export function setSectionVocalConfig(
   const nextState = cloneBandState(bandState);
   const existingSec = nextState.cellsBySection[sectionId];
 
-  if (existingSec && patch.vocalTake !== undefined && existingSec.vocal) {
-    existingSec.vocal.selectedTake = patch.vocalTake;
-  }
-
-  if (existingSec && (needsVocalRegen || patch.vocalTake !== undefined)) {
+  if (existingSec && needsVocalRegen) {
     const prevVocalAvgPitch =
       secIdx > 0
         ? getAverageVocalPitch(
             nextState.cellsBySection[nextSong.sections[secIdx - 1].id]
           )
         : undefined;
-    const instruments: InstrumentType[] = needsVocalRegen
-      ? ['vocal', 'keyboard', 'pad']
-      : ['keyboard', 'pad'];
     nextState.cellsBySection[sectionId] = generateSectionCells(
       nextSong,
       sec,
@@ -2945,13 +2954,10 @@ export function setSectionVocalConfig(
       6910 + secIdx * 37,
       {
         newSeeds: false,
-        instruments,
+        instruments: ['vocal', 'keyboard', 'pad'],
         prevVocalAvgPitch,
       }
     );
-    if (patch.vocalTake !== undefined && nextState.cellsBySection[sectionId]?.vocal) {
-      nextState.cellsBySection[sectionId].vocal.selectedTake = patch.vocalTake;
-    }
   }
 
   return { song: nextSong, bandState: nextState };

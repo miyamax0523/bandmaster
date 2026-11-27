@@ -2878,8 +2878,7 @@ export function generateHarmonicVocalResult(
   const voice = input.vocalVoiceProfile ?? resolveVocalVoiceProfile(song);
   const vocalStyle: VocalStyleId =
     input.vocalStyle ?? section.vocalStyle ?? 'straight';
-  const vocalTake: VocalTakeId =
-    input.vocalTake ?? section.vocalTake ?? style;
+  const vocalTake: VocalTakeId = style;
   const effectiveEnding = resolveEffectiveVocalEnding(
     input.vocalEnding ?? section.vocalEnding ?? 'auto',
     sectionRole,
@@ -3101,8 +3100,6 @@ export function generateHarmonicVocalResult(
   const useLegacyDensityForm =
     input.vocalStyle === undefined &&
     section.vocalStyle === undefined &&
-    input.vocalTake === undefined &&
-    section.vocalTake === undefined &&
     (vocalDensity <= 1.5 || vocalDensity >= 4.5);
 
   // Track reference Thesis step contour & climax peak quota

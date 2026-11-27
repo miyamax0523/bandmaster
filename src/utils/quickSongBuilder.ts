@@ -546,7 +546,6 @@ export function buildSongFromQuickSetup(
         (spec.role === 'verse' || spec.role === 'pre_chorus')
           ? 'rap'
           : 'straight',
-      vocalTake: 'A',
       vocalEnding: 'auto',
       bassChromaticEnabled:
         normalizedGenre === 'alt_shoegaze' || normalizedGenre === 'numetal_mixture',

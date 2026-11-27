@@ -250,7 +250,6 @@ export function hydrateProject(stored: StoredBandProject): {
       vocalDensity: rawSec.vocalDensity ?? 3,
       vocalHarmony: rawSec.vocalHarmony ?? 'off',
       vocalStyle: rawSec.vocalStyle ?? 'straight',
-      vocalTake: rawSec.vocalTake ?? 'A',
       vocalEnding: rawSec.vocalEnding ?? 'auto',
       vocalDialecticalScheme: rawSec.vocalDialecticalScheme ?? 'auto',
       vocalChapterForm: rawSec.vocalChapterForm ?? 'auto',
